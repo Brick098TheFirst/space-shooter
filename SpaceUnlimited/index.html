@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Space Unlimited</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #05060f;
+    overflow: hidden;
+    font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  #wrap {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    width: min(100vw, calc(100vh * 4 / 3));
+    height: auto;
+    background: #000;
+    box-shadow: 0 0 60px rgba(80, 120, 255, 0.25);
+    border-radius: 4px;
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="480" height="360"></canvas>
+</div>
+<script src="game.js"></script>
+<script>
+'use strict';
+
+/* ============================================================================
+ * SPACE UNLIMITED — desktop port (Windows / macOS / Linux)
+ * Loads the original Scratch assets from ./assets and drives the pure-logic
+ * engine in game.js at Scratch speed (30 ticks/s), rendered at 60 fps with
+ * interpolation. No internet connection or server required: just open
+ * index.html in any modern browser (or serve this folder).
+ * ==========================================================================*/
+
+var canvas = document.getElementById('game');
+var ctx = canvas.getContext('2d');
+var W = 480, H = 360;
+
+/* ---------------- assets ---------------- */
+
+var ASSETS = [
+  ['starfield', 'starfield.png'],
+  ['backdrop2', 'backdrop2.png'],
+  ['main2', 'main2.svg'],
+  ['main3', 'main3.svg'],
+  ['backdrop1', 'backdrop1.svg'],
+  ['playerShip1_orange', 'playerShip1_orange.png'],
+  ['playerShip1_orange_small', 'playerShip1_orange_small.png'],
+  ['meteorBrown_big1', 'meteorBrown_big1.png'],
+  ['meteorBrown_med1', 'meteorBrown_med1.png'],
+  ['meteorBrown_med3', 'meteorBrown_med3.png'],
+  ['meteorBrown_small2', 'meteorBrown_small2.png'],
+  ['meteorBrown_tiny1', 'meteorBrown_tiny1.png'],
+  ['shield_gold', 'shield_gold.png'],
+  ['laser', 'laser.svg']
+];
+for (var e = 0; e <= 8; e++) ASSETS.push(['explosion0' + e, 'explosion0' + e + '.png']);
+
+var imgs = {};
+function loadImages(done) {
+  var remaining = ASSETS.length;
+  ASSETS.forEach(function (pair) {
+    var img = new Image();
+    img.onload = img.onerror = function () { if (--remaining === 0) done(); };
+    img.src = 'assets/' + pair[1];
+    imgs[pair[0]] = img;
+  });
+}
+
+/* ---------------- audio ---------------- */
+
+// Music tracks (name -> { src, element }). Looping is set per play.
+var MUSIC = {
+  menu:      'assets/menu.wav',
+  getready:  'assets/getready.wav',
+  frozenjam2: 'assets/frozenjam2.wav',
+  frozenjam: 'assets/frozenjam.wav'
+};
+// One-shot sounds (name -> array of pooled <audio> elements for overlap)
+var SFX = {
+  pew:        { src: 'assets/pew.wav',        pool: 4 },
+  expl6:      { src: 'assets/expl6.wav',      pool: 3 },
+  Explosion2: { src: 'assets/Explosion2.wav', pool: 3 },
+  Pop:        { src: 'assets/Pop.wav',        pool: 3 }
+};
+
+var musicEls = {};
+var sfxEls = {};
+var allAudio = [];
+var currentMusic = null;
+var audioUnlocked = false;
+
+function makeAudio(src, loop) {
+  var a = new Audio(src);
+  a.preload = 'auto';
+  a.loop = !!loop;
+  allAudio.push(a);
+  return a;
+}
+
+function buildAudio() {
+  Object.keys(MUSIC).forEach(function (name) { musicEls[name] = makeAudio(MUSIC[name], false); });
+  Object.keys(SFX).forEach(function (name) {
+    sfxEls[name] = [];
+    for (var i = 0; i < SFX[name].pool; i++) sfxEls[name].push(makeAudio(SFX[name].src, false));
+  });
+}
+
+function setMuted(muted) {
+  allAudio.forEach(function (a) { a.muted = muted; });
+}
+
+function stopAllAudio() {
+  allAudio.forEach(function (a) { a.pause(); a.currentTime = 0; });
+  currentMusic = null;
+}
+
+function playMusic(name, loop) {
+  stopAllAudio();
+  var el = musicEls[name];
+  if (!el) return;
+  el.loop = !!loop;
+  currentMusic = el;
+  try { el.play(); } catch (err) { /* audio not unlocked yet */ }
+}
+
+function playSfx(name) {
+  var pool = sfxEls[name];
+  if (!pool) return;
+  for (var i = 0; i < pool.length; i++) {
+    var el = pool[i];
+    if (el.paused || el.ended) { el.currentTime = 0; el.play(); return; }
+  }
+  // all busy: steal the oldest (first) node
+  var n = pool[0];
+  n.currentTime = 0;
+  n.play();
+}
+
+/* ---------------- game engine wiring ---------------- */
+
+var game = createGame({
+  rand: function (a, b) { return a + Math.random() * (b - a); },
+  sfx: playSfx,
+  music: playMusic,
+  stopSounds: stopAllAudio,
+  storageLoad: function () {
+    try { return parseInt(localStorage.getItem('space-unlimited-hiscore') || '0', 10) || 0; }
+    catch (err) { return 0; }
+  },
+  storageSave: function (n) {
+    try { localStorage.setItem('space-unlimited-hiscore', String(n)); } catch (err) {}
+  }
+});
+
+function startMenuMusic() {
+  if (game.state.mode === 'menu' && !audioUnlocked) {
+    audioUnlocked = true;
+    playMusic('menu', true);
+  }
+}
+
+/* ---------------- input ---------------- */
+
+function stageXFromEvent(ev) {
+  var rect = canvas.getBoundingClientRect();
+  return ((ev.clientX - rect.left) / rect.width) * W - W / 2;
+}
+
+canvas.addEventListener('pointermove', function (ev) {
+  var down = ev.pointerType === 'mouse' ? ev.buttons > 0 : true; // touch = finger down
+  game.setMouse(stageXFromEvent(ev), down);
+});
+canvas.addEventListener('pointerdown', function (ev) {
+  startMenuMusic();
+  game.setMouse(stageXFromEvent(ev), true);
+});
+window.addEventListener('pointerup', function () { game.setMouse(game.state.player.x, false); });
+window.addEventListener('pointercancel', function () { game.setMouse(game.state.player.x, false); });
+
+window.addEventListener('keydown', function (ev) {
+  startMenuMusic();
+  if (ev.key === 'Enter') {
+    ev.preventDefault();
+    game.pressEnter();
+    // returning to the menu (from game over) restarts the menu music
+    if (game.state.mode === 'menu') playMusic('menu', true);
+  } else if (ev.key === 'p' || ev.key === 'P' || ev.key === 'Escape') {
+    ev.preventDefault();
+    var paused = game.togglePause();
+    if (paused) allAudio.forEach(function (a) { a.pause(); });
+    else if (currentMusic) { try { currentMusic.play(); } catch (err) {} }
+  } else if (ev.key === 'm' || ev.key === 'M') {
+    setMuted(game.toggleMute());
+  }
+});
+
+// pause automatically when the window/tab loses focus
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden && game.state.mode === 'play' && !game.state.paused) {
+    game.togglePause();
+    allAudio.forEach(function (a) { a.pause(); });
+  }
+});
+
+/* ---------------- game loop ---------------- */
+
+var TICK_MS = 1000 / 30;
+var lastTickAt = 0;
+var raf = 0;
+
+function tickLoop() {
+  lastTickAt = performance.now();
+  game.tick();
+}
+var tickTimer = setInterval(tickLoop, TICK_MS);
+
+/* ---------------- rendering ---------------- */
+
+function scX(x) { return x + W / 2; }   // Scratch x -> canvas x
+function scY(y) { return H / 2 - y; }   // Scratch y (up) -> canvas y (down)
+
+function drawImg(name, x, y, sizePct, rotDeg, alpha) {
+  var img = imgs[name];
+  if (!img || !img.naturalWidth) return;
+  var w = img.naturalWidth * sizePct / 100;
+  var h = img.naturalHeight * sizePct / 100;
+  ctx.save();
+  ctx.translate(scX(x), scY(y));
+  if (rotDeg) ctx.rotate(rotDeg * Math.PI / 180);
+  if (alpha !== undefined) ctx.globalAlpha = alpha;
+  ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  ctx.restore();
+}
+
+var BACKDROPS = { menu: 'main2', ready: 'backdrop2', play: 'starfield', over: 'main3' };
+
+function render() {
+  var st = game.state;
+  var t = game.state.paused ? 0 : Math.min(1, (performance.now() - lastTickAt) / TICK_MS);
+  if (st.mode === 'play' && !st.paused && st.tickCount === 0) t = 0;
+
+  // backdrop
+  ctx.drawImage(imgs[BACKDROPS[st.mode]] || imgs.starfield, 0, 0, W, H);
+
+  if (st.mode === 'play') {
+    // rocks (glide interpolation)
+    for (var i = 0; i < st.rocks.length; i++) {
+      var r = st.rocks[i];
+      var p = Math.min(1, r.p + t * r.step);
+      var x = r.x0 + (r.x1 - r.x0) * p;
+      var y = r.y0 + (r.y1 - r.y0) * p;
+      drawImg(r.img, x, y, r.size, r.rot);
+    }
+    // lasers
+    for (var j = 0; j < st.lasers.length; j++) {
+      var lz = st.lasers[j];
+      var ly = lz.prevY + (lz.y - lz.prevY) * t;
+      drawImg('laser', lz.x, ly, 22.69, 0);
+    }
+    // shields
+    for (var k = 0; k < st.shields.length; k++) {
+      var sh = st.shields[k];
+      var sy = sh.prevY + (sh.y - sh.prevY) * t;
+      drawImg('shield_gold', sh.x, sy, 100, 0);
+    }
+    // life ships (ghost effect 50 in the original)
+    for (var m = 0; m < 3; m++) {
+      if (st.lifeShips[m].visible) drawImg('playerShip1_orange_small', st.lifeShips[m].x, st.lifeShips[m].y, 40, 0, 0.5);
+    }
+    // player ship
+    if (st.player.visible) drawImg('playerShip1_orange', st.player.x, st.player.y, 50, 0);
+    // explosion (follows the player, 9 frames)
+    if (st.explosion) {
+      var frame = String(st.explosion.frame);
+      drawImg('explosion0' + frame, st.explosion.x, st.explosion.y, 60, 0);
+    }
+  }
+
+  drawHUD(st);
+
+  if (st.mode === 'menu') drawHint('MOVE: MOUSE   ·   SHOOT: HOLD CLICK   ·   START: ENTER   ·   PAUSE: P   ·   MUTE: M', 352);
+  if (st.mode === 'over') drawHint('PRESS ENTER TO PLAY AGAIN', 352);
+  if (st.mode === 'play' && st.paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W / 2, H / 2 - 6);
+    ctx.font = '13px sans-serif';
+    ctx.fillText('press P or Esc to resume', W / 2, H / 2 + 18);
+  }
+  if (st.muted) {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText('MUTED', W - 6, 14);
+  }
+}
+
+function drawHUD(st) {
+  // Scratch-style variable monitors: score (top-left) and hi-score below it.
+  var label = 'SCORE ' + st.score;
+  drawMonitor(4, 4, label);
+  drawMonitor(4, 26, 'HI-SCORE ' + st.hiScore);
+}
+
+function drawMonitor(x, y, text) {
+  ctx.font = 'bold 11px sans-serif';
+  var w = ctx.measureText(text).width + 14;
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(x, y, w, 18, 5) : ctx.rect(x, y, w, 18);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#111111';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x + 7, y + 10);
+}
+
+function drawHint(text, y) {
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, y - 10, W, 20);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W / 2, y);
+}
+
+/* ---------------- boot ---------------- */
+
+buildAudio();
+loadImages(function () {
+  render();
+  requestAnimationFrame(function frame() {
+    render();
+    raf = requestAnimationFrame(frame);
+  });
+});
+</script>
+</body>
+</html>
