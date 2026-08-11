@@ -7,7 +7,9 @@ required.
 
 The original laser costume is preserved as `Images/laser-source.svg` and was
 rasterized to `Images/laser.png` because GDI+ does not load SVG files directly.
-The game deliberately renders every asset at a fixed, measured gameplay size:
+The classic ship is colorized at runtime from the original warm wing paint; its
+silhouette, cockpit and neutral trim are preserved for every paint option. The
+game deliberately renders every asset at a fixed, measured gameplay size:
 
 - ship: 66 × 50 logical pixels
 - laser: 10 × 30 logical pixels

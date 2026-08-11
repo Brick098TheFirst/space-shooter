@@ -1,3 +1,5 @@
+using System.Drawing.Imaging;
+
 namespace SpaceUnlimited;
 
 internal sealed class GameAssets : IDisposable
@@ -5,6 +7,7 @@ internal sealed class GameAssets : IDisposable
     public string Root { get; }
     public Image Starfield { get; }
     public Image ClassicShip { get; }
+    private readonly Bitmap[] _colorizedShips;
     public Image AsteroidLarge { get; }
     public Image AsteroidMediumA { get; }
     public Image AsteroidMediumB { get; }
@@ -37,6 +40,7 @@ internal sealed class GameAssets : IDisposable
         var imageRoot = Path.Combine(Root, "Images");
         Starfield = Load(imageRoot, "starfield.png");
         ClassicShip = Load(imageRoot, "classic-ship.png");
+        _colorizedShips = AccentColors.Select(ColorizeClassicShip).ToArray();
         AsteroidLarge = Load(imageRoot, "asteroid-large.png");
         AsteroidMediumA = Load(imageRoot, "asteroid-medium-a.png");
         AsteroidMediumB = Load(imageRoot, "asteroid-medium-b.png");
@@ -47,6 +51,45 @@ internal sealed class GameAssets : IDisposable
         ExplosionFrames = Enumerable.Range(0, 9)
             .Select(i => Load(imageRoot, $"explosion-{i}.png"))
             .ToArray();
+    }
+
+    public Image ShipFor(int accentIndex) => _colorizedShips[Math.Clamp(accentIndex, 0, _colorizedShips.Length - 1)];
+
+    private Bitmap ColorizeClassicShip(Color accent)
+    {
+        // Keep the original Scratch silhouette and neutral cockpit intact, while
+        // replacing the warm wing paint with the selected hangar color.
+        using var source = new Bitmap(ClassicShip);
+        var tinted = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppPArgb);
+        for (var y = 0; y < source.Height; y++)
+        {
+            for (var x = 0; x < source.Width; x++)
+            {
+                var pixel = source.GetPixel(x, y);
+                if (pixel.A == 0)
+                {
+                    tinted.SetPixel(x, y, Color.Transparent);
+                    continue;
+                }
+
+                var isWarmPaint = pixel.R > 140 && pixel.G < 245 && pixel.R > pixel.B + 18;
+                if (!isWarmPaint)
+                {
+                    tinted.SetPixel(x, y, pixel);
+                    continue;
+                }
+
+                var stripe = pixel.G > 120;
+                var brightness = stripe ? 1.08f : 0.86f;
+                var mapped = Color.FromArgb(
+                    pixel.A,
+                    Math.Clamp((int)(accent.R * brightness), 0, 255),
+                    Math.Clamp((int)(accent.G * brightness), 0, 255),
+                    Math.Clamp((int)(accent.B * brightness), 0, 255));
+                tinted.SetPixel(x, y, mapped);
+            }
+        }
+        return tinted;
     }
 
     public Image AsteroidFor(float radius, int variant)
@@ -71,6 +114,7 @@ internal sealed class GameAssets : IDisposable
     {
         Starfield.Dispose();
         ClassicShip.Dispose();
+        foreach (var ship in _colorizedShips) ship.Dispose();
         AsteroidLarge.Dispose();
         AsteroidMediumA.Dispose();
         AsteroidMediumB.Dispose();

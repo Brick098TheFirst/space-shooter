@@ -10,7 +10,7 @@ controller-ready implementation rather than an automatic 1:1 conversion.
 - Native 1280×720, 16:9 renderer with correct letterboxing at every window size
 - Measured ship, laser, shield and asteroid sizes—no oversized converted sprites
 - Keyboard, mouse and Xbox-compatible XInput controller support
-- Three ship hulls, five paint colors, four engine trails and three weapon rigs
+- The original Scratch ship silhouette, five paint colors, four engine trails and three weapon rigs
 - Escalating waves, asteroid splitting, enemy drones and aimed enemy fire
 - Dash with cooldown and invulnerability window
 - Shield, rapid-fire and repair pickups
