@@ -3,7 +3,8 @@
 
 #include <tonc.h>
 
-#define AUDIO_SAMPLE_RATE 16000
+/* Timer 0 / 1024 on GBA: 0xffff reload = exactly 16,384 Hz. */
+#define AUDIO_SAMPLE_RATE 16384
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

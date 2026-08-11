@@ -20,6 +20,10 @@ int main(void) {
     game_init();
     menu_init();
 
+    /* Fill a little audio ahead of the timer IRQ, then start the FIFO. */
+    audio_update();
+    audio_start();
+
     // Main Game Loop
     while (1) {
         menu_update();

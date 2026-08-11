@@ -14,7 +14,7 @@ def rgb15(r, g, b):
     b5 = (b >> 3) & 0x1F
     return r5 | (g5 << 5) | (b5 << 10)
 
-def resample_wav(path, target_rate=16000):
+def resample_wav(path, target_rate=16384):
     with wave.open(path, 'rb') as w:
         nch = w.getnchannels()
         sw = w.getsampwidth()
@@ -52,11 +52,11 @@ os.makedirs('gba/src', exist_ok=True)
 
 # 1. Process Audio
 audio_dir = 'SpaceUnlimited.Windows/Assets/Audio'
-menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 16000)
-game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16000)
-laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16000)
-explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 16000)
-pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 16000)
+menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 16384)
+game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16384)
+laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16384)
+explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 16384)
+pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 16384)
 
 print(f"Audio resampled: menu={len(menu_snd)}, game={len(game_snd)}, laser={len(laser_snd)}, expl={len(explosion_snd)}, pickup={len(pickup_snd)}")
 
@@ -66,7 +66,8 @@ with open('gba/include/audio_data.h', 'w') as f:
 
 #include <tonc.h>
 
-#define AUDIO_SAMPLE_RATE 16000
+/* Timer 0 / 1024 on GBA: 0xffff reload = exactly 16,384 Hz. */
+#define AUDIO_SAMPLE_RATE 16384
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

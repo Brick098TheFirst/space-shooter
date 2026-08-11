@@ -17,6 +17,7 @@ typedef enum {
 } SfxId;
 
 void audio_init(void);
+void audio_start(void);
 void audio_update(void);
 void audio_play_bgm(BgmTrack track);
 void audio_stop_bgm(void);
