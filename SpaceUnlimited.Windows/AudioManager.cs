@@ -11,6 +11,9 @@ internal sealed class AudioManager : IDisposable
     private readonly PlayerSettings _settings;
     private string _currentMusic = string.Empty;
     private bool _disposed;
+    // MCI is synchronous. Do not send a command for every frame while the
+    // fire button is held; doing so can block the game/UI thread.
+    private long _lastLaserTicks;
 
     public AudioManager(PlayerSettings settings, string assetRoot)
     {
@@ -26,7 +29,18 @@ internal sealed class AudioManager : IDisposable
     public void PlayMenuMusic() => PlayMusic("menuMusic");
     public void PlayGameMusic() => PlayMusic("gameMusic");
 
-    public void PlayLaser() => PlayEffect("laserFx");
+    public void PlayLaser()
+    {
+        // The laser is deliberately rate-limited: rapid-fire can produce dozens
+        // of shots per second, while the sound itself is short and repetitive.
+        // MCI calls run on the WinForms thread and were the source of the hitch
+        // when firing continuously.
+        var now = Environment.TickCount64;
+        if (now - _lastLaserTicks < 45) return;
+        _lastLaserTicks = now;
+        PlayEffect("laserFx");
+    }
+
     public void PlayExplosion() => PlayEffect("explosionFx");
     public void PlayPickup() => PlayEffect("pickupFx");
 
@@ -73,9 +87,10 @@ internal sealed class AudioManager : IDisposable
 
     private static void PlayEffect(string alias)
     {
+        // Stop plus play-from-zero reliably restarts the short effect while
+        // avoiding the extra seek command in the old three-call sequence.
         Send($"stop {alias}");
-        Send($"seek {alias} to start");
-        Send($"play {alias}");
+        Send($"play {alias} from 0");
     }
 
     private static void Open(string alias, string path)

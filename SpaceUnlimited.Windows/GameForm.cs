@@ -456,9 +456,14 @@ internal sealed class GameForm : Form
         base.OnPaint(e);
         using (var graphics = Graphics.FromImage(_canvas))
         {
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            // Game rendering is already at the fixed 1280x720 canvas size.
+            // High-quality filtering makes GDI+ resample every laser and sprite
+            // on every frame, which is especially costly during rapid fire.
+            graphics.SmoothingMode = _screen == GameScreen.Playing ? SmoothingMode.None : SmoothingMode.AntiAlias;
+            graphics.InterpolationMode = _screen == GameScreen.Playing
+                ? InterpolationMode.NearestNeighbor
+                : InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = _screen == GameScreen.Playing ? PixelOffsetMode.HighSpeed : PixelOffsetMode.HighQuality;
             graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             Render(graphics);
         }
