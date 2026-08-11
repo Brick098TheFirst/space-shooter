@@ -5,7 +5,9 @@ from pathlib import Path
 import struct
 import wave
 
-ROOT = Path(__file__).resolve().parents[1] / "SpaceUnlimited.Windows" / "Assets"
+_cand = Path(__file__).resolve().parents[1] / "Assets"
+_legacy = Path(__file__).resolve().parents[1] / "SpaceUnlimited.Windows" / "Assets"
+ROOT = _cand if _cand.exists() else _legacy
 IMAGES = ROOT / "Images"
 AUDIO = ROOT / "Audio"
 

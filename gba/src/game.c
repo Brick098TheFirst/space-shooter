@@ -92,10 +92,27 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
     }
 }
 
+static void award_coins(int amount) {
+    g_settings.coins += amount;
+    if (g_settings.coins > 99999) g_settings.coins = 99999;
+}
+
 static void award_score(int base_pts) {
     g_game.score += base_pts * g_game.combo;
     if (g_game.combo < 8) g_game.combo++;
     g_game.combo_timer = 156; // 2.6 seconds at 60 FPS
+    // Coins per kill (without combo multiplier to keep economy tight)
+    // Award is separate from score so shop stays balanced
+}
+
+static int coins_for_asteroid(AsteroidType type) {
+    switch (type) {
+        case AST_LARGE: return 15;
+        case AST_MED_A:
+        case AST_MED_B: return 8;
+        case AST_SMALL: return 4;
+        default: return 3; // TINY
+    }
 }
 
 static void damage_player(void) {
@@ -120,8 +137,9 @@ static void damage_player(void) {
             if (g_game.score > g_settings.high_score) {
                 g_settings.high_score = g_game.score;
                 g_game.is_new_high_score = true;
-                save_write();
             }
+            // Persist coins and high score at death
+            save_write();
         }
     }
 
@@ -159,26 +177,28 @@ static void spawn_asteroid(AsteroidType type, int x, int y, int vx, int vy) {
 
 static void destroy_asteroid(int idx, bool award) {
     Asteroid* a = &g_game.asteroids[idx];
+    AsteroidType t = a->type;
     a->active = false;
     int ax = FROM_FIXED(a->x);
     int ay = FROM_FIXED(a->y);
     trigger_explosion(ax, ay);
 
     if (award) {
-        int pts = (a->type == AST_LARGE) ? 60 : ((a->type == AST_MED_A || a->type == AST_MED_B) ? 35 : 20);
+        int pts = (t == AST_LARGE) ? 60 : ((t == AST_MED_A || t == AST_MED_B) ? 35 : 20);
         award_score(pts);
+        award_coins(coins_for_asteroid(t));
 
         int mult = get_diff_speed_mult();
-        if (a->type == AST_LARGE) {
+        if (t == AST_LARGE) {
             int spd = (160 * mult) >> 8;
             spawn_asteroid(AST_MED_A, a->x - TO_FIXED(6), a->y, -spd, spd);
             spawn_asteroid(AST_MED_B, a->x + TO_FIXED(6), a->y, spd, spd);
-        } else if (a->type == AST_MED_A || a->type == AST_MED_B) {
+        } else if (t == AST_MED_A || t == AST_MED_B) {
             int spd = (200 * mult) >> 8;
             spawn_asteroid(AST_SMALL, a->x - TO_FIXED(4), a->y, -spd, spd);
             spawn_asteroid(AST_TINY, a->x + TO_FIXED(4), a->y, spd, spd);
         }
-        try_spawn_powerup(ax, ay, 15);
+        try_spawn_powerup(ax, ay, 4); // was 15 — much rarer now
     }
 }
 
@@ -191,7 +211,8 @@ static void destroy_drone(int idx, bool award) {
 
     if (award) {
         award_score(110);
-        try_spawn_powerup(dx, dy, 28);
+        award_coins(25);
+        try_spawn_powerup(dx, dy, 7); // was 28 — rare
     }
 }
 
@@ -673,9 +694,11 @@ void game_draw(void) {
             if (g_game.bullets[i].enemy) {
                 gfx_draw_sprite(bx - 3, by - 3, 6, 6, spr_laser_enemy);
             } else if (g_game.bullets[i].heavy) {
-                gfx_draw_sprite(bx - 3, by - 7, 6, 14, spr_laser_heavy);
+                const u8* spr = gfx_get_laser_heavy_sprite(g_settings.laser_index);
+                gfx_draw_sprite(bx - 3, by - 7, 6, 14, spr);
             } else {
-                gfx_draw_sprite(bx - 2, by - 5, 4, 10, spr_laser_standard);
+                const u8* spr = gfx_get_laser_standard_sprite(g_settings.laser_index);
+                gfx_draw_sprite(bx - 2, by - 5, 4, 10, spr);
             }
         }
     }
@@ -757,11 +780,15 @@ void game_draw(void) {
     siprintf(buf, "W%02d", g_game.wave);
     gfx_draw_text_centered(96, 4, 48, buf, PAL_TEXT_CYAN);
 
+    // Coins in same top bar (right side, small)
+    siprintf(buf, "$%u", (unsigned int)g_settings.coins);
+    gfx_draw_text(174, 4, buf, PAL_TEXT_GOLD);
+
     for (int i = 0; i < g_game.player.lives && i < 5; i++) {
-        gfx_draw_char(170 + i * 8, 4, '^', PAL_TEXT_GREEN);
+        gfx_draw_char(170 + i * 7, 11, '^', PAL_TEXT_GREEN);
     }
     for (int i = 0; i < g_game.player.shield_charges && i < 3; i++) {
-        gfx_draw_char(214 + i * 8, 4, '*', PAL_TEXT_CYAN);
+        gfx_draw_char(209 + i * 7, 11, '*', PAL_TEXT_CYAN);
     }
 
     // Combo Indicator (Below score if > 1)

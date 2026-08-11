@@ -1,7 +1,7 @@
 {
   "name": "space-unlimited-gba",
   "version": "1.0.0",
-  "description": "Space Unlimited: Recharged - Authentic Game Boy Advance (GBA) Port",
+  "description": "Space Unlimited: Recharged - Authentic Game Boy Advance (GBA) Port with coin shop and rare powerups",
   "type": "module",
   "scripts": {
     "generate-assets": "python3 tools/generate_gba_data.py",

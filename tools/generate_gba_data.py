@@ -132,8 +132,15 @@ def quantize_8bit(samples, gain):
 os.makedirs('gba/include', exist_ok=True)
 os.makedirs('gba/src', exist_ok=True)
 
-# 1. Process Audio
-audio_dir = 'SpaceUnlimited.Windows/Assets/Audio'
+# 1. Process Audio — prefer new Assets/ location, fall back to legacy Windows path
+def _resolve_assets(sub):
+    cand1 = os.path.join('Assets', sub)
+    cand2 = os.path.join('SpaceUnlimited.Windows', 'Assets', sub)
+    if os.path.exists(cand1):
+        return cand1
+    return cand2
+
+audio_dir = _resolve_assets('Audio')
 menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 18157)
 game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 18157)
 laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 18157)
@@ -429,7 +436,7 @@ def find_closest_color(r, g, b, min_idx=1, max_idx=255):
             best_idx = i
     return best_idx
 
-img_dir = 'SpaceUnlimited.Windows/Assets/Images'
+img_dir = _resolve_assets('Images')
 
 w_ship, h_ship, px_ship = decode_png(os.path.join(img_dir, 'classic-ship.png'))
 _, _, ship_scaled = scale_image(w_ship, h_ship, px_ship, 20, 16)
