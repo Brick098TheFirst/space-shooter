@@ -61,9 +61,11 @@ The WAV files under `SpaceUnlimited.Windows/Assets/Audio/` are the source assets
 
 ### GBA audio implementation notes
 
-- The GBA DirectSound FIFOs accept signed 8-bit PCM and are fed in 32-bit words; Timer 0 / 1024 with a `0xffff` reload produces the exact 16,384 Hz sample clock.
-- The mixer uses a short producer/consumer ring instead of changing a live FIFO-DMA source pointer at every VBlank. This avoids reading beyond a small buffer, which was the source of the static-and-silence failure on hardware.
-- The timer ISR is intentionally tiny: it writes one four-sample word every four timer ticks and acknowledges only `IRQ_TIMER0`. Music and up to four effects are mixed ahead of time by the main loop.
+- The GBA DirectSound FIFOs accept signed 8-bit PCM. Timer 0 / 1024 (reload `0xFFF0`) runs at 1,024 Hz and directly triggers DMA 2, which copies the next 16 mixed samples from a producer/consumer ring into FIFO A — 1,024 × 16 = exactly 16,384 samples/s. The DMA fires at the exact timer overflow, so there is no interrupt-latency jitter and the FIFO never underruns.
+- The 1,024 Hz timer ISR is intentionally tiny: it only advances the ring read pointer and re-arms the one-shot DMA for the next overflow (mGBA's repeat-DMA mode stops transferring after a few seconds, so the DMA is deliberately re-armed instead). Music and up to four effects are mixed ahead of time by the main loop.
+- A 16-sample mirror of the ring head is kept right after the ring so a DMA window can never read past the end of the buffer.
+- Asset conversion is band-limited: `tools/generate_gba_data.py` resamples the source WAVs with a windowed-sinc low-pass filter (cutoff just below the 8.192 kHz output Nyquist), removes DC offset, normalizes tracks as a group to preserve their original loudness balance, and quantizes to 8-bit with TPDF dithering plus first-order noise shaping. Without the low-pass filter, high-frequency content (menu.wav carries ~30× more energy above 8 kHz than in its melody band) folded back into the audible range as harsh buzz.
+- The menus, HUD and starfield base are cached in a static layer and blitted with one DMA per frame, which keeps the game at 60 FPS so the audio ring never starves.
 - This follows the GBA DirectSound timer/FIFO requirements documented in [gbadoc's Direct Sound guide](https://gbadev.net/gbadoc/audio/directsound.html), [Tonc's sound register reference](https://gbadev.net/tonc/sndsqr.html), and [Tonc's interrupt guidance](https://gbadev.net/tonc/interrupts.html).
 
 ### 3. Run the Interactive Web Player / Preview

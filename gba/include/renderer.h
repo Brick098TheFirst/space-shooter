@@ -9,6 +9,13 @@ void gfx_init(void);
 void gfx_flip(void);
 void gfx_clear(u8 color);
 
+/* Static-layer caching: draw the unchanging screen parts into the cache with
+ * gfx_set_target(), then blit them into the frame with gfx_apply_static(). */
+void gfx_set_target(u8* buf);
+void gfx_apply_static(void);
+
+extern u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT];
+
 void gfx_draw_pixel(int x, int y, u8 color);
 void gfx_fill_rect(int x, int y, int w, int h, u8 color);
 void gfx_draw_rect(int x, int y, int w, int h, u8 color);

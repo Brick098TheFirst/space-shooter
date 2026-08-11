@@ -2,6 +2,25 @@
 #include <string.h>
 
 EWRAM_BSS static u8 s_back_buffer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
+EWRAM_BSS u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
+
+/* Most of the screen (menus, HUD, starfield base) is identical from frame to
+ * frame, and every pixel costs ~20-40 cycles to write on this target.  The
+ * screens are therefore split into a static layer, rendered once per screen
+ * change, and a small dynamic pass per frame.  gfx_apply_static() blits the
+ * cached layer into the back buffer with a single DMA transfer before the
+ * dynamic sprites/text are drawn.  This is what keeps a full 60 FPS while
+ * the audio ring stays fed. */
+static u8* s_rt = s_back_buffer;
+
+void gfx_set_target(u8* buf) {
+    /* NULL selects the normal frame back buffer again. */
+    s_rt = buf ? buf : s_back_buffer;
+}
+
+void gfx_apply_static(void) {
+    dma3_cpy(s_back_buffer, gfx_static_layer, sizeof(gfx_static_layer));
+}
 
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
@@ -27,17 +46,17 @@ void gfx_flip(void) {
     vid_page = (COLOR*)((REG_DISPCNT & DCNT_PAGE) ? MEM_VRAM : MEM_VRAM_BACK);
 }
 
-void gfx_clear(u8 color) {
-    memset(s_back_buffer, color, sizeof(s_back_buffer));
+IWRAM_CODE void gfx_clear(u8 color) {
+    memset(s_rt, color, SCREEN_WIDTH * SCREEN_HEIGHT);
 }
 
-void gfx_draw_pixel(int x, int y, u8 color) {
+IWRAM_CODE void gfx_draw_pixel(int x, int y, u8 color) {
     if ((unsigned)x < SCREEN_WIDTH && (unsigned)y < SCREEN_HEIGHT) {
-        s_back_buffer[y * SCREEN_WIDTH + x] = color;
+        s_rt[y * SCREEN_WIDTH + x] = color;
     }
 }
 
-void gfx_fill_rect(int x, int y, int w, int h, u8 color) {
+IWRAM_CODE void gfx_fill_rect(int x, int y, int w, int h, u8 color) {
     if (x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT || w <= 0 || h <= 0) return;
     int x0 = x < 0 ? 0 : x;
     int y0 = y < 0 ? 0 : y;
@@ -47,11 +66,11 @@ void gfx_fill_rect(int x, int y, int w, int h, u8 color) {
     if (span <= 0) return;
     
     for (int py = y0; py < y1; py++) {
-        memset(&s_back_buffer[py * SCREEN_WIDTH + x0], color, span);
+        memset(&s_rt[py * SCREEN_WIDTH + x0], color, span);
     }
 }
 
-void gfx_draw_rect(int x, int y, int w, int h, u8 color) {
+IWRAM_CODE void gfx_draw_rect(int x, int y, int w, int h, u8 color) {
     if (w <= 0 || h <= 0) return;
     gfx_fill_rect(x, y, w, 1, color);
     gfx_fill_rect(x, y + h - 1, w, 1, color);
@@ -59,7 +78,7 @@ void gfx_draw_rect(int x, int y, int w, int h, u8 color) {
     gfx_fill_rect(x + w - 1, y, 1, h, color);
 }
 
-void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_color) {
+IWRAM_CODE void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_color) {
     if (w < 4 || h < 4) return;
     gfx_fill_rect(x + 1, y + 1, w - 2, h - 2, fill_color);
     gfx_draw_rect(x + 1, y, w - 2, 1, border_color);
@@ -68,7 +87,7 @@ void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_co
     gfx_draw_rect(x + w - 1, y + 1, 1, h - 2, border_color);
 }
 
-void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
+IWRAM_CODE void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
     int x0 = x < 0 ? 0 : x;
     int y0 = y < 0 ? 0 : y;
     int x1 = x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
@@ -77,7 +96,7 @@ void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
     for (int py = y0; py < y1; py++) {
         int sy = py - y;
         const u8* src_row = &data[sy * w];
-        u8* dst_row = &s_back_buffer[py * SCREEN_WIDTH];
+        u8* dst_row = &s_rt[py * SCREEN_WIDTH];
         for (int px = x0; px < x1; px++) {
             int sx = px - x;
             u8 pix = src_row[sx];
@@ -88,14 +107,14 @@ void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
     }
 }
 
-void gfx_draw_char(int x, int y, char c, u8 color) {
+IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
     if (c < 32 || c > 127) c = '?';
     const u8* glyph = font_5x7[c - 32];
     for (int r = 0; r < 7; r++) {
         int py = y + r;
         if ((unsigned)py >= SCREEN_HEIGHT) continue;
         u8 row = glyph[r];
-        u8* dst = &s_back_buffer[py * SCREEN_WIDTH];
+        u8* dst = &s_rt[py * SCREEN_WIDTH];
         for (int col = 0; col < 5; col++) {
             int px = x + col;
             if ((unsigned)px < SCREEN_WIDTH && (row & (1 << (4 - col)))) {
@@ -105,7 +124,7 @@ void gfx_draw_char(int x, int y, char c, u8 color) {
     }
 }
 
-void gfx_draw_text(int x, int y, const char* str, u8 color) {
+IWRAM_CODE void gfx_draw_text(int x, int y, const char* str, u8 color) {
     if (!str) return;
     int cur_x = x;
     while (*str) {
@@ -120,12 +139,12 @@ void gfx_draw_text(int x, int y, const char* str, u8 color) {
     }
 }
 
-void gfx_draw_text_shadow(int x, int y, const char* str, u8 color, u8 shadow_color) {
+IWRAM_CODE void gfx_draw_text_shadow(int x, int y, const char* str, u8 color, u8 shadow_color) {
     gfx_draw_text(x + 1, y + 1, str, shadow_color);
     gfx_draw_text(x, y, str, color);
 }
 
-void gfx_draw_text_centered(int x, int y, int w, const char* str, u8 color) {
+IWRAM_CODE void gfx_draw_text_centered(int x, int y, int w, const char* str, u8 color) {
     if (!str) return;
     int len = strlen(str);
     int text_w = len * 6 - 1;
@@ -133,7 +152,7 @@ void gfx_draw_text_centered(int x, int y, int w, const char* str, u8 color) {
     gfx_draw_text(start_x, y, str, color);
 }
 
-void gfx_draw_button(int x, int y, int w, int h, const char* label, bool selected) {
+IWRAM_CODE void gfx_draw_button(int x, int y, int w, int h, const char* label, bool selected) {
     u8 bg = selected ? PAL_BTN_HOVER : PAL_BTN_BG;
     u8 border = selected ? PAL_TEXT_WHITE : PAL_BTN_BORDER;
     u8 text_col = selected ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
@@ -149,7 +168,7 @@ void gfx_draw_button(int x, int y, int w, int h, const char* label, bool selecte
     }
 }
 
-void gfx_draw_badge(int x, int y, const char* label, u8 accent_color) {
+IWRAM_CODE void gfx_draw_badge(int x, int y, const char* label, u8 accent_color) {
     int len = strlen(label);
     int w = len * 6 + 6;
     int h = 10;
@@ -157,14 +176,14 @@ void gfx_draw_badge(int x, int y, const char* label, u8 accent_color) {
     gfx_draw_text(x + 3, y + 2, label, accent_color);
 }
 
-void gfx_draw_swatch(int x, int y, int size, u8 color_idx, const char* label) {
+IWRAM_CODE void gfx_draw_swatch(int x, int y, int size, u8 color_idx, const char* label) {
     gfx_draw_glass_card(x, y, size, size, PAL_TEXT_WHITE, color_idx);
     if (label) {
         gfx_draw_text(x + size + 4, y + (size - 7) / 2, label, PAL_TEXT_WHITE);
     }
 }
 
-void gfx_draw_progress_bar(int x, int y, int w, int h, int current, int max_val, u8 fg_color, u8 bg_color) {
+IWRAM_CODE void gfx_draw_progress_bar(int x, int y, int w, int h, int current, int max_val, u8 fg_color, u8 bg_color) {
     gfx_draw_rect(x, y, w, h, bg_color);
     if (max_val <= 0) return;
     int fill_w = (current * (w - 2)) / max_val;

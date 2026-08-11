@@ -11,6 +11,33 @@ static int s_menu_selected = 0;
 static int s_anim_frame = 0;
 static char s_detail_buf[128];
 
+/* The screens are split into a static layer (cards, labels, starfield base -
+ * everything that does not change every frame) and a small dynamic pass.
+ * The static layer is re-rendered whenever the screen changes or a setting
+ * changes; per frame we only blit it (one DMA) and draw the moving bits.
+ * This keeps the frame inside the CPU budget so the audio ring never runs
+ * dry (the whole game used to stall at ~12 FPS because every frame redrew
+ * ~70,000 pixels at ~20-40 cycles each). */
+static bool s_static_valid = false;
+
+static void menu_static_invalidate(void) {
+    s_static_valid = false;
+}
+
+static void menu_static_begin(void) {
+    gfx_set_target(gfx_static_layer);
+}
+
+static void menu_static_end(void) {
+    gfx_set_target(NULL);
+    s_static_valid = true;
+}
+
+static void menu_draw_base(void) {
+    gfx_apply_static();
+    starfield_draw_stars(0, 0);
+}
+
 void menu_init(void) {
     s_current_screen = SCREEN_MAIN_MENU;
     s_menu_selected = 0;
@@ -21,6 +48,7 @@ void menu_init(void) {
 void menu_open(GameScreen screen) {
     s_current_screen = screen;
     s_menu_selected = 0;
+    menu_static_invalidate();
     if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS || screen == SCREEN_CONTROLS || screen == SCREEN_CREDITS) {
         audio_play_bgm(BGM_MENU);
     }
@@ -74,14 +102,17 @@ static void update_hangar(void) {
             case 0:
                 g_settings.accent_index = (g_settings.accent_index + delta + 5) % 5;
                 save_write();
+                menu_static_invalidate();
                 break;
             case 1:
                 g_settings.trail_index = (g_settings.trail_index + delta + 4) % 4;
                 save_write();
+                menu_static_invalidate();
                 break;
             case 2:
                 g_settings.weapon_rig = (WeaponRig)((g_settings.weapon_rig + delta + 3) % 3);
                 save_write();
+                menu_static_invalidate();
                 break;
         }
     }
@@ -93,6 +124,7 @@ static void update_hangar(void) {
             else if (s_menu_selected == 1) g_settings.trail_index = (g_settings.trail_index + 1) % 4;
             else if (s_menu_selected == 2) g_settings.weapon_rig = (WeaponRig)((g_settings.weapon_rig + 1) % 3);
             save_write();
+            menu_static_invalidate();
         } else if (s_menu_selected == 3) {
             game_start();
             s_current_screen = SCREEN_PLAYING;
@@ -124,22 +156,26 @@ static void update_settings(void) {
             case 0:
                 g_settings.difficulty = (Difficulty)((g_settings.difficulty + delta + 3) % 3);
                 save_write();
+                menu_static_invalidate();
                 break;
             case 1:
                 g_settings.music_volume += delta * 10;
                 if (g_settings.music_volume < 0) g_settings.music_volume = 0;
                 if (g_settings.music_volume > 100) g_settings.music_volume = 100;
                 save_write();
+                menu_static_invalidate();
                 break;
             case 2:
                 g_settings.sfx_volume += delta * 10;
                 if (g_settings.sfx_volume < 0) g_settings.sfx_volume = 0;
                 if (g_settings.sfx_volume > 100) g_settings.sfx_volume = 100;
                 save_write();
+                menu_static_invalidate();
                 break;
             case 3:
                 g_settings.screen_shake = !g_settings.screen_shake;
                 save_write();
+                menu_static_invalidate();
                 break;
         }
     }
@@ -148,12 +184,15 @@ static void update_settings(void) {
         if (s_menu_selected == 0) {
             g_settings.difficulty = (Difficulty)((g_settings.difficulty + 1) % 3);
             save_write();
+            menu_static_invalidate();
         } else if (s_menu_selected == 3) {
             g_settings.screen_shake = !g_settings.screen_shake;
             save_write();
+            menu_static_invalidate();
         } else if (s_menu_selected == 4) {
             g_settings.high_score = 0;
             save_write();
+            menu_static_invalidate();
         } else if (s_menu_selected == 5) {
             menu_open(SCREEN_MAIN_MENU);
         }
@@ -281,32 +320,16 @@ void menu_update(void) {
 // RENDERING
 // ──────────────────────────────────────────────────────────────────────────
 
-static void draw_menu_ship_preview(int card_x, int card_y, int card_w, int card_h) {
+/* Static half of the ship preview card: frame, labels and info rows. */
+static void draw_ship_preview_static(int card_x, int card_y, int card_w, int card_h) {
     gfx_draw_glass_card(card_x, card_y, card_w, card_h, PAL_BTN_BORDER, 14);
-
     gfx_draw_text(card_x + 6, card_y + 4, "SHIP PREVIEW", PAL_TEXT_CYAN);
     gfx_draw_text(card_x + 6, card_y + 13, "Original Mk I", PAL_TEXT_WHITE);
 
-    // Ship display
-    int ship_x = card_x + (card_w - 20) / 2;
-    int ship_y = card_y + 25;
-    int accent = g_settings.accent_index;
-    if (accent < 0 || accent > 4) accent = 1;
-    gfx_draw_sprite(ship_x, ship_y, 20, 16, spr_ship[accent]);
-
-    // Engine glow flare
-    u8 trail_col = gfx_get_trail_color(g_settings.trail_index);
-    if ((s_anim_frame & 4) == 0) {
-        gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
-    } else {
-        gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
-    }
-
-    // Info rows
     gfx_draw_rect(card_x + 4, card_y + 45, card_w - 8, 1, 20);
 
     gfx_draw_text(card_x + 6, card_y + 49, "PAINT", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 36, card_y + 49, gfx_get_accent_name(accent), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 36, card_y + 49, gfx_get_accent_name(g_settings.accent_index), PAL_TEXT_WHITE);
 
     gfx_draw_text(card_x + 6, card_y + 59, "TRAIL", PAL_TEXT_CYAN);
     gfx_draw_text(card_x + 36, card_y + 59, gfx_get_trail_name(g_settings.trail_index), PAL_TEXT_WHITE);
@@ -322,10 +345,25 @@ static void draw_menu_ship_preview(int card_x, int card_y, int card_w, int card_
     gfx_draw_badge(card_x + 6, card_y + 91, "READY", PAL_TEXT_GREEN);
 }
 
-static void render_main_menu(void) {
-    starfield_draw(0, 0);
+/* Dynamic half: the ship sprite and its flickering engine flare. */
+static void draw_ship_preview_dynamic(int card_x, int card_y, int card_w) {
+    int ship_x = card_x + (card_w - 20) / 2;
+    int ship_y = card_y + 25;
+    int accent = g_settings.accent_index;
+    if (accent < 0 || accent > 4) accent = 1;
+    gfx_draw_sprite(ship_x, ship_y, 20, 16, spr_ship[accent]);
 
-    // Left Column: Header & Buttons
+    u8 trail_col = gfx_get_trail_color(g_settings.trail_index);
+    if ((s_anim_frame & 4) == 0) {
+        gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
+    } else {
+        gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
+    }
+}
+
+static void render_main_menu_static(void) {
+    starfield_draw_base(0, 0);
+
     gfx_draw_text(10, 8, "SPACE UNLIMITED", PAL_TEXT_CYAN);
     gfx_draw_text(10, 18, "Recharged", PAL_TEXT_WHITE);
     gfx_fill_rect(10, 28, 45, 1, PAL_TEXT_CYAN);
@@ -335,52 +373,80 @@ static void render_main_menu(void) {
     int start_y = 44;
     int step_y = 19;
     for (int i = 0; i < 5; i++) {
-        gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], s_menu_selected == i);
+        gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], false);
     }
 
-    // Right Column: Ship Preview Card
-    draw_menu_ship_preview(108, 10, 126, 106);
+    draw_ship_preview_static(108, 10, 126, 106);
 
-    // Footer
     gfx_draw_glass_card(108, 120, 126, 32, PAL_BTN_BORDER, 14);
     gfx_draw_text_centered(108, 124, 126, "D-PAD Navigate", PAL_TEXT_WHITE);
     gfx_draw_text_centered(108, 136, 126, "A Select", PAL_TEXT_CYAN);
 }
 
-static void render_hangar(void) {
-    starfield_draw(0, 0);
+static void render_main_menu_dynamic(void) {
+    menu_draw_base();
 
-    // Header
+    const char* items[] = { "Play", "Hangar", "Settings", "Controls", "Credits" };
+    gfx_draw_button(10, 44 + s_menu_selected * 19, 90, 16, items[s_menu_selected], true);
+    draw_ship_preview_dynamic(108, 10, 126);
+}
+
+static void render_hangar_static(void) {
+    starfield_draw_base(0, 0);
+
     gfx_draw_text(10, 6, "Hangar", PAL_TEXT_WHITE);
     gfx_draw_text(10, 16, "Customize ship & weapon rig", 17);
     gfx_fill_rect(10, 26, SCREEN_WIDTH - 20, 1, 20);
 
-    // Left options
     char buf[32];
 
     siprintf(buf, "Paint: %s", gfx_get_accent_name(g_settings.accent_index));
-    gfx_draw_button(10, 32, 116, 16, buf, s_menu_selected == 0);
+    gfx_draw_button(10, 32, 116, 16, buf, false);
 
     siprintf(buf, "Trail: %s", gfx_get_trail_name(g_settings.trail_index));
-    gfx_draw_button(10, 52, 116, 16, buf, s_menu_selected == 1);
+    gfx_draw_button(10, 52, 116, 16, buf, false);
 
     siprintf(buf, "Rig: %s", gfx_get_weapon_name(g_settings.weapon_rig));
-    gfx_draw_button(10, 72, 116, 16, buf, s_menu_selected == 2);
+    gfx_draw_button(10, 72, 116, 16, buf, false);
 
-    gfx_draw_button(10, 96, 116, 16, "Launch Run", s_menu_selected == 3);
-    gfx_draw_button(10, 116, 116, 16, "Back", s_menu_selected == 4);
+    gfx_draw_button(10, 96, 116, 16, "Launch Run", false);
+    gfx_draw_button(10, 116, 116, 16, "Back", false);
 
-    // Right Preview Card
-    draw_menu_ship_preview(132, 32, 100, 100);
+    draw_ship_preview_static(132, 32, 100, 100);
 
-    // Footer
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "LEFT/RIGHT Adjust   A Select   B Back", PAL_TEXT_WHITE);
 }
 
-static void render_settings(void) {
-    starfield_draw(0, 0);
+static void render_hangar_dynamic(void) {
+    menu_draw_base();
 
-    // Header
+    char buf[32];
+    switch (s_menu_selected) {
+        case 0:
+            siprintf(buf, "Paint: %s", gfx_get_accent_name(g_settings.accent_index));
+            gfx_draw_button(10, 32, 116, 16, buf, true);
+            break;
+        case 1:
+            siprintf(buf, "Trail: %s", gfx_get_trail_name(g_settings.trail_index));
+            gfx_draw_button(10, 52, 116, 16, buf, true);
+            break;
+        case 2:
+            siprintf(buf, "Rig: %s", gfx_get_weapon_name(g_settings.weapon_rig));
+            gfx_draw_button(10, 72, 116, 16, buf, true);
+            break;
+        case 3:
+            gfx_draw_button(10, 96, 116, 16, "Launch Run", true);
+            break;
+        default:
+            gfx_draw_button(10, 116, 116, 16, "Back", true);
+            break;
+    }
+    draw_ship_preview_dynamic(132, 32, 100);
+}
+
+static void render_settings_static(void) {
+    starfield_draw_base(0, 0);
+
     gfx_draw_text(10, 6, "Settings", PAL_TEXT_WHITE);
     gfx_draw_text(10, 16, "Auto-saved to cartridge SRAM", 17);
     gfx_fill_rect(10, 26, SCREEN_WIDTH - 20, 1, 20);
@@ -388,24 +454,57 @@ static void render_settings(void) {
     char buf[32];
 
     siprintf(buf, "Difficulty: %s", gfx_get_diff_name(g_settings.difficulty));
-    gfx_draw_button(10, 32, 110, 16, buf, s_menu_selected == 0);
+    gfx_draw_button(10, 32, 110, 16, buf, false);
 
     siprintf(buf, "Music: %d%%", g_settings.music_volume);
-    gfx_draw_button(10, 50, 110, 16, buf, s_menu_selected == 1);
+    gfx_draw_button(10, 50, 110, 16, buf, false);
 
     siprintf(buf, "SFX: %d%%", g_settings.sfx_volume);
-    gfx_draw_button(10, 68, 110, 16, buf, s_menu_selected == 2);
+    gfx_draw_button(10, 68, 110, 16, buf, false);
 
     siprintf(buf, "Shake: %s", g_settings.screen_shake ? "On" : "Off");
-    gfx_draw_button(10, 86, 110, 16, buf, s_menu_selected == 3);
+    gfx_draw_button(10, 86, 110, 16, buf, false);
 
-    gfx_draw_button(10, 104, 110, 16, "Reset High Score", s_menu_selected == 4);
-    gfx_draw_button(10, 122, 110, 16, "Back", s_menu_selected == 5);
+    gfx_draw_button(10, 104, 110, 16, "Reset High Score", false);
+    gfx_draw_button(10, 122, 110, 16, "Back", false);
 
-    // Right Description Card
     gfx_draw_glass_card(126, 32, 104, 106, PAL_BTN_BORDER, 14);
     gfx_draw_text(130, 36, "DETAILS", PAL_TEXT_CYAN);
+    gfx_draw_badge(130, 120, "AUTO-SAVE", PAL_TEXT_GREEN);
 
+    gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "LEFT/RIGHT Adjust   A Confirm   B Back", PAL_TEXT_WHITE);
+}
+
+static void render_settings_dynamic(void) {
+    menu_draw_base();
+
+    char buf[32];
+    switch (s_menu_selected) {
+        case 0:
+            siprintf(buf, "Difficulty: %s", gfx_get_diff_name(g_settings.difficulty));
+            gfx_draw_button(10, 32, 110, 16, buf, true);
+            break;
+        case 1:
+            siprintf(buf, "Music: %d%%", g_settings.music_volume);
+            gfx_draw_button(10, 50, 110, 16, buf, true);
+            break;
+        case 2:
+            siprintf(buf, "SFX: %d%%", g_settings.sfx_volume);
+            gfx_draw_button(10, 68, 110, 16, buf, true);
+            break;
+        case 3:
+            siprintf(buf, "Shake: %s", g_settings.screen_shake ? "On" : "Off");
+            gfx_draw_button(10, 86, 110, 16, buf, true);
+            break;
+        case 4:
+            gfx_draw_button(10, 104, 110, 16, "Reset High Score", true);
+            break;
+        default:
+            gfx_draw_button(10, 122, 110, 16, "Back", true);
+            break;
+    }
+
+    // Detail text follows the selection
     const char* desc = "";
     switch (s_menu_selected) {
         case 0:
@@ -420,19 +519,14 @@ static void render_settings(void) {
         default: desc = "Return to the\nmain menu."; break;
     }
     gfx_draw_text(130, 48, desc, PAL_TEXT_WHITE);
-    gfx_draw_badge(130, 120, "AUTO-SAVE", PAL_TEXT_GREEN);
-
-    // Footer
-    gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "LEFT/RIGHT Adjust   A Confirm   B Back", PAL_TEXT_WHITE);
 }
 
-static void render_controls(void) {
-    starfield_draw(0, 0);
+static void render_controls_static(void) {
+    starfield_draw_base(0, 0);
 
     gfx_draw_text(10, 6, "Controls & Guide", PAL_TEXT_WHITE);
     gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
 
-    // Left card: GBA Controls
     gfx_draw_glass_card(8, 20, 108, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(12, 24, "GBA CONTROLS", PAL_TEXT_CYAN);
     gfx_draw_text(12, 36, "D-PAD: Move ship", PAL_TEXT_WHITE);
@@ -443,7 +537,6 @@ static void render_controls(void) {
     gfx_draw_text(12, 100, "Dash gives brief", 17);
     gfx_draw_text(12, 110, "invulnerability!", 17);
 
-    // Right card: Pickups & Guide
     gfx_draw_glass_card(122, 20, 110, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(126, 24, "PICKUPS & COMBO", PAL_TEXT_CYAN);
     gfx_draw_text(126, 36, "[*] Shield (max 3)", 164);
@@ -456,8 +549,12 @@ static void render_controls(void) {
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 
-static void render_credits(void) {
-    starfield_draw(0, 0);
+static void render_controls_dynamic(void) {
+    menu_draw_base();
+}
+
+static void render_credits_static(void) {
+    starfield_draw_base(0, 0);
 
     gfx_draw_glass_card(20, 16, 200, 124, PAL_BTN_BORDER, 14);
     gfx_draw_text_centered(20, 22, 200, "SPACE UNLIMITED", PAL_TEXT_CYAN);
@@ -473,11 +570,15 @@ static void render_credits(void) {
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 
+static void render_credits_dynamic(void) {
+    menu_draw_base();
+}
+
 static void render_paused(void) {
     // Draw running game frame in background
     game_draw();
 
-    // Translucent pause overlay
+    // Translucent pause overlay (rebuilt every frame: cheap, rare screen)
     int w = 110;
     int h = 88;
     int x = (SCREEN_WIDTH - w) / 2;
@@ -522,12 +623,47 @@ static void render_game_over(void) {
 
 void menu_draw(void) {
     switch (s_current_screen) {
-        case SCREEN_MAIN_MENU: render_main_menu(); break;
-        case SCREEN_HANGAR:    render_hangar(); break;
-        case SCREEN_SETTINGS:  render_settings(); break;
-        case SCREEN_CONTROLS:  render_controls(); break;
-        case SCREEN_CREDITS:   render_credits(); break;
-        case SCREEN_PLAYING:   game_draw(); break;
+        case SCREEN_MAIN_MENU:
+            if (!s_static_valid) {
+                menu_static_begin();
+                render_main_menu_static();
+                menu_static_end();
+            }
+            render_main_menu_dynamic();
+            break;
+        case SCREEN_HANGAR:
+            if (!s_static_valid) {
+                menu_static_begin();
+                render_hangar_static();
+                menu_static_end();
+            }
+            render_hangar_dynamic();
+            break;
+        case SCREEN_SETTINGS:
+            if (!s_static_valid) {
+                menu_static_begin();
+                render_settings_static();
+                menu_static_end();
+            }
+            render_settings_dynamic();
+            break;
+        case SCREEN_CONTROLS:
+            if (!s_static_valid) {
+                menu_static_begin();
+                render_controls_static();
+                menu_static_end();
+            }
+            render_controls_dynamic();
+            break;
+        case SCREEN_CREDITS:
+            if (!s_static_valid) {
+                menu_static_begin();
+                render_credits_static();
+                menu_static_end();
+            }
+            render_credits_dynamic();
+            break;
+        case SCREEN_PLAYING:   game_draw(); break; // marker inside game_draw
         case SCREEN_PAUSED:    render_paused(); break;
         case SCREEN_GAME_OVER: render_game_over(); break;
     }

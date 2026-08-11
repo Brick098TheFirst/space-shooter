@@ -2,10 +2,14 @@
 """Generate C source files with all assets for Space Unlimited GBA."""
 
 import os
+import random
 import struct
 import zlib
 import wave
 import math
+
+# Deterministic dither: the same ROM is produced on every build.
+_rng = random.Random(0x5EED)
 
 def rgb15(r, g, b):
     # Convert 8-bit RGB to GBA 15-bit BGR555 integer
@@ -14,38 +18,116 @@ def rgb15(r, g, b):
     b5 = (b >> 3) & 0x1F
     return r5 | (g5 << 5) | (b5 << 10)
 
+def _build_filter_table(phases, taps, fc):
+    """Windowed-sinc low-pass polyphase filter.
+
+    fc is the cutoff as a fraction of the SOURCE sample rate (cycles per
+    source sample).  The returned table[phase][tap] rows are each normalized
+    to unity DC gain.  This is the anti-aliasing filter that the old linear
+    interpolation lacked: without it, every source component above the GBA's
+    8.192 kHz output Nyquist folded back into the audible band as harsh buzz
+    (menu.wav alone carries ~30x more energy up there than in its melody
+    band), which is why the converted music sounded nothing like the WAVs.
+    """
+    half = taps // 2
+    table = []
+    for p in range(phases):
+        frac = p / phases  # sub-sample offset, 0..1
+        row = []
+        for k in range(taps):
+            x = (k - half) - frac  # distance in source samples
+            if x == 0.0:
+                s = 2.0 * fc
+            else:
+                s = math.sin(2.0 * math.pi * fc * x) / (math.pi * x)
+            # Blackman window over [-half, half]
+            w = 0.42 + 0.5 * math.cos(math.pi * x / half) + 0.08 * math.cos(2.0 * math.pi * x / half)
+            row.append(s * w)
+        ssum = sum(row)
+        table.append([v / ssum for v in row])
+    return table
+
 def resample_wav(path, target_rate=16384):
+    """Band-limited resample of a WAV file to the GBA sample rate.
+
+    Returns a list of floats in -1..1 (DC removed, not yet normalized).
+    """
     with wave.open(path, 'rb') as w:
         nch = w.getnchannels()
         sw = w.getsampwidth()
         rate = w.getframerate()
         nframes = w.getnframes()
         raw = w.readframes(nframes)
-    
+
     samples = []
     if sw == 2:
         fmt = f'<{nframes * nch}h'
         unpacked = struct.unpack(fmt, raw)
         for i in range(0, len(unpacked), nch):
-            s = unpacked[i] if nch == 1 else sum(unpacked[i:i+nch]) // nch
+            s = unpacked[i] if nch == 1 else sum(unpacked[i:i+nch]) / nch
             samples.append(s / 32768.0)
     elif sw == 1:
         for i in range(0, len(raw), nch):
-            s = (raw[i] - 128) / 128.0
-            samples.append(s)
-            
-    out_len = int(len(samples) * target_rate / rate)
-    out_samples = []
+            samples.append((raw[i] - 128) / 128.0)
+
+    # Remove DC offset (menu.wav carries ~12% of full scale as DC, which
+    # wastes 8-bit headroom and adds a low thump to the loop).
+    mean = sum(samples) / len(samples)
+    samples = [s - mean for s in samples]
+
+    # Low-pass cutoff just below the output Nyquist (0.45 * min of the two
+    # rates), as a fraction of the source rate.
+    ratio = target_rate / rate
+    fc = 0.45 * min(1.0, ratio)
+    taps = 64
+    half = taps // 2
+    phases = 4096
+    table = _build_filter_table(phases, taps, fc)
+
+    # Reflect the signal at both ends so the filter never reads outside it.
+    padded = samples[half:0:-1] + samples + samples[-2:-half - 2:-1]
+
+    out_len = int(len(samples) * ratio)
+    out_samples = [0.0] * out_len
+    src = padded
+    n_src = len(samples)
     for i in range(out_len):
         src_pos = i * rate / target_rate
-        idx0 = int(src_pos)
-        idx1 = min(idx0 + 1, len(samples) - 1)
-        frac = src_pos - idx0
-        s = samples[idx0] * (1.0 - frac) + samples[idx1] * frac
-        val = int(s * 127.0)
-        val = max(-128, min(127, val))
-        out_samples.append(val)
+        idx = int(src_pos)
+        frac = src_pos - idx
+        phase = int(frac * phases + 0.5) % phases
+        row = table[phase]
+        acc = 0.0
+        base = idx
+        for k in range(taps):
+            acc += row[k] * src[base + k]
+        out_samples[i] = acc
     return out_samples
+
+def quantize_8bit(samples, gain):
+    """Scale to 8-bit signed with triangular dither + 1st-order noise shaping.
+
+    Plain rounding of 16-bit audio to 8 bits adds harsh, signal-correlated
+    distortion; TPDF dither decorrelates it into a benign noise floor, which
+    is the standard trick for the GBA's 8-bit DirectSound FIFOs.
+    """
+    out = []
+    error = 0.0
+    for s in samples:
+        v = s * 127.0 * gain + error
+        dither = _rng.uniform(-0.5, 0.5) + _rng.uniform(-0.5, 0.5)
+        q = int(math.floor(v + dither + 0.5))
+        if q > 127:
+            q = 127
+        elif q < -128:
+            q = -128
+        error = v - q
+        if error > 2.0:
+            error = 2.0
+        elif error < -2.0:
+            error = -2.0
+        out.append(q)
+    return out
 
 os.makedirs('gba/include', exist_ok=True)
 os.makedirs('gba/src', exist_ok=True)
@@ -57,6 +139,20 @@ game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16384)
 laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16384)
 explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 16384)
 pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 16384)
+
+# Normalize the tracks as a group: the loudest source (full-scale) maps to
+# 0.85 so the music keeps headroom when the mixer sums it with SFX, while the
+# quieter effects (laser, explosion) keep their original relative levels.
+peak = 0.0
+for track in (menu_snd, game_snd, laser_snd, explosion_snd, pickup_snd):
+    peak = max(peak, max(abs(s) for s in track))
+gain = (0.85 / peak) if peak > 0.0 else 1.0
+
+menu_snd = quantize_8bit(menu_snd, gain)
+game_snd = quantize_8bit(game_snd, gain)
+laser_snd = quantize_8bit(laser_snd, gain)
+explosion_snd = quantize_8bit(explosion_snd, gain)
+pickup_snd = quantize_8bit(pickup_snd, gain)
 
 print(f"Audio resampled: menu={len(menu_snd)}, game={len(game_snd)}, laser={len(laser_snd)}, expl={len(explosion_snd)}, pickup={len(pickup_snd)}")
 
