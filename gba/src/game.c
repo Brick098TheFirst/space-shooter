@@ -9,6 +9,7 @@
 EWRAM_BSS GameState g_game;
 
 static bool s_game_static_valid = false;
+static int s_game_frame = 0;
 
 #define FIXED_ONE 256
 #define TO_FIXED(n) ((n) * 256)
@@ -98,12 +99,26 @@ IWRAM_CODE static void trigger_explosion(int x, int y) {
 }
 
 IWRAM_CODE static void emit_engine_particle(void) {
-    u8 col = gfx_get_trail_color(g_settings.trail_index);
+    /* A new hue is selected for every Rainbow Trail particle, so the wake is
+     * a simultaneous band of colours instead of a single flashing colour. */
+    int phase = (s_game_frame >> 1) + (rand() & 3);
+    u8 col = gfx_get_trail_color_animated(g_settings.trail_index, phase * 4);
     int px = g_game.player.x + (rand() & 1023) - 512;
     int py = g_game.player.y + TO_FIXED(8);
     int pvx = (rand() & 255) - 128;
     int pvy = (rand() & 127) + 200;
     spawn_particle(px, py, pvx, pvy, col, (rand() & 7) + 6);
+}
+
+IWRAM_CODE static void emit_enemy_engine_particle(const Drone* drone) {
+    /* Down-facing enemy ships exhaust upward. Cycle among the three Crimson
+     * trail shades for a hot, unmistakably red wake. */
+    u8 col = 199 + (rand() % 3);
+    int px = drone->x + (rand() & 1023) - 512;
+    int py = drone->y - TO_FIXED(8);
+    int pvx = (rand() & 255) - 128;
+    int pvy = -((rand() & 127) + 160);
+    spawn_particle(px, py, pvx, pvy, col, (rand() & 3) + 6);
 }
 
 static void try_spawn_powerup(int x, int y, int chance_pct) {
@@ -122,8 +137,6 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
         }
     }
 }
-
-static int s_game_frame = 0;
 
 static void award_coins(int base_amount) {
     int scav_lv = g_settings.upgrade_levels[UPG_SCAVENGER];
@@ -289,6 +302,8 @@ static void begin_wave(void) {
                 g_game.drones[i].vx = 0;
                 g_game.drones[i].vy = (70 * mult) >> 8;
                 g_game.drones[i].shoot_timer = (rand() % 60) + 60;
+                g_game.drones[i].burst_timer = 0;
+                g_game.drones[i].burst_shots = 0;
                 g_game.drones[i].phase = rand() % 256;
                 g_game.drones[i].hp = (g_settings.difficulty == DIFF_CADET) ? 2 : 3;
                 g_game.drones[i].active = true;
@@ -315,22 +330,23 @@ static void add_player_bullet(int x, int y, int vx, int vy, int damage, bool hea
     }
 }
 
-static void add_enemy_bullet(int x, int y, int vx, int vy) {
+static bool add_enemy_bullet(int x, int y, int vx, int vy) {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!g_game.bullets[i].active) {
             g_game.bullets[i].x = x;
             g_game.bullets[i].y = y;
             g_game.bullets[i].vx = vx;
             g_game.bullets[i].vy = vy;
-            g_game.bullets[i].radius = 3;
+            g_game.bullets[i].radius = 2;
             g_game.bullets[i].damage = 1;
             g_game.bullets[i].life = 140;
             g_game.bullets[i].enemy = true;
             g_game.bullets[i].heavy = false;
             g_game.bullets[i].active = true;
-            return;
+            return true;
         }
     }
+    return false;
 }
 
 static void fire_player_weapon(void) {
@@ -396,6 +412,7 @@ void game_start(void) {
     g_game.player.invulnerable_timer = 90;
     g_game.combo = 1;
     g_game.intermission_timer = 30;
+    s_game_frame = 0;
     s_game_static_valid = false;
 
     audio_play_bgm(BGM_GAME);
@@ -545,32 +562,55 @@ static void game_update_tick(void) {
         }
     }
 
-    // Update Drones
+    // Update enemy ships: enter formation, track the player's horizontal
+    // position, then fire short random bursts straight down-screen.
     int mult = get_diff_speed_mult();
     for (int i = 0; i < MAX_DRONES; i++) {
-        if (g_game.drones[i].active) {
-            if (g_game.drones[i].y < TO_FIXED(32)) {
-                g_game.drones[i].y += g_game.drones[i].vy;
-            } else {
-                g_game.drones[i].phase = (g_game.drones[i].phase + 2) & 255;
-                int osc = (lu_sin(g_game.drones[i].phase * 256) * 110) >> 12;
-                g_game.drones[i].x += osc;
-                if (g_game.drones[i].x < TO_FIXED(16)) g_game.drones[i].x = TO_FIXED(16);
-                if (g_game.drones[i].x > TO_FIXED(SCREEN_WIDTH - 16)) g_game.drones[i].x = TO_FIXED(SCREEN_WIDTH - 16);
-            }
+        Drone* drone = &g_game.drones[i];
+        if (!drone->active) continue;
 
-            g_game.drones[i].shoot_timer--;
-            if (g_game.drones[i].y > TO_FIXED(20) && g_game.drones[i].shoot_timer <= 0) {
-                int dx = (g_game.player.x - g_game.drones[i].x) >> 8;
-                int dy = (g_game.player.y - g_game.drones[i].y) >> 8;
-                int dist_sq = dx*dx + dy*dy;
-                int dist = Sqrt(dist_sq);
-                if (dist > 5) {
-                    int bvx = (dx * 170 * mult) / (dist << 8);
-                    int bvy = (dy * 170 * mult) / (dist << 8);
-                    add_enemy_bullet(g_game.drones[i].x, g_game.drones[i].y + TO_FIXED(6), bvx, bvy);
+        if (drone->y < TO_FIXED(32)) {
+            drone->y += drone->vy;
+        } else {
+            drone->phase = (drone->phase + 1) & 255;
+            int aim_wobble = (lu_sin(drone->phase * 256) * TO_FIXED(4)) >> 12;
+            int target_x = g_game.player.x + aim_wobble;
+            int dx = target_x - drone->x;
+            int track_step = (90 * mult) >> 8;
+            if (dx > track_step) drone->x += track_step;
+            else if (dx < -track_step) drone->x -= track_step;
+            else drone->x = target_x;
+
+            if (drone->x < TO_FIXED(12)) drone->x = TO_FIXED(12);
+            if (drone->x > TO_FIXED(SCREEN_WIDTH - 12)) drone->x = TO_FIXED(SCREEN_WIDTH - 12);
+        }
+
+        if (((s_game_frame + i) & 3) == 0) {
+            emit_enemy_engine_particle(drone);
+        }
+
+        if (drone->y <= TO_FIXED(20)) continue;
+
+        if (drone->burst_shots > 0) {
+            drone->burst_timer--;
+            if (drone->burst_timer <= 0) {
+                int cannon_x = drone->x + ((drone->burst_shots & 1) ? -TO_FIXED(4) : TO_FIXED(4));
+                int bullet_speed = (190 * mult) >> 8;
+                if (add_enemy_bullet(cannon_x, drone->y + TO_FIXED(9), 0, bullet_speed)) {
+                    // Enemy and player cannons deliberately share the same laser sound.
+                    audio_play_sfx(SFX_LASER);
                 }
-                g_game.drones[i].shoot_timer = ((rand() % 60) + 70) * 256 / mult;
+                drone->burst_shots--;
+                drone->burst_timer = (rand() % 5) + 6;
+                if (drone->burst_shots == 0) {
+                    drone->shoot_timer = ((rand() % 75) + 65) * 256 / mult;
+                }
+            }
+        } else {
+            drone->shoot_timer--;
+            if (drone->shoot_timer <= 0) {
+                drone->burst_shots = (rand() % 3) + 2; // Random 2-4 shot burst
+                drone->burst_timer = 0;
             }
         }
     }
@@ -790,13 +830,11 @@ void game_draw(void) {
             int bx = FROM_FIXED(g_game.bullets[i].x) + ox;
             int by = FROM_FIXED(g_game.bullets[i].y) + oy;
             if (g_game.bullets[i].enemy) {
-                gfx_draw_sprite(bx - 3, by - 3, 6, 6, spr_laser_enemy);
-            } else if (g_game.bullets[i].heavy) {
-                const u8* spr = gfx_get_laser_heavy_sprite(g_settings.laser_index);
-                gfx_draw_sprite(bx - 3, by - 7, 6, 14, spr);
+                // Enemy cannons use the same equipped player-laser art and colour.
+                gfx_draw_laser(bx, by, false, g_settings.laser_index, s_game_frame, true);
             } else {
-                const u8* spr = gfx_get_laser_standard_sprite(g_settings.laser_index);
-                gfx_draw_sprite(bx - 2, by - 5, 4, 10, spr);
+                gfx_draw_laser(bx, by, g_game.bullets[i].heavy,
+                               g_settings.laser_index, s_game_frame, false);
             }
         }
     }
@@ -820,21 +858,21 @@ void game_draw(void) {
         }
     }
 
-    // Draw Drones
-    for (int i = 0; i < MAX_DRONES; i++) {
-        if (g_game.drones[i].active) {
-            int dx = FROM_FIXED(g_game.drones[i].x) - 9 + ox;
-            int dy = FROM_FIXED(g_game.drones[i].y) - 7 + oy;
-            gfx_draw_sprite(dx, dy, 18, 14, spr_drone);
-        }
-    }
-
-    // Draw Particles
+    // Draw engine particles behind both ship types.
     for (int i = 0; i < MAX_PARTICLES; i++) {
         if (g_game.particles[i].active) {
             int px = FROM_FIXED(g_game.particles[i].x) + ox;
             int py = FROM_FIXED(g_game.particles[i].y) + oy;
             gfx_draw_pixel(px, py, g_game.particles[i].color);
+        }
+    }
+
+    // Enemy fighters are the normal player ship in Crimson paint, facing down.
+    for (int i = 0; i < MAX_DRONES; i++) {
+        if (g_game.drones[i].active) {
+            int dx = FROM_FIXED(g_game.drones[i].x) - 10 + ox;
+            int dy = FROM_FIXED(g_game.drones[i].y) - 8 + oy;
+            gfx_draw_enemy_ship(dx, dy);
         }
     }
 

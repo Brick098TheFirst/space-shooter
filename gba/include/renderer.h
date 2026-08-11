@@ -23,6 +23,8 @@ void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_co
 
 void gfx_draw_sprite(int x, int y, int w, int h, const u8* data);
 void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
+void gfx_draw_enemy_ship(int x, int y);
+void gfx_draw_laser(int center_x, int center_y, bool heavy, int laser_idx, int anim_frame, bool downward);
 void gfx_draw_sprite_rotated(int cx, int cy, int w, int h, const u8* data, int angle_deg);
 void gfx_draw_sprite_clipped(int x, int y, int w, int h, const u8* data, int clip_x, int clip_y, int clip_w, int clip_h);
 
@@ -37,7 +39,9 @@ void gfx_draw_swatch(int x, int y, int size, u8 color_idx, const char* label);
 void gfx_draw_progress_bar(int x, int y, int w, int h, int current, int max_val, u8 fg_color, u8 bg_color);
 
 u8 gfx_get_accent_color(int accent_idx);
+u8 gfx_get_rainbow_color(int phase);
 u8 gfx_get_trail_color(int trail_idx);
+u8 gfx_get_trail_color_animated(int trail_idx, int anim_frame);
 u8 gfx_get_laser_color(int laser_idx);
 
 const char* gfx_get_accent_name(int accent_idx);

@@ -493,19 +493,32 @@ static void draw_ship_preview_static(int card_x, int card_y, int card_w, int car
     gfx_draw_text(card_x + 36, card_y + 99, buf, PAL_TEXT_WHITE);
 }
 
+static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx) {
+    if (trail_idx == 7) {
+        /* Keep several hues visible together in the hangar so Rainbow Trail's
+         * real in-game spectrum is clear before purchase. */
+        for (int row = 0; row < 4; row++) {
+            u8 col = gfx_get_rainbow_color((s_anim_frame >> 2) + row * 2);
+            int w = (row < 2) ? 4 : 2;
+            gfx_fill_rect(ship_x + 10 - w / 2, ship_y + 16 + row, w, 1, col);
+        }
+    } else {
+        u8 trail_col = gfx_get_trail_color_animated(trail_idx, s_anim_frame);
+        if ((s_anim_frame & 4) == 0) {
+            gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
+        } else {
+            gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
+        }
+    }
+}
+
 static void draw_ship_preview_dynamic(int card_x, int card_y, int card_w) {
     int ship_x = card_x + (card_w - 20) / 2;
     int ship_y = card_y + 25;
     int accent = g_settings.accent_index;
     if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
     gfx_draw_ship(ship_x, ship_y, accent, s_anim_frame);
-
-    u8 trail_col = gfx_get_trail_color(g_settings.trail_index);
-    if ((s_anim_frame & 4) == 0) {
-        gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
-    } else {
-        gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
-    }
+    draw_preview_engine_trail(ship_x, ship_y, g_settings.trail_index);
 }
 
 static void render_main_menu_static(void) {
@@ -672,23 +685,21 @@ static void render_hangar_dynamic(void) {
 
     if (preview_accent < 0 || preview_accent >= NUM_ACCENTS) preview_accent = 1;
     int ship_x = 124 + (110 - 20) / 2;
-    int ship_y = 37;
+    int ship_y = 47;
     gfx_draw_ship(ship_x, ship_y, preview_accent, s_anim_frame);
 
-    u8 trail_col = gfx_get_trail_color(preview_trail);
-    if ((s_anim_frame & 4) == 0) {
-        gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
-    } else {
-        gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
-    }
+    draw_preview_engine_trail(ship_x, ship_y, preview_trail);
 
-    // Animated laser bolts firing upward in weapon/laser tabs
+    // Animated, full-size laser bolts firing upward in weapon/laser tabs.
+    // Rainbow Laser uses the same flowing multi-hue renderer as gameplay.
     if (cat == 2 || cat == 3) {
-        int laser_y = ship_y - 2 - ((s_anim_frame * 2) % 18);
-        if (laser_y >= 35) {
-            const u8* lspr = gfx_get_laser_standard_sprite(preview_laser);
-            gfx_draw_sprite(ship_x + 4, laser_y, 4, 6, lspr);
-            gfx_draw_sprite(ship_x + 12, laser_y, 4, 6, lspr);
+        int travel = (s_anim_frame * 2) % 18;
+        int laser_center_y = ship_y - 2 - travel;
+        if (laser_center_y >= 38) {
+            gfx_draw_laser(ship_x + 6, laser_center_y, false,
+                           preview_laser, s_anim_frame, false);
+            gfx_draw_laser(ship_x + 14, laser_center_y, false,
+                           preview_laser, s_anim_frame, false);
         }
     }
 
