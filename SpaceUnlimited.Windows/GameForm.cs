@@ -21,6 +21,14 @@ internal sealed class GameForm : Form
     private const int CanvasWidth = 1280;
     private const int CanvasHeight = 720;
 
+    // ── blur buffer: we render the game frame into a tiny bitmap then scale it
+    //    back up with bicubic interpolation — that gives a free frosted-glass
+    //    backdrop for pause / game-over overlays without any pixel-shader work.
+    private const int BlurW = 320;
+    private const int BlurH = 180;
+    private readonly Bitmap _blurBuffer = new(BlurW, BlurH, PixelFormat.Format32bppPArgb);
+    private bool _blurCaptured;
+
     private readonly PlayerSettings _settings;
     private readonly GameAssets _assets;
     private readonly AudioManager _audio;
@@ -28,27 +36,35 @@ internal sealed class GameForm : Form
     private readonly InputState _input = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15 };
     private readonly Stopwatch _clock = Stopwatch.StartNew();
-    private readonly Bitmap _canvas = new(CanvasWidth, CanvasHeight, PixelFormat.Format32bppPArgb);
     private readonly Random _random = new(8791);
-    private readonly List<(float X, float Y, float Size, float Speed)> _stars = [];
+    private readonly Bitmap _canvas = new(CanvasWidth, CanvasHeight, PixelFormat.Format32bppPArgb);
+    private readonly List<(float X, float Y, float Size, float Speed, float Phase)> _stars = [];
+    private readonly List<(float X, float Y, float Radius, float Speed, float Phase)> _nebulaBlobs = [];
 
-    // Bahnschrift gives the interface a deliberate cockpit/instrument feel without
-    // resorting to the oversized, generic sci-fi type used by the old menus.
-    private readonly Font _titleFont = new("Bahnschrift", 56f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _sectionFont = new("Bahnschrift", 35f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _subtitleFont = new("Segoe UI", 17f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _eyebrowFont = new("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _menuFont = new("Bahnschrift", 19f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _bodyFont = new("Segoe UI", 16f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _smallFont = new("Segoe UI", 13f, FontStyle.Regular, GraphicsUnit.Pixel);
-    private readonly Font _hudFont = new("Bahnschrift", 17f, FontStyle.Bold, GraphicsUnit.Pixel);
-    private readonly Font _numberFont = new("Bahnschrift", 25f, FontStyle.Bold, GraphicsUnit.Pixel);
+    // ── typography: "Segoe UI Variable" is the Windows 11 system face — clean,
+    //    geometric, high-x-height, nothing like the AI-default Bahnschrift look.
+    //    We fall back to plain "Segoe UI" on older Windows.
+    private static readonly string DisplayFamily = PickFont("Segoe UI Variable Display", "Segoe UI", "Arial");
+    private static readonly string BodyFamily = PickFont("Segoe UI Variable", "Segoe UI", "Arial");
+
+    private readonly Font _titleFont = new(DisplayFamily, 52f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _headingFont = new(DisplayFamily, 30f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _subtitleFont = new(BodyFamily, 16f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _labelFont = new(BodyFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _menuFont = new(BodyFamily, 17f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _menuFontBold = new(BodyFamily, 17f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _bodyFont = new(BodyFamily, 14.5f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _smallFont = new(BodyFamily, 12f, FontStyle.Regular, GraphicsUnit.Pixel);
+    private readonly Font _hudNumberFont = new(DisplayFamily, 26f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _hudLabelFont = new(BodyFamily, 10f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private readonly Font _hudSmallFont = new(BodyFamily, 13f, FontStyle.Regular, GraphicsUnit.Pixel);
 
     private GameScreen _screen = GameScreen.MainMenu;
     private int _selected;
     private long _lastTicks;
     private float _visualTime;
     private float _vibrationTime;
+    private float _screenFade; // 0 → 1 transition fade
     private bool _mouseOverMenuItem;
     private bool _closing;
 
@@ -72,12 +88,24 @@ internal sealed class GameForm : Form
         _world.Pickup += _audio.PlayPickup;
         _world.PlayerHit += OnPlayerHit;
 
-        for (var i = 0; i < 120; i++)
+        for (var i = 0; i < 180; i++)
         {
             _stars.Add(((float)_random.NextDouble() * CanvasWidth,
                 (float)_random.NextDouble() * CanvasHeight,
-                0.7f + (float)_random.NextDouble() * 2.1f,
-                4f + (float)_random.NextDouble() * 15f));
+                0.5f + (float)_random.NextDouble() * 1.8f,
+                3f + (float)_random.NextDouble() * 12f,
+                (float)_random.NextDouble() * MathF.Tau));
+        }
+
+        // Soft nebula blobs that drift slowly across the menu background.
+        for (var i = 0; i < 5; i++)
+        {
+            _nebulaBlobs.Add((
+                (float)_random.NextDouble() * CanvasWidth,
+                (float)_random.NextDouble() * CanvasHeight,
+                180f + (float)_random.NextDouble() * 260f,
+                6f + (float)_random.NextDouble() * 14f,
+                (float)_random.NextDouble() * MathF.Tau));
         }
 
         KeyDown += (_, e) => { _input.KeyDown(e.KeyCode); e.Handled = true; };
@@ -111,6 +139,19 @@ internal sealed class GameForm : Form
         _audio.PlayMenuMusic();
     }
 
+    private static string PickFont(string preferred, string fallback1, string fallback2)
+    {
+        using var test = new Font(preferred, 12f);
+        if (test.Name.Equals(preferred, StringComparison.OrdinalIgnoreCase)) return preferred;
+        using var test2 = new Font(fallback1, 12f);
+        if (test2.Name.Equals(fallback1, StringComparison.OrdinalIgnoreCase)) return fallback1;
+        return fallback2;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // UPDATE LOOP
+    // ──────────────────────────────────────────────────────────────────────────
+
     private void GameTick(object? sender, EventArgs e)
     {
         var ticks = _clock.ElapsedTicks;
@@ -118,6 +159,7 @@ internal sealed class GameForm : Form
         _lastTicks = ticks;
         dt = Math.Clamp(dt, 0f, 0.05f);
         _visualTime += dt;
+        _screenFade = Math.Min(1f, _screenFade + dt * 3.2f);
         _input.PollController();
 
         if (_vibrationTime > 0f)
@@ -145,7 +187,7 @@ internal sealed class GameForm : Form
     private void UpdateMainMenu()
     {
         const int count = 5;
-        UpdateMouseSelection(344, 55, count, 112, 430);
+        UpdateMouseSelection(388, 54, count, 100, 380);
         NavigateVertical(count);
         if (!ConfirmPressed()) return;
 
@@ -162,7 +204,7 @@ internal sealed class GameForm : Form
     private void UpdateHangar()
     {
         const int count = 5;
-        UpdateMouseSelection(214, 62, count, 112, 555);
+        UpdateMouseSelection(262, 58, count, 96, 440);
         NavigateVertical(count);
         var delta = HorizontalDelta();
         if (ConfirmPressed() && _selected < 3) delta = 1;
@@ -189,7 +231,7 @@ internal sealed class GameForm : Form
     private void UpdateSettings()
     {
         const int count = 7;
-        UpdateMouseSelection(206, 57, count, 112, 555);
+        UpdateMouseSelection(252, 54, count, 96, 440);
         NavigateVertical(count);
         var delta = HorizontalDelta();
         if (ConfirmPressed() && _selected < 5) delta = 1;
@@ -246,7 +288,7 @@ internal sealed class GameForm : Form
     private void UpdatePause()
     {
         const int count = 3;
-        UpdateMouseSelection(338, 62, count, 440, 400);
+        UpdateMouseSelection(306, 58, count, 440, 400);
         NavigateVertical(count);
         if (_input.Pressed(Keys.Escape, Keys.P) || _input.PadPressed(PadButton.Start))
         {
@@ -270,7 +312,7 @@ internal sealed class GameForm : Form
     private void UpdateGameOver()
     {
         const int count = 3;
-        UpdateMouseSelection(404, 62, count, 440, 400);
+        UpdateMouseSelection(340, 58, count, 440, 400);
         NavigateVertical(count);
         if (!ConfirmPressed()) return;
         switch (_selected)
@@ -311,6 +353,7 @@ internal sealed class GameForm : Form
         }
         _screen = GameScreen.GameOver;
         _selected = 0;
+        _screenFade = 0f;
         _audio.PlayMenuMusic();
     }
 
@@ -319,24 +362,30 @@ internal sealed class GameForm : Form
         _world.Start();
         _screen = GameScreen.Playing;
         _selected = 0;
+        _screenFade = 0f;
+        _blurCaptured = false;
         _audio.PlayGameMusic();
     }
 
     private void PauseGame()
     {
+        CaptureBlur();
         _screen = GameScreen.Paused;
         _selected = 0;
+        _screenFade = 0f;
     }
 
     private void ResumeGame()
     {
         _screen = GameScreen.Playing;
         _lastTicks = _clock.ElapsedTicks;
+        _blurCaptured = false;
     }
 
     private void ReturnToMenu()
     {
         OpenScreen(GameScreen.MainMenu);
+        _blurCaptured = false;
         _audio.PlayMenuMusic();
     }
 
@@ -344,8 +393,19 @@ internal sealed class GameForm : Form
     {
         _screen = screen;
         _selected = 0;
+        _screenFade = 0f;
         if (screen is GameScreen.MainMenu or GameScreen.Hangar or GameScreen.Settings or GameScreen.Help)
             _audio.PlayMenuMusic();
+    }
+
+    private void CaptureBlur()
+    {
+        using (var g = Graphics.FromImage(_blurBuffer))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(_canvas, 0, 0, BlurW, BlurH);
+        }
+        _blurCaptured = true;
     }
 
     private void NavigateVertical(int count)
@@ -379,13 +439,17 @@ internal sealed class GameForm : Form
         if (mouse.X < x || mouse.X > x + width) return;
         for (var i = 0; i < count; i++)
         {
-            var rect = new RectangleF(x, y + i * step, width, 48f);
+            var rect = new RectangleF(x, y + i * step, width, 46f);
             if (!rect.Contains(mouse)) continue;
             _selected = i;
             _mouseOverMenuItem = true;
             break;
         }
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PAINT
+    // ──────────────────────────────────────────────────────────────────────────
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -395,6 +459,7 @@ internal sealed class GameForm : Form
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
             graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
             Render(graphics);
         }
 
@@ -414,152 +479,295 @@ internal sealed class GameForm : Form
             case GameScreen.Help: RenderHelp(g); break;
             case GameScreen.Playing: RenderGame(g); break;
             case GameScreen.Paused:
-                RenderGame(g);
-                RenderOverlay(g, "Paused", ["Resume", "Restart run", "Quit to menu"], 338);
+                RenderBlurredBackdrop(g);
+                RenderPauseOverlay(g);
                 break;
             case GameScreen.GameOver:
-                RenderGame(g);
-                RenderGameOver(g);
+                RenderBlurredBackdrop(g);
+                RenderGameOverOverlay(g);
                 break;
         }
     }
 
-    private void RenderMainMenu(Graphics g)
-    {
-        RenderMenuBackground(g);
-        DrawTopBar(g, "COMMAND DECK", "CLASSIC EDITION");
-
-        using var white = new SolidBrush(Color.FromArgb(246, 250, 255));
-        using var accent = new SolidBrush(AccentColor);
-        using var muted = new SolidBrush(Color.FromArgb(166, 193, 216));
-        g.DrawString("SPACE", _titleFont, white, 112f, 104f);
-        g.DrawString("UNLIMITED", _titleFont, accent, 108f, 157f);
-        g.DrawString("recharged", _subtitleFont, muted, 116f, 226f);
-        using var rule = new Pen(Color.FromArgb(165, AccentColor), 2f);
-        g.DrawLine(rule, 116, 266, 198, 266);
-        g.DrawString("A focused arcade shooter built around the original ship.", _smallFont, muted, 116f, 284f);
-
-        DrawMenuButtons(g, ["Start run", "Hangar", "Settings", "How to play", "Quit"], 112, 344, 430, 55);
-
-        DrawGlassPanel(g, new RectangleF(748, 112, 420, 512), 22f, Color.FromArgb(188, 7, 20, 36));
-        using var label = new SolidBrush(Color.FromArgb(137, 171, 199));
-        using var panelAccent = new SolidBrush(AccentColor);
-        g.DrawString("SHIP PROFILE", _eyebrowFont, label, 786, 144);
-        g.DrawString("ORIGINAL MK I", _sectionFont, white, 786, 168);
-        g.DrawString("THE CLASSIC SILHOUETTE", _eyebrowFont, panelAccent, 789, 219);
-        DrawShip(g, new Vector2(958, 310), 3.15f, false);
-        using var divider = new Pen(Color.FromArgb(48, 151, 184, 210), 1f);
-        g.DrawLine(divider, 786, 402, 1130, 402);
-        DrawInfoRow(g, "PAINT", AccentName(), 786, 424);
-        DrawInfoRow(g, "WEAPON", WeaponShortName(), 786, 457);
-        DrawInfoRow(g, "BEST RUN", $"{_settings.HighScore:000000}", 786, 490);
-        using var tagFill = new SolidBrush(Color.FromArgb(42, AccentColor));
-        g.FillRectangle(tagFill, 786, 540, 112, 25);
-        CenterText(g, "READY", _eyebrowFont, Color.White, new RectangleF(786, 540, 112, 25));
-        g.DrawString("Paint is changed in the hangar.", _smallFont, muted, 914, 544);
-        DrawFooter(g);
-    }
-
-    private void RenderHangar(Graphics g)
-    {
-        RenderMenuBackground(g);
-        DrawTopBar(g, "LOADOUT", "ORIGINAL SHIP");
-        DrawSectionTitle(g, "Hangar", "Tune the paint, trail and weapon rig. The original ship stays at the center.");
-
-        DrawValueMenu(g,
-            ["Paint", "Engine trail", "Weapon rig", "", ""],
-            [AccentName(), TrailName(), WeaponShortName(), "Launch run", "Back to deck"],
-            112, 216, 555, 62);
-
-        DrawGlassPanel(g, new RectangleF(728, 150, 440, 476), 22f, Color.FromArgb(188, 7, 20, 36));
-        using var muted = new SolidBrush(Color.FromArgb(149, 181, 208));
-        using var bright = new SolidBrush(Color.FromArgb(242, 247, 252));
-        using var accent = new SolidBrush(AccentColor);
-        g.DrawString("PREVIEW", _eyebrowFont, muted, 768, 181);
-        g.DrawString("ORIGINAL MK I", _sectionFont, bright, 768, 202);
-        g.DrawString("No alternate hulls. Just better paint.", _smallFont, muted, 770, 252);
-        DrawShip(g, new Vector2(947, 342), 3.55f, false);
-        DrawSwatch(g, AccentColor, 773, 459, 34, "PAINT");
-        DrawSwatch(g, GameAssets.TrailColors[Math.Clamp(_settings.TrailIndex, 0, GameAssets.TrailColors.Length - 1)], 914, 459, 34, "TRAIL");
-        DrawInfoRow(g, "LOADOUT", WeaponShortName(), 770, 548);
-        DrawFooter(g, "ARROWS / STICK  Navigate     ENTER / A  Select     ESC / B  Back");
-    }
-
-    private void RenderSettings(Graphics g)
-    {
-        RenderMenuBackground(g);
-        DrawTopBar(g, "SYSTEM", "LOCAL SETTINGS");
-        DrawSectionTitle(g, "Settings", "Small adjustments, saved automatically to your Windows profile.");
-        DrawValueMenu(g,
-            ["Difficulty", "Music volume", "Effects volume", "Screen shake", "Fullscreen", "", ""],
-            [DifficultyName(), $"{_settings.MusicVolume}%", $"{_settings.EffectsVolume}%",
-             OnOff(_settings.ScreenShake), OnOff(_settings.Fullscreen), "Reset high score", "Back to deck"],
-            112, 206, 555, 57);
-
-        DrawGlassPanel(g, new RectangleF(728, 186, 440, 340), 22f, Color.FromArgb(188, 7, 20, 36));
-        using var muted = new SolidBrush(Color.FromArgb(149, 181, 208));
-        using var bright = new SolidBrush(Color.FromArgb(233, 241, 248));
-        g.DrawString("SETTING NOTE", _eyebrowFont, muted, 770, 220);
-        DrawWrappedText(g, SettingDescription(), _bodyFont, bright.Color, new RectangleF(770, 260, 340, 160));
-        using var tip = new SolidBrush(Color.FromArgb(40, AccentColor));
-        g.FillRectangle(tip, 770, 462, 175, 28);
-        CenterText(g, "CHANGES SAVE LIVE", _eyebrowFont, Color.White, new RectangleF(770, 462, 175, 28));
-        DrawFooter(g, "LEFT / RIGHT  Change     ENTER / A  Select     ESC / B  Back");
-    }
-
-    private void RenderHelp(Graphics g)
-    {
-        RenderMenuBackground(g);
-        DrawTopBar(g, "FIELD GUIDE", "QUICK START");
-        DrawSectionTitle(g, "How to play", "Move with intent, keep firing, and use your dash before the screen closes in.");
-        DrawGlassPanel(g, new RectangleF(112, 190, 1056, 398), 22f, Color.FromArgb(188, 7, 20, 36));
-        DrawHelpColumn(g, 156, "KEYBOARD", [
-            ("MOVE", "WASD / ARROWS"),
-            ("FIRE", "SPACE / Z"),
-            ("DASH", "SHIFT / X"),
-            ("PAUSE", "ESC / P")
-        ]);
-        DrawHelpColumn(g, 496, "CONTROLLER", [
-            ("MOVE", "LEFT STICK / D-PAD"),
-            ("FIRE", "A / RIGHT TRIGGER"),
-            ("DASH", "X / RIGHT BUMPER"),
-            ("PAUSE", "MENU")
-        ]);
-        DrawHelpColumn(g, 844, "IN A RUN", [
-            ("SHIELD", "ABSORBS A HIT"),
-            ("RAPID", "FASTER FIRE"),
-            ("REPAIR", "+1 LIFE"),
-            ("COMBO", "KILL QUICKLY")
-        ]);
-        CenterText(g, "Press Enter, A, Esc or B to return", _smallFont, Color.FromArgb(176, 204, 227), new RectangleF(0, 635, CanvasWidth, 28));
-    }
+    // ──────────────────────────────────────────────────────────────────────────
+    // MENU BACKGROUND — animated nebula + stars, no grid
+    // ──────────────────────────────────────────────────────────────────────────
 
     private void RenderMenuBackground(Graphics g)
     {
-        DrawImageCover(g, _assets.Starfield, new RectangleF(0, 0, CanvasWidth, CanvasHeight));
-        using (var shade = new SolidBrush(Color.FromArgb(208, 3, 10, 24)))
-            g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
-        using (var wash = new LinearGradientBrush(new Rectangle(0, 0, CanvasWidth, CanvasHeight),
-                   Color.FromArgb(72, AccentColor), Color.FromArgb(8, 7, 16, 38), 28f))
-            g.FillRectangle(wash, 0, 0, CanvasWidth, CanvasHeight);
-        using (var glow = new SolidBrush(Color.FromArgb(20, AccentColor)))
-            g.FillEllipse(glow, 770, 82, 460, 460);
+        // Deep space base
+        using (var bg = new SolidBrush(Color.FromArgb(6, 10, 22)))
+            g.FillRectangle(bg, 0, 0, CanvasWidth, CanvasHeight);
 
-        using var grid = new Pen(Color.FromArgb(15, 164, 208, 236), 1f);
-        for (var x = 0; x <= CanvasWidth; x += 64) g.DrawLine(grid, x, 72, x, CanvasHeight);
-        for (var y = 104; y <= CanvasHeight; y += 64) g.DrawLine(grid, 0, y, CanvasWidth, y);
+        // Animated nebula blobs — soft radial gradients that drift
+        foreach (var blob in _nebulaBlobs)
+        {
+            var x = blob.X + MathF.Sin(_visualTime * 0.15f + blob.Phase) * 40f;
+            var y = blob.Y + MathF.Cos(_visualTime * 0.12f + blob.Phase * 1.3f) * 30f;
+            var r = blob.Radius + MathF.Sin(_visualTime * 0.2f + blob.Phase) * 20f;
+            using var path = new GraphicsPath();
+            path.AddEllipse(x - r, y - r, r * 2, r * 2);
+            using var brush = new PathGradientBrush(path)
+            {
+                CenterColor = Color.FromArgb(18, AccentColor),
+                SurroundColors = [Color.FromArgb(0, AccentColor)]
+            };
+            g.FillPath(brush, path);
+        }
+
+        // Subtle accent wash from top-right
+        using (var wash = new LinearGradientBrush(
+                   new Rectangle(0, 0, CanvasWidth, CanvasHeight),
+                   Color.FromArgb(28, AccentColor),
+                   Color.FromArgb(0, 4, 8, 18),
+                   -35f))
+            g.FillRectangle(wash, 0, 0, CanvasWidth, CanvasHeight);
+
+        // Vignette
+        using (var vig = new GraphicsPath())
+        {
+            vig.AddEllipse(-200, -200, CanvasWidth + 400, CanvasHeight + 400);
+            using var vigBrush = new PathGradientBrush(vig)
+            {
+                CenterColor = Color.FromArgb(0, 0, 0, 0),
+                SurroundColors = [Color.FromArgb(180, 2, 4, 12)]
+            };
+            g.FillPath(vigBrush, vig);
+        }
+
+        // Stars
         foreach (var star in _stars)
         {
-            var alpha = (int)(65 + 115 * (0.5 + 0.5 * Math.Sin(_visualTime * 1.8 + star.X)));
-            using var brush = new SolidBrush(Color.FromArgb(alpha, 205, 232, 255));
+            var twinkle = 0.4f + 0.6f * (0.5f + 0.5f * MathF.Sin(_visualTime * 2.2f + star.Phase));
+            var alpha = Math.Clamp((int)(twinkle * 160f), 0, 255);
+            var col = star.Size > 1.5f
+                ? Color.FromArgb(alpha, 200, 220, 255)
+                : Color.FromArgb(alpha, 170, 195, 230);
+            using var brush = new SolidBrush(col);
             g.FillEllipse(brush, star.X, star.Y, star.Size, star.Size);
         }
     }
 
+    private void RenderBlurredBackdrop(Graphics g)
+    {
+        // Draw the blurred game frame scaled up
+        if (_blurCaptured)
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(_blurBuffer, 0, 0, CanvasWidth, CanvasHeight);
+        }
+        else
+        {
+            RenderGame(g); // fallback: render live
+        }
+
+        // Dark overlay with subtle accent tint
+        using var shade = new SolidBrush(Color.FromArgb(190, 4, 7, 18));
+        g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
+
+        // Accent color wash
+        using var wash = new SolidBrush(Color.FromArgb(15, AccentColor));
+        g.FillRectangle(wash, 0, 0, CanvasWidth, CanvasHeight);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // MAIN MENU
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RenderMainMenu(Graphics g)
+    {
+        RenderMenuBackground(g);
+
+        var fade = EaseOut(_screenFade);
+
+        // ── Left column: branding + menu ──
+        var leftX = 100f;
+
+        // Eyebrow
+        DrawLabel(g, "SPACE UNLIMITED", AccentColor, leftX + 2, 108, fade);
+
+        // Title — large, clean, modern
+        using var titleBrush = new SolidBrush(Color.FromArgb((int)(fade * 245), 240, 246, 255));
+        g.DrawString("Recharged", _titleFont, titleBrush, leftX, 130);
+
+        // Thin accent line
+        using var accentLine = new Pen(Color.FromArgb((int)(fade * 120), AccentColor), 2f);
+        g.DrawLine(accentLine, leftX + 2, 198, leftX + 72, 198);
+
+        // Subtitle
+        using var subBrush = new SolidBrush(Color.FromArgb((int)(fade * 160), 150, 175, 205));
+        g.DrawString("A focused arcade shooter", _subtitleFont, subBrush, leftX + 2, 214);
+
+        // Menu buttons
+        var menuY = 388f;
+        var menuStep = 54;
+        var menuLabels = new[] { "Play", "Hangar", "Settings", "Controls", "Quit" };
+        for (var i = 0; i < menuLabels.Length; i++)
+        {
+            var y = menuY + i * menuStep;
+            DrawModernButton(g, menuLabels[i], new RectangleF(leftX, y, 380, 46), i == _selected, fade);
+        }
+
+        // ── Right column: ship preview card ──
+        var cardX = 620f;
+        var cardY = 88f;
+        var cardW = 560f;
+        var cardH = 544f;
+        DrawGlassCard(g, new RectangleF(cardX, cardY, cardW, cardH), fade);
+
+        // Card header
+        DrawLabel(g, "SHIP PREVIEW", AccentColor, cardX + 32, cardY + 28, fade);
+        using var shipTitle = new SolidBrush(Color.FromArgb((int)(fade * 240), 235, 242, 252));
+        g.DrawString("Original Mk I", _headingFont, shipTitle, cardX + 32, cardY + 48);
+
+        // Ship display
+        DrawShip(g, new Vector2(cardX + cardW / 2f, cardY + 210), 3.6f, false);
+
+        // Separator
+        using var sep = new Pen(Color.FromArgb((int)(fade * 28), 150, 180, 210), 1f);
+        g.DrawLine(sep, cardX + 32, cardY + 320, cardX + cardW - 32, cardY + 320);
+
+        // Info rows
+        DrawModernInfoRow(g, "PAINT", AccentName(), cardX + 32, cardY + 348, fade);
+        DrawModernInfoRow(g, "TRAIL", TrailName(), cardX + 32, cardY + 384, fade);
+        DrawModernInfoRow(g, "WEAPON", WeaponShortName(), cardX + 32, cardY + 420, fade);
+        DrawModernInfoRow(g, "HIGH SCORE", $"{_settings.HighScore:000000}", cardX + 32, cardY + 456, fade);
+
+        // Ready badge
+        DrawBadge(g, "READY", new RectangleF(cardX + 32, cardY + 498, 88, 26), AccentColor, fade);
+
+        // Footer
+        DrawFooter(g, fade);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HANGAR
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RenderHangar(Graphics g)
+    {
+        RenderMenuBackground(g);
+        var fade = EaseOut(_screenFade);
+
+        // Header
+        DrawScreenHeader(g, "Hangar", "Customize paint, trail, and weapon rig.", fade);
+
+        // Left column: options
+        var optX = 96f;
+        var optY = 262f;
+        var optStep = 58;
+        DrawValueOption(g, "Paint", AccentName(), new RectangleF(optX, optY, 440, 48), _selected == 0, fade, true);
+        DrawValueOption(g, "Engine trail", TrailName(), new RectangleF(optX, optY + optStep, 440, 48), _selected == 1, fade, true);
+        DrawValueOption(g, "Weapon rig", WeaponShortName(), new RectangleF(optX, optY + optStep * 2, 440, 48), _selected == 2, fade, true);
+        DrawModernButton(g, "Launch run", new RectangleF(optX, optY + optStep * 3, 440, 46), _selected == 3, fade);
+        DrawModernButton(g, "Back", new RectangleF(optX, optY + optStep * 4, 440, 46), _selected == 4, fade);
+
+        // Right column: preview card
+        var cardX = 620f;
+        var cardY = 148f;
+        var cardW = 560f;
+        var cardH = 484f;
+        DrawGlassCard(g, new RectangleF(cardX, cardY, cardW, cardH), fade);
+
+        DrawLabel(g, "PREVIEW", AccentColor, cardX + 32, cardY + 26, fade);
+        using var shipTitle = new SolidBrush(Color.FromArgb((int)(fade * 240), 235, 242, 252));
+        g.DrawString("Original Mk I", _headingFont, shipTitle, cardX + 32, cardY + 46);
+
+        DrawShip(g, new Vector2(cardX + cardW / 2f, cardY + 200), 3.8f, false);
+
+        // Color swatches
+        DrawSwatch(g, AccentColor, cardX + 44, cardY + 340, 30, "PAINT", fade);
+        var trailColor = GameAssets.TrailColors[Math.Clamp(_settings.TrailIndex, 0, GameAssets.TrailColors.Length - 1)];
+        DrawSwatch(g, trailColor, cardX + 160, cardY + 340, 30, "TRAIL", fade);
+
+        DrawModernInfoRow(g, "WEAPON", WeaponShortName(), cardX + 32, cardY + 410, fade);
+
+        DrawFooter(g, fade);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // SETTINGS
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RenderSettings(Graphics g)
+    {
+        RenderMenuBackground(g);
+        var fade = EaseOut(_screenFade);
+
+        DrawScreenHeader(g, "Settings", "Changes save automatically.", fade);
+
+        var optX = 96f;
+        var optY = 252f;
+        var optStep = 54;
+        DrawValueOption(g, "Difficulty", DifficultyName(), new RectangleF(optX, optY, 440, 46), _selected == 0, fade, true);
+        DrawValueOption(g, "Music volume", $"{_settings.MusicVolume}%", new RectangleF(optX, optY + optStep, 440, 46), _selected == 1, fade, true);
+        DrawValueOption(g, "Effects volume", $"{_settings.EffectsVolume}%", new RectangleF(optX, optY + optStep * 2, 440, 46), _selected == 2, fade, true);
+        DrawValueOption(g, "Screen shake", OnOff(_settings.ScreenShake), new RectangleF(optX, optY + optStep * 3, 440, 46), _selected == 3, fade, false);
+        DrawValueOption(g, "Fullscreen", OnOff(_settings.Fullscreen), new RectangleF(optX, optY + optStep * 4, 440, 46), _selected == 4, fade, false);
+        DrawModernButton(g, "Reset high score", new RectangleF(optX, optY + optStep * 5, 440, 46), _selected == 5, fade);
+        DrawModernButton(g, "Back", new RectangleF(optX, optY + optStep * 6, 440, 46), _selected == 6, fade);
+
+        // Context card
+        var cardX = 620f;
+        var cardY = 200f;
+        DrawGlassCard(g, new RectangleF(cardX, cardY, 560, 330), fade);
+
+        DrawLabel(g, "DETAIL", AccentColor, cardX + 32, cardY + 26, fade);
+        using var descBrush = new SolidBrush(Color.FromArgb((int)(fade * 210), 200, 215, 235));
+        using var fmt = new StringFormat { Trimming = StringTrimming.Word, FormatFlags = StringFormatFlags.LineLimit };
+        g.DrawString(SettingDescription(), _bodyFont, descBrush, new RectangleF(cardX + 32, cardY + 66, 480, 180), fmt);
+
+        DrawBadge(g, "AUTO-SAVE", new RectangleF(cardX + 32, cardY + 272, 104, 26), AccentColor, fade);
+
+        DrawFooter(g, fade, "LEFT / RIGHT  Change     ENTER  Select     ESC  Back");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HELP / CONTROLS
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RenderHelp(Graphics g)
+    {
+        RenderMenuBackground(g);
+        var fade = EaseOut(_screenFade);
+
+        DrawScreenHeader(g, "Controls", "Move with intent, keep firing, use dash to survive.", fade);
+
+        DrawGlassCard(g, new RectangleF(96, 228, 1088, 370), fade);
+
+        DrawHelpColumn(g, 140, "KEYBOARD", [
+            ("MOVE", "WASD / Arrows"),
+            ("FIRE", "Space / Z"),
+            ("DASH", "Shift / X"),
+            ("PAUSE", "Esc / P")
+        ], fade);
+        DrawHelpColumn(g, 480, "CONTROLLER", [
+            ("MOVE", "Left stick / D-pad"),
+            ("FIRE", "A / RT"),
+            ("DASH", "X / RB"),
+            ("PAUSE", "Menu")
+        ], fade);
+        DrawHelpColumn(g, 830, "PICKUPS", [
+            ("SHIELD", "Absorbs one hit"),
+            ("RAPID", "Faster fire rate"),
+            ("REPAIR", "+1 life"),
+            ("COMBO", "Kill quickly for ×")
+        ], fade);
+
+        using var hint = new SolidBrush(Color.FromArgb((int)(fade * 140), 150, 175, 205));
+        using var cf = new StringFormat { Alignment = StringAlignment.Center };
+        g.DrawString("Press any key to return", _smallFont, hint, new RectangleF(0, 638, CanvasWidth, 24), cf);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // GAME RENDERING
+    // ──────────────────────────────────────────────────────────────────────────
+
     private void RenderGame(Graphics g)
     {
         DrawImageCover(g, _assets.Starfield, new RectangleF(0, 0, CanvasWidth, CanvasHeight));
-        using (var shade = new SolidBrush(Color.FromArgb(80, 0, 5, 15))) g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
+        using (var shade = new SolidBrush(Color.FromArgb(70, 0, 4, 12)))
+            g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
 
         var state = g.Save();
         if (_settings.ScreenShake && _world.ShakeStrength > 0f)
@@ -586,12 +794,141 @@ internal sealed class GameForm : Form
         g.Restore(state);
 
         DrawHud(g);
+
         if (_world.WaveBannerTime > 0f)
         {
             var alpha = Math.Clamp((int)(255 * Math.Min(1f, _world.WaveBannerTime)), 0, 255);
-            CenterText(g, $"WAVE {_world.Wave}", _titleFont, Color.FromArgb(alpha, AccentColor), new RectangleF(0, 275, CanvasWidth, 80));
+            // Modern wave banner: centered, clean
+            using var waveBg = new SolidBrush(Color.FromArgb((int)(alpha * 0.35f), 4, 8, 20));
+            g.FillRectangle(waveBg, 0, 298, CanvasWidth, 80);
+            using var waveLine1 = new Pen(Color.FromArgb((int)(alpha * 0.15f), 150, 180, 210), 1f);
+            g.DrawLine(waveLine1, 0, 298, CanvasWidth, 298);
+            g.DrawLine(waveLine1, 0, 378, CanvasWidth, 378);
+            CenterText(g, $"WAVE {_world.Wave}", _headingFont, Color.FromArgb(alpha, 235, 242, 252),
+                new RectangleF(0, 308, CanvasWidth, 50));
         }
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PAUSE / GAME OVER OVERLAYS
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void RenderPauseOverlay(Graphics g)
+    {
+        var fade = EaseOut(_screenFade);
+        DrawGlassCard(g, new RectangleF(400, 190, 480, 360), fade);
+
+        // Title
+        using var title = new SolidBrush(Color.FromArgb((int)(fade * 245), 240, 246, 255));
+        using var cf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        g.DrawString("Paused", _headingFont, title, new RectangleF(400, 218, 480, 48), cf);
+
+        // Thin separator
+        using var sep = new Pen(Color.FromArgb((int)(fade * 30), 150, 180, 210), 1f);
+        g.DrawLine(sep, 440, 280, 840, 280);
+
+        // Options
+        var opts = new[] { "Resume", "Restart", "Quit to menu" };
+        for (var i = 0; i < opts.Length; i++)
+            DrawModernButton(g, opts[i], new RectangleF(440, 306 + i * 58, 400, 46), i == _selected, fade);
+    }
+
+    private void RenderGameOverOverlay(Graphics g)
+    {
+        var fade = EaseOut(_screenFade);
+        DrawGlassCard(g, new RectangleF(370, 120, 540, 500), fade);
+
+        // Title
+        DrawLabel(g, "RUN COMPLETE", Color.FromArgb(255, 110, 90), 404, 152, fade);
+
+        // Score — big, clean
+        using var scoreBrush = new SolidBrush(Color.FromArgb((int)(fade * 250), 245, 248, 255));
+        using var cf = new StringFormat { Alignment = StringAlignment.Center };
+        g.DrawString($"{_world.Score:000000}", _titleFont, scoreBrush, new RectangleF(370, 185, 540, 70), cf);
+
+        // Subtitle
+        using var sub = new SolidBrush(Color.FromArgb((int)(fade * 150), 150, 175, 205));
+        g.DrawString($"Wave {_world.Wave:00}  ·  Best  {_settings.HighScore:000000}", _smallFont, sub,
+            new RectangleF(370, 260, 540, 24), cf);
+
+        // Separator
+        using var sep = new Pen(Color.FromArgb((int)(fade * 25), 150, 180, 210), 1f);
+        g.DrawLine(sep, 410, 310, 870, 310);
+
+        // Options
+        var opts = new[] { "Retry", "Hangar", "Main menu" };
+        for (var i = 0; i < opts.Length; i++)
+            DrawModernButton(g, opts[i], new RectangleF(440, 340 + i * 58, 400, 46), i == _selected, fade);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // HUD — minimal, contextual, glass-backed
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private void DrawHud(Graphics g)
+    {
+        // ── Top-left: Score in a small glass pill ──
+        DrawGlassCard(g, new RectangleF(16, 12, 170, 52), 1f, Color.FromArgb(170, 6, 12, 26));
+        DrawLabel(g, "SCORE", Color.FromArgb(140, 170, 200), 28, 18, 1f);
+        using var scoreBrush = new SolidBrush(Color.FromArgb(240, 246, 255));
+        g.DrawString($"{_world.Score:000000}", _hudNumberFont, scoreBrush, 26, 32);
+
+        // ── Top-center: Wave pill ──
+        DrawGlassCard(g, new RectangleF(CanvasWidth / 2f - 56, 14, 112, 34), 1f, Color.FromArgb(150, 6, 12, 26));
+        CenterText(g, $"WAVE {_world.Wave:00}", _hudLabelFont, Color.FromArgb(200, 220, 240),
+            new RectangleF(CanvasWidth / 2f - 56, 14, 112, 34));
+
+        // ── Combo — only shows when active (contextual!) ──
+        if (_world.Combo > 1)
+        {
+            var comboX = CanvasWidth / 2f + 70;
+            using var comboBrush = new SolidBrush(AccentColor);
+            g.DrawString($"×{_world.Combo}", _hudSmallFont, comboBrush, comboX, 20);
+
+            // Combo timer bar
+            using var barBg = new SolidBrush(Color.FromArgb(40, 200, 220, 240));
+            using var barFill = new SolidBrush(AccentColor);
+            g.FillRectangle(barBg, comboX, 42, 120, 3);
+            g.FillRectangle(barFill, comboX, 42, 120 * Math.Clamp(_world.ComboTime / 2.6f, 0f, 1f), 3);
+        }
+
+        // ── Top-right: Lives + Dash ──
+        DrawGlassCard(g, new RectangleF(CanvasWidth - 250, 12, 234, 52), 1f, Color.FromArgb(170, 6, 12, 26));
+
+        // Lives
+        DrawLabel(g, "LIVES", Color.FromArgb(140, 170, 200), CanvasWidth - 238, 18, 1f);
+        for (var i = 0; i < Math.Max(0, _world.Player.Lives); i++)
+        {
+            var x = CanvasWidth - 238 + i * 22;
+            using var life = new SolidBrush(i < 3 ? AccentColor : Color.FromArgb(120, 230, 160));
+            g.FillPolygon(life, [
+                new PointF(x + 7, 34),
+                new PointF(x + 14, 48),
+                new PointF(x, 48)
+            ]);
+        }
+
+        // Dash bar
+        DrawLabel(g, "DASH", Color.FromArgb(140, 170, 200), CanvasWidth - 108, 18, 1f);
+        using var dashBg = new SolidBrush(Color.FromArgb(45, 180, 200, 220));
+        using var dashFill = new SolidBrush(_world.Player.DashCooldown <= 0f
+            ? Color.FromArgb(110, 238, 170)
+            : AccentColor);
+        g.FillRectangle(dashBg, CanvasWidth - 108, 40, 88, 5);
+        var dashReady = 1f - Math.Clamp(_world.Player.DashCooldown / 1.35f, 0f, 1f);
+        g.FillRectangle(dashFill, CanvasWidth - 108, 40, 88 * dashReady, 5);
+
+        // Rapid fire indicator
+        if (_world.Player.RapidFire > 0f)
+        {
+            using var rapidBrush = new SolidBrush(Color.FromArgb(220, 255, 210, 74));
+            g.DrawString($"RAPID {_world.Player.RapidFire:0.0}", _hudLabelFont, rapidBrush, CanvasWidth / 2f + 70, 50);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // GAME OBJECTS
+    // ──────────────────────────────────────────────────────────────────────────
 
     private void DrawAsteroid(Graphics g, Asteroid asteroid)
     {
@@ -650,7 +987,7 @@ internal sealed class GameForm : Form
         }
         else
         {
-            using var font = new Font("Segoe UI", 18f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var font = new Font(BodyFamily, 18f, FontStyle.Bold, GraphicsUnit.Pixel);
             CenterText(g, powerup.Kind == PowerupKind.RapidFire ? "R" : "+", font, color,
                 new RectangleF(powerup.Position.X - 20, powerup.Position.Y - 16, 40, 32));
         }
@@ -675,8 +1012,6 @@ internal sealed class GameForm : Form
             g.FillEllipse(trailGlow, center.X - 8f * scale, center.Y + 17f * scale, 16f * scale, trailHeight);
         }
 
-        // This is the original ship costume from spaceshooter.sb3. Only its warm
-        // wing paint is remapped; the silhouette, cockpit and proportions stay true.
         var ship = _assets.ShipFor(_settings.AccentIndex);
         var width = 66f * scale;
         var height = 50f * scale;
@@ -703,230 +1038,208 @@ internal sealed class GameForm : Form
         }
     }
 
-    private void DrawHud(Graphics g)
+    // ──────────────────────────────────────────────────────────────────────────
+    // UI PRIMITIVES — modern glassmorphism system
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Glassmorphic card: frosted fill, thin highlight border, optional shadow.</summary>
+    private void DrawGlassCard(Graphics g, RectangleF rect, float fade, Color? fillColor = null)
     {
-        using var panel = new SolidBrush(Color.FromArgb(208, 3, 13, 27));
-        using var line = new Pen(Color.FromArgb(110, AccentColor), 1f);
-        g.FillRectangle(panel, 0, 0, CanvasWidth, 78);
-        g.DrawLine(line, 0, 77, CanvasWidth, 77);
+        var fill = fillColor ?? Color.FromArgb((int)(fade * 200), 8, 14, 30);
+        using var path = RoundedRect(rect, 16f);
 
-        using var muted = new SolidBrush(Color.FromArgb(145, 178, 204));
-        using var white = new SolidBrush(Color.FromArgb(242, 248, 253));
-        using var accent = new SolidBrush(AccentColor);
-        g.DrawString("SCORE", _eyebrowFont, muted, 30, 12);
-        g.DrawString($"{_world.Score:000000}", _numberFont, white, 28, 28);
+        // Subtle outer shadow (drawn as a slightly larger dark shape behind)
+        using var shadowPath = RoundedRect(new RectangleF(rect.X + 2, rect.Y + 3, rect.Width, rect.Height), 18f);
+        using var shadowBrush = new SolidBrush(Color.FromArgb((int)(fade * 40), 0, 0, 0));
+        g.FillPath(shadowBrush, shadowPath);
 
-        DrawPill(g, new RectangleF(360, 18, 116, 38), $"WAVE {_world.Wave:00}", Color.White, false);
-        if (_world.Combo > 1)
-        {
-            g.DrawString($"COMBO x{_world.Combo}", _hudFont, accent, 515, 21);
-            using var comboBack = new SolidBrush(Color.FromArgb(55, Color.White));
-            using var comboFill = new SolidBrush(AccentColor);
-            g.FillRectangle(comboBack, 515, 52, 148, 4);
-            g.FillRectangle(comboFill, 515, 52, 148 * Math.Clamp(_world.ComboTime / 2.6f, 0f, 1f), 4);
-        }
+        // Main fill
+        using var brush = new SolidBrush(fill);
+        g.FillPath(brush, path);
 
-        g.DrawString("LIVES", _eyebrowFont, muted, 805, 12);
-        for (var i = 0; i < Math.Max(0, _world.Player.Lives); i++)
-        {
-            var x = 805 + i * 27;
-            using var life = new SolidBrush(i < 3 ? AccentColor : Color.FromArgb(118, 237, 158));
-            g.FillPolygon(life, [new PointF(x + 9, 31), new PointF(x + 18, 49), new PointF(x, 49)]);
-        }
+        // Top highlight — 1px bright line at the top edge for glass refraction
+        using var topHighlight = new Pen(Color.FromArgb((int)(fade * 35), 180, 210, 240), 1f);
+        g.DrawLine(topHighlight, rect.X + 16, rect.Y + 0.5f, rect.Right - 16, rect.Y + 0.5f);
 
-        g.DrawString("DASH", _eyebrowFont, muted, 1058, 12);
-        using var dashBack = new SolidBrush(Color.FromArgb(58, Color.White));
-        using var dashFill = new SolidBrush(_world.Player.DashCooldown <= 0f ? Color.FromArgb(100, 238, 170) : AccentColor);
-        g.FillRectangle(dashBack, 1058, 36, 170, 7);
-        var dashReady = 1f - Math.Clamp(_world.Player.DashCooldown / 1.35f, 0f, 1f);
-        g.FillRectangle(dashFill, 1058, 36, 170 * dashReady, 7);
-        if (_world.Player.RapidFire > 0f)
-            g.DrawString($"RAPID { _world.Player.RapidFire:0.0}", _eyebrowFont, Brushes.Gold, 680, 22);
+        // Border — very subtle
+        using var border = new Pen(Color.FromArgb((int)(fade * 22), 150, 185, 215), 1f);
+        g.DrawPath(border, path);
     }
 
-    private void RenderOverlay(Graphics g, string title, string[] options, int firstY)
-    {
-        using var shade = new SolidBrush(Color.FromArgb(192, 1, 6, 17));
-        g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
-        DrawGlassPanel(g, new RectangleF(390, 174, 500, 394), 24f, Color.FromArgb(226, 7, 18, 34));
-        CenterText(g, title, _sectionFont, AccentColor, new RectangleF(390, 216, 500, 58));
-        using var rule = new Pen(Color.FromArgb(90, AccentColor), 1f);
-        g.DrawLine(rule, 452, 292, 828, 292);
-        DrawMenuButtons(g, options, 440, firstY, 400, 62);
-    }
-
-    private void RenderGameOver(Graphics g)
-    {
-        using var shade = new SolidBrush(Color.FromArgb(195, 4, 5, 17));
-        g.FillRectangle(shade, 0, 0, CanvasWidth, CanvasHeight);
-        DrawGlassPanel(g, new RectangleF(360, 104, 560, 536), 25f, Color.FromArgb(226, 8, 15, 30));
-        CenterText(g, "RUN ENDED", _sectionFont, Color.FromArgb(255, 101, 88), new RectangleF(360, 145, 560, 58));
-        CenterText(g, $"{_world.Score:000000}", _numberFont, Color.White, new RectangleF(360, 228, 560, 42));
-        CenterText(g, $"WAVE {_world.Wave:00}   •   BEST {_settings.HighScore:000000}", _smallFont,
-            Color.FromArgb(180, 205, 226), new RectangleF(360, 278, 560, 28));
-        using var rule = new Pen(Color.FromArgb(60, 180, 100, 93), 1f);
-        g.DrawLine(rule, 430, 330, 850, 330);
-        DrawMenuButtons(g, ["Retry", "Open hangar", "Main menu"], 440, 404, 400, 62);
-    }
-
-    private void DrawSectionTitle(Graphics g, string title, string subtitle)
-    {
-        using var white = new SolidBrush(Color.FromArgb(245, 250, 255));
-        using var accent = new SolidBrush(AccentColor);
-        using var muted = new SolidBrush(Color.FromArgb(165, 194, 217));
-        g.DrawString(title, _sectionFont, white, 112, 92);
-        g.FillRectangle(accent, 114, 143, 58, 3);
-        g.DrawString(subtitle, _subtitleFont, muted, 190, 137);
-    }
-
-    private void DrawTopBar(Graphics g, string context, string mode)
-    {
-        using var muted = new SolidBrush(Color.FromArgb(133, 168, 197));
-        using var accent = new SolidBrush(AccentColor);
-        using var line = new Pen(Color.FromArgb(42, 145, 184, 214), 1f);
-        g.DrawString("SPACE UNLIMITED", _eyebrowFont, accent, 112, 30);
-        g.DrawString("/  RECHARGED", _eyebrowFont, muted, 235, 30);
-        g.DrawString(context, _eyebrowFont, muted, 530, 30);
-        g.DrawString(mode, _eyebrowFont, accent, 1040, 30);
-        g.DrawLine(line, 112, 58, 1168, 58);
-    }
-
-    private void DrawInfoRow(Graphics g, string label, string value, float x, float y)
-    {
-        using var muted = new SolidBrush(Color.FromArgb(135, 169, 197));
-        using var valueBrush = new SolidBrush(Color.FromArgb(237, 245, 251));
-        g.DrawString(label, _eyebrowFont, muted, x, y);
-        var size = g.MeasureString(value, _smallFont);
-        g.DrawString(value, _smallFont, valueBrush, x + 344 - size.Width, y - 2);
-    }
-
-    private void DrawSwatch(Graphics g, Color color, float x, float y, float size, string label)
-    {
-        using var glow = new SolidBrush(Color.FromArgb(38, color));
-        using var fill = new SolidBrush(color);
-        using var pen = new Pen(Color.FromArgb(175, color), 1f);
-        g.FillEllipse(glow, x - 7, y - 7, size + 14, size + 14);
-        g.FillEllipse(fill, x, y, size, size);
-        g.DrawEllipse(pen, x, y, size, size);
-        using var text = new SolidBrush(Color.FromArgb(145, 178, 204));
-        g.DrawString(label, _eyebrowFont, text, x - 1, y + size + 10);
-    }
-
-    private void DrawPill(Graphics g, RectangleF rect, string text, Color color, bool filled)
-    {
-        DrawGlassPanel(g, rect, rect.Height / 2f, filled
-            ? Color.FromArgb(54, color)
-            : Color.FromArgb(36, 164, 201, 227));
-        CenterText(g, text, _eyebrowFont, color, rect);
-    }
-
-    private void DrawMenuButtons(Graphics g, string[] labels, int x, int y, int width, int step)
-    {
-        for (var i = 0; i < labels.Length; i++)
-        {
-            DrawButton(g, labels[i], new RectangleF(x, y + i * step, width, 48), i == _selected, i + 1);
-        }
-    }
-
-    private void DrawValueMenu(Graphics g, string[] labels, string[] values, int x, int y, int width, int step)
-    {
-        for (var i = 0; i < values.Length; i++)
-        {
-            var rect = new RectangleF(x, y + i * step, width, 48);
-            var selected = i == _selected;
-            DrawGlassPanel(g, rect, 11f, selected
-                ? Color.FromArgb(194, 14, 41, 64)
-                : Color.FromArgb(76, 5, 16, 30));
-            if (selected)
-            {
-                using var accent = new SolidBrush(AccentColor);
-                g.FillRectangle(accent, rect.X, rect.Y + 8, 4, rect.Height - 16);
-            }
-
-            if (!string.IsNullOrEmpty(labels[i]))
-            {
-                using var muted = new SolidBrush(Color.FromArgb(153, 184, 210));
-                using var value = new SolidBrush(selected ? AccentColor : Color.FromArgb(238, 245, 250));
-                g.DrawString(labels[i], _smallFont, muted, rect.X + 22, rect.Y + 16);
-                var size = g.MeasureString(values[i], _menuFont);
-                g.DrawString(values[i], _menuFont, value, rect.Right - size.Width - 37, rect.Y + 10);
-                if (i < values.Length - 2)
-                {
-                    g.DrawString("‹", _menuFont, value, rect.X + 220, rect.Y + 9);
-                    g.DrawString("›", _menuFont, value, rect.Right - 23, rect.Y + 9);
-                }
-            }
-            else
-            {
-                CenterText(g, values[i], _menuFont, selected ? AccentColor : Color.FromArgb(238, 245, 250), rect);
-            }
-        }
-    }
-
-    private void DrawButton(Graphics g, string text, RectangleF rect, bool selected, int number)
+    /// <summary>Clean modern button with accent indicator when selected.</summary>
+    private void DrawModernButton(Graphics g, string text, RectangleF rect, bool selected, float fade)
     {
         if (selected)
         {
-            DrawGlassPanel(g, rect, 11f, Color.FromArgb(194, 14, 41, 64));
-            using var accent = new SolidBrush(AccentColor);
-            g.FillRectangle(accent, rect.X, rect.Y + 8, 4, rect.Height - 16);
-            using var glowPen = new Pen(Color.FromArgb(110, AccentColor), 1f);
-            g.DrawRectangle(glowPen, rect.X + 0.5f, rect.Y + 0.5f, rect.Width - 1f, rect.Height - 1f);
+            // Selected: glass background + accent left bar + glow
+            using var bgPath = RoundedRect(rect, 10f);
+            using var bgBrush = new SolidBrush(Color.FromArgb((int)(fade * 50), AccentColor));
+            g.FillPath(bgBrush, bgPath);
+
+            // Accent bar
+            using var bar = new SolidBrush(Color.FromArgb((int)(fade * 240), AccentColor));
+            g.FillRectangle(bar, rect.X + 1, rect.Y + 10, 3, rect.Height - 20);
+
+            // Subtle border glow
+            using var glowPen = new Pen(Color.FromArgb((int)(fade * 55), AccentColor), 1f);
+            g.DrawPath(glowPen, bgPath);
         }
         else
         {
-            using var rule = new Pen(Color.FromArgb(30, 144, 179, 205), 1f);
-            g.DrawLine(rule, rect.X, rect.Bottom, rect.Right, rect.Bottom);
+            // Unselected: just a subtle bottom border
+            using var line = new Pen(Color.FromArgb((int)(fade * 18), 130, 160, 190), 1f);
+            g.DrawLine(line, rect.X + 8, rect.Bottom, rect.Right - 8, rect.Bottom);
         }
 
-        using var index = new SolidBrush(selected ? AccentColor : Color.FromArgb(106, 143, 174));
-        using var brush = new SolidBrush(selected ? Color.White : Color.FromArgb(190, 214, 233));
-        g.DrawString($"{number:00}", _eyebrowFont, index, rect.X + 20, rect.Y + 17);
-        g.DrawString(text, _menuFont, brush, rect.X + 62, rect.Y + 10);
+        // Text
+        var textColor = selected
+            ? Color.FromArgb((int)(fade * 250), 245, 248, 255)
+            : Color.FromArgb((int)(fade * 170), 170, 195, 220);
+        using var textBrush = new SolidBrush(textColor);
+        var font = selected ? _menuFontBold : _menuFont;
+        g.DrawString(text, font, textBrush, rect.X + 20, rect.Y + 12);
+
+        // Selection arrow
+        if (selected)
+        {
+            using var arrow = new SolidBrush(Color.FromArgb((int)(fade * 200), AccentColor));
+            g.DrawString("›", _menuFontBold, arrow, rect.Right - 30, rect.Y + 12);
+        }
     }
 
-    private void DrawHelpColumn(Graphics g, float x, string heading, (string Action, string Input)[] rows)
+    /// <summary>Value option row (for settings/hangar) with left label and right value.</summary>
+    private void DrawValueOption(Graphics g, string label, string value, RectangleF rect, bool selected, float fade, bool showArrows)
     {
-        using var accent = new SolidBrush(AccentColor);
-        using var white = new SolidBrush(Color.FromArgb(238, 245, 250));
-        using var muted = new SolidBrush(Color.FromArgb(143, 177, 204));
-        g.DrawString(heading, _eyebrowFont, accent, x, 229);
-        using var rule = new Pen(Color.FromArgb(45, AccentColor), 1f);
-        g.DrawLine(rule, x, 251, x + 230, 251);
-        var y = 280f;
+        if (selected)
+        {
+            using var bgPath = RoundedRect(rect, 10f);
+            using var bgBrush = new SolidBrush(Color.FromArgb((int)(fade * 45), AccentColor));
+            g.FillPath(bgBrush, bgPath);
+
+            using var bar = new SolidBrush(Color.FromArgb((int)(fade * 240), AccentColor));
+            g.FillRectangle(bar, rect.X + 1, rect.Y + 8, 3, rect.Height - 16);
+
+            using var glowPen = new Pen(Color.FromArgb((int)(fade * 45), AccentColor), 1f);
+            g.DrawPath(glowPen, bgPath);
+        }
+        else
+        {
+            using var line = new Pen(Color.FromArgb((int)(fade * 16), 130, 160, 190), 1f);
+            g.DrawLine(line, rect.X + 8, rect.Bottom, rect.Right - 8, rect.Bottom);
+        }
+
+        // Label
+        using var labelBrush = new SolidBrush(Color.FromArgb((int)(fade * 150), 150, 175, 205));
+        g.DrawString(label, _smallFont, labelBrush, rect.X + 20, rect.Y + 6);
+
+        // Value
+        var valColor = selected
+            ? Color.FromArgb((int)(fade * 250), AccentColor)
+            : Color.FromArgb((int)(fade * 220), 220, 232, 245);
+        using var valBrush = new SolidBrush(valColor);
+        var valSize = g.MeasureString(value, _menuFont);
+        g.DrawString(value, _menuFont, valBrush, rect.Right - valSize.Width - 20, rect.Y + 14);
+
+        // Arrows for cycling
+        if (showArrows)
+        {
+            using var arrowBrush = new SolidBrush(Color.FromArgb((int)(fade * (selected ? 180 : 80)), 160, 185, 210));
+            g.DrawString("‹", _menuFont, arrowBrush, rect.Right - valSize.Width - 50, rect.Y + 14);
+            g.DrawString("›", _menuFont, arrowBrush, rect.Right - 6, rect.Y + 14);
+        }
+    }
+
+    /// <summary>Small uppercase label (eyebrow text).</summary>
+    private void DrawLabel(Graphics g, string text, Color color, float x, float y, float fade)
+    {
+        using var brush = new SolidBrush(Color.FromArgb(Math.Clamp((int)(fade * color.A), 0, 255), color));
+        g.DrawString(text.ToUpperInvariant(), _labelFont, brush, x, y);
+    }
+
+    /// <summary>Screen-level header with title + description.</summary>
+    private void DrawScreenHeader(Graphics g, string title, string description, float fade)
+    {
+        DrawLabel(g, "SPACE UNLIMITED", AccentColor, 98, 96, fade);
+
+        using var titleBrush = new SolidBrush(Color.FromArgb((int)(fade * 245), 240, 246, 255));
+        g.DrawString(title, _headingFont, titleBrush, 96, 118);
+
+        // Accent underline
+        using var accentLine = new Pen(Color.FromArgb((int)(fade * 120), AccentColor), 2f);
+        g.DrawLine(accentLine, 98, 162, 168, 162);
+
+        using var descBrush = new SolidBrush(Color.FromArgb((int)(fade * 150), 150, 175, 205));
+        g.DrawString(description, _subtitleFont, descBrush, 182, 155);
+    }
+
+    private void DrawModernInfoRow(Graphics g, string label, string value, float x, float y, float fade)
+    {
+        using var labelBrush = new SolidBrush(Color.FromArgb((int)(fade * 120), 140, 170, 200));
+        g.DrawString(label, _labelFont, labelBrush, x, y);
+
+        using var valueBrush = new SolidBrush(Color.FromArgb((int)(fade * 220), 220, 232, 245));
+        var size = g.MeasureString(value, _bodyFont);
+        g.DrawString(value, _bodyFont, valueBrush, x + 496 - size.Width, y - 3);
+    }
+
+    private void DrawSwatch(Graphics g, Color color, float x, float y, float size, string label, float fade)
+    {
+        using var glow = new SolidBrush(Color.FromArgb((int)(fade * 35), color));
+        using var fill = new SolidBrush(Color.FromArgb((int)(fade * 255), color));
+        using var pen = new Pen(Color.FromArgb((int)(fade * 120), color), 1.5f);
+        g.FillEllipse(glow, x - 6, y - 6, size + 12, size + 12);
+        g.FillEllipse(fill, x, y, size, size);
+        g.DrawEllipse(pen, x, y, size, size);
+        using var text = new SolidBrush(Color.FromArgb((int)(fade * 130), 140, 170, 200));
+        g.DrawString(label, _labelFont, text, x - 1, y + size + 10);
+    }
+
+    private void DrawBadge(Graphics g, string text, RectangleF rect, Color color, float fade)
+    {
+        using var bgPath = RoundedRect(rect, rect.Height / 2f);
+        using var bgBrush = new SolidBrush(Color.FromArgb((int)(fade * 40), color));
+        g.FillPath(bgBrush, bgPath);
+        using var borderPen = new Pen(Color.FromArgb((int)(fade * 60), color), 1f);
+        g.DrawPath(borderPen, bgPath);
+        CenterText(g, text, _labelFont, Color.FromArgb((int)(fade * 240), color), rect);
+    }
+
+    private void DrawHelpColumn(Graphics g, float x, string heading, (string Action, string Input)[] rows, float fade)
+    {
+        DrawLabel(g, heading, AccentColor, x, 268, fade);
+
+        using var sep = new Pen(Color.FromArgb((int)(fade * 35), AccentColor), 1f);
+        g.DrawLine(sep, x, 290, x + 260, 290);
+
+        var y = 316f;
         foreach (var row in rows)
         {
-            g.DrawString(row.Action, _eyebrowFont, muted, x, y);
-            g.DrawString(row.Input, _bodyFont, white, x, y + 20);
-            y += 72;
+            using var actionBrush = new SolidBrush(Color.FromArgb((int)(fade * 120), 140, 170, 200));
+            g.DrawString(row.Action, _labelFont, actionBrush, x, y);
+
+            using var inputBrush = new SolidBrush(Color.FromArgb((int)(fade * 230), 225, 235, 248));
+            g.DrawString(row.Input, _bodyFont, inputBrush, x, y + 18);
+            y += 68;
         }
     }
 
-    private void DrawFooter(Graphics g, string? text = null)
+    private void DrawFooter(Graphics g, float fade, string? text = null)
     {
         text ??= _input.Pad.Connected
-            ? "D-PAD / LEFT STICK  Navigate     A  Select     B  Back"
+            ? "D-PAD / STICK  Navigate     A  Select     B  Back"
             : "WASD / ARROWS  Navigate     ENTER  Select     ESC  Back";
-        using var rule = new Pen(Color.FromArgb(30, 144, 179, 205), 1f);
-        g.DrawLine(rule, 112, 665, 1168, 665);
-        CenterText(g, text, _smallFont, Color.FromArgb(149, 183, 210), new RectangleF(112, 675, 1056, 28));
+
+        using var sep = new Pen(Color.FromArgb((int)(fade * 20), 130, 160, 190), 1f);
+        g.DrawLine(sep, 96, 660, 1184, 660);
+
+        using var textBrush = new SolidBrush(Color.FromArgb((int)(fade * 110), 140, 170, 200));
+        using var cf = new StringFormat { Alignment = StringAlignment.Center };
+        g.DrawString(text, _smallFont, textBrush, new RectangleF(96, 672, 1088, 24), cf);
     }
 
-    private void DrawGlassPanel(Graphics g, RectangleF rect, float radius, Color fill)
-    {
-        using var path = RoundedRect(rect, radius);
-        using var brush = new SolidBrush(fill);
-        using var pen = new Pen(Color.FromArgb(54, 157, 193, 221), 1f);
-        g.FillPath(brush, path);
-        g.DrawPath(pen, path);
-    }
-
-    private void DrawWrappedText(Graphics g, string text, Font font, Color color, RectangleF rect)
-    {
-        using var brush = new SolidBrush(color);
-        using var format = new StringFormat { Trimming = StringTrimming.Word, FormatFlags = StringFormatFlags.LineLimit };
-        g.DrawString(text, font, brush, rect, format);
-    }
+    // ──────────────────────────────────────────────────────────────────────────
+    // DRAWING UTILITIES
+    // ──────────────────────────────────────────────────────────────────────────
 
     private static void CenterText(Graphics g, string text, Font font, Color color, RectangleF rect)
     {
@@ -937,12 +1250,12 @@ internal sealed class GameForm : Form
 
     private static GraphicsPath RoundedRect(RectangleF rect, float radius)
     {
-        var diameter = radius * 2f;
+        var d = radius * 2f;
         var path = new GraphicsPath();
-        path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
-        path.AddArc(rect.Right - diameter, rect.Y, diameter, diameter, 270, 90);
-        path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
         path.CloseFigure();
         return path;
     }
@@ -975,6 +1288,12 @@ internal sealed class GameForm : Form
     }
 
     private static PointF P(Vector2 center, float x, float y) => new(center.X + x, center.Y + y);
+
+    private static float EaseOut(float t) => 1f - (1f - Math.Clamp(t, 0f, 1f)) * (1f - Math.Clamp(t, 0f, 1f));
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // STATE HELPERS
+    // ──────────────────────────────────────────────────────────────────────────
 
     private Color AccentColor => GameAssets.AccentColors[Math.Clamp(_settings.AccentIndex, 0, GameAssets.AccentColors.Length - 1)];
 
@@ -1019,7 +1338,7 @@ internal sealed class GameForm : Form
         3 => "Adds a small camera response when the ship takes a hit or a heavy object breaks.",
         4 => "Borderless fullscreen keeps the 16:9 canvas intact on modern displays.",
         5 => $"The current best run is {_settings.HighScore:000000}.",
-        _ => "Return to the command deck."
+        _ => "Return to the main menu."
     };
 
     private void UpdateMenuStars(float dt)
@@ -1081,15 +1400,18 @@ internal sealed class GameForm : Form
         _audio.Dispose();
         _assets.Dispose();
         _canvas.Dispose();
+        _blurBuffer.Dispose();
         _titleFont.Dispose();
-        _sectionFont.Dispose();
+        _headingFont.Dispose();
         _subtitleFont.Dispose();
-        _eyebrowFont.Dispose();
+        _labelFont.Dispose();
         _menuFont.Dispose();
+        _menuFontBold.Dispose();
         _bodyFont.Dispose();
         _smallFont.Dispose();
-        _hudFont.Dispose();
-        _numberFont.Dispose();
+        _hudNumberFont.Dispose();
+        _hudLabelFont.Dispose();
+        _hudSmallFont.Dispose();
     }
 
     private static int Wrap(int value, int count) => (value % count + count) % count;
