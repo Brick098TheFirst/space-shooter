@@ -1,0 +1,72 @@
+name: Build Game Boy Advance (GBA) ROM
+
+on:
+  push:
+    branches: [main, "arena/**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-gba:
+    name: GBA ROM & Web Player
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Validate source assets
+        run: python3 tools/validate-assets.py
+
+      - name: Generate GBA audio and graphics data
+        run: npm run generate-assets
+
+      - name: Build GBA ROM (SpaceUnlimited.gba)
+        run: npm run build:gba
+
+      - name: Verify GBA ROM artifact
+        run: |
+          test -f SpaceUnlimited.gba
+          echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
+
+      - name: Bundle Web Player distribution
+        run: node tools/bundle_web.js
+
+      - name: Upload GBA ROM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceUnlimited-GBA-ROM
+          path: SpaceUnlimited.gba
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Web Player Distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceUnlimited-GBA-WebPlayer
+          path: |
+            web/
+            server.js
+            package.json
+            SpaceUnlimited.gba
+          if-no-files-found: error
+          retention-days: 30
