@@ -3,22 +3,28 @@
 #include <string.h>
 
 /*
- * GBA DirectSound is an 8-bit signed PCM FIFO.  The old implementation used
- * DMA with a source pointer that was changed once per frame, but FIFO DMA has
- * no automatic end-of-buffer wrap.  Once that pointer ran off the end of the
- * small mix buffer, the hardware read unrelated ROM/RAM and produced a short
- * burst of static followed by silence.
+ * GBA DirectSound is an 8-bit signed PCM FIFO.  Earlier revisions fed it
+ * from a Timer 0 IRQ.  At 16,384 Hz the interrupt dispatcher alone consumed
+ * most of the CPU (the game crawled at ~8 fps, the audio ring starved and
+ * music came out in bursts); at 1,024 Hz the FIFO still glitched because
+ * refilling a 32-sample FIFO from an IRQ has zero timing margin.
  *
- * Instead, keep a small producer/consumer ring in EWRAM.  Timer 0 runs at the
- * GBA's exact 16,384 Hz rate (0xffff with the /1024 timer prescaler).  Its IRQ
- * writes one 32-bit word (four samples) to FIFO A every four samples.  The
- * main loop fills the ring with mixed music and effects ahead of the
- * interrupt, so changing music or triggering an effect never races a DMA
- * transfer or leaves the FIFO pointing outside a buffer.
+ * This revision uses the hardware the way it is meant to be used: Timer 0 at
+ * 1,024 Hz directly triggers DMA 2 (16 bytes per trigger) to copy the next
+ * 16 mixed samples from the ring into FIFO A.  The DMA fires at the exact
+ * timer overflow — no interrupt latency, no FIFO underruns — and the
+ * per-trigger cost is just a few cycles.  The timer IRQ still runs at
+ * 1,024 Hz but only to advance the ring read pointer and re-arm the one-shot
+ * DMA (mGBA's repeat-DMA mode stops transferring after a few seconds, so the
+ * DMA is re-armed instead), keeping the dispatcher overhead at ~6% of the
+ * CPU.  The ring keeps a 16-byte mirror of its head so a DMA window never
+ * crosses the end of the buffer.
  */
 #define AUDIO_RING_SAMPLES 2048u
 #define AUDIO_RING_MASK (AUDIO_RING_SAMPLES - 1u)
+#define AUDIO_RING_GUARD 16u
 #define AUDIO_TARGET_SAMPLES 512u
+#define AUDIO_SAMPLES_PER_IRQ 16u
 #define MAX_ACTIVE_SFX 4
 
 #if (AUDIO_RING_SAMPLES & AUDIO_RING_MASK) != 0
@@ -32,10 +38,12 @@ typedef struct {
     bool active;
 } SfxChannel;
 
-EWRAM_BSS static s8 s_audio_ring[AUDIO_RING_SAMPLES] __attribute__((aligned(4)));
+/* +guard: DMA windows that cross the end of the ring read the mirrored head.
+ * The ring lives in IWRAM (.bss), which also makes the per-frame mix
+ * faster than EWRAM. */
+static s8 s_audio_ring[AUDIO_RING_SAMPLES + AUDIO_RING_GUARD] __attribute__((aligned(4)));
 static volatile u32 s_read_pos = 0;
 static volatile u32 s_write_pos = 0;
-static volatile u32 s_fifo_phase = 0;
 static bool s_audio_started = false;
 
 static BgmTrack s_current_bgm = BGM_NONE;
@@ -81,23 +89,17 @@ static s8 audio_mix_sample(void) {
     return (s8)mixed;
 }
 
-/* This runs from the Timer 0 IRQ.  It is deliberately short: interrupts on
- * the GBA should acknowledge their source and return quickly. */
+/* This runs from the Timer 0 IRQ at 1,024 Hz.  The DMA (triggered by the
+ * same timer overflow, in hardware) copies the 16 samples at s_read_pos into
+ * FIFO A; all this ISR has to do is advance the read pointer and repoint the
+ * DMA source at the next window, so it stays tiny. */
 IWRAM_CODE static void audio_timer_isr(void) {
-    if ((s_fifo_phase & 3u) == 3u) {
-        u32 word = 0;
-        for (u32 i = 0; i < 4; i++) {
-            u32 read_pos = s_read_pos;
-            s8 sample = 0;
-            if (read_pos != s_write_pos) {
-                sample = s_audio_ring[read_pos];
-                s_read_pos = (read_pos + 1u) & AUDIO_RING_MASK;
-            }
-            word |= ((u32)(u8)sample) << (i * 8u);
-        }
-        REG_FIFO_A = word;
-    }
-    s_fifo_phase++;
+    u32 read_pos = s_read_pos;
+    REG_DMA2SAD = (u32)&s_audio_ring[read_pos];
+    s_read_pos = (read_pos + AUDIO_SAMPLES_PER_IRQ) & AUDIO_RING_MASK;
+    /* Re-arm the one-shot DMA for the next timer overflow. */
+    REG_DMA2CNT = DMA_ENABLE | DMA_AT_SPECIAL | DMA_32 |
+                  DMA_SRC_INC | DMA_DST_FIXED | (AUDIO_SAMPLES_PER_IRQ / 4);
     REG_IF = IRQ_TIMER0;
 }
 
@@ -108,7 +110,6 @@ void audio_init(void) {
     s_bgm_pos = 0;
     s_read_pos = 0;
     s_write_pos = 0;
-    s_fifo_phase = 0;
     s_audio_started = false;
 
     for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
@@ -132,8 +133,12 @@ void audio_init(void) {
         REG_FIFO_A = 0;
     }
 
-    /* Timer 0 / 1024 with reload 0xffff gives exactly 16,384 Hz. */
-    REG_TM0CNT_L = 0xffff;
+    /* Timer 0 / 1024 with reload 0xFFF0 gives 1,024 Hz.  DMA 2 is triggered
+     * by this timer (special start condition) and copies 16 bytes per
+     * overflow into FIFO A: 1,024 x 16 = 16,384 samples/s.  The ISR just
+     * repoints the DMA source each overflow. */
+    REG_DMA2CNT = 0;
+    REG_TM0CNT_L = 0xFFF0;
     REG_IF = IRQ_TIMER0;
     irq_add(II_TIMER0, audio_timer_isr);
 }
@@ -142,7 +147,6 @@ void audio_start(void) {
     if (s_audio_started) return;
 
     /* Prime the hardware FIFO before the first timer overflow. */
-    s_fifo_phase = 0;
     for (int i = 0; i < 4; i++) {
         u32 word = 0;
         for (u32 j = 0; j < 4; j++) {
@@ -156,6 +160,15 @@ void audio_start(void) {
         }
         REG_FIFO_A = word;
     }
+
+    /* DMA 2: timer-0-triggered, 16 bytes per trigger from the ring to FIFO A.
+     * Deliberately one-shot (no REPEAT): mGBA's repeat-DMA stops transferring
+     * after a few seconds, while a one-shot DMA re-armed by the timer ISR is
+     * rock solid.  The ISR advances the source and re-arms it each overflow. */
+    REG_DMA2SAD = (u32)&s_audio_ring[0];
+    REG_DMA2DAD = (u32)&REG_FIFO_A;
+    REG_DMA2CNT = DMA_ENABLE | DMA_AT_SPECIAL | DMA_32 |
+                  DMA_SRC_INC | DMA_DST_FIXED | (AUDIO_SAMPLES_PER_IRQ / 4);
 
     s_audio_started = true;
     REG_TM0CNT_H = TM_FREQ_1024 | TM_IRQ | TM_ENABLE;
@@ -232,9 +245,19 @@ void audio_stop_all(void) {
 
 void audio_update(void) {
     u32 write_pos = s_write_pos;
+    bool wrapped = false;
     while (audio_ring_level(write_pos) < (int)AUDIO_TARGET_SAMPLES) {
         s_audio_ring[write_pos] = audio_mix_sample();
         write_pos = (write_pos + 1u) & AUDIO_RING_MASK;
+        if (write_pos == 0) {
+            wrapped = true;
+        }
+    }
+    if (wrapped) {
+        /* Keep the DMA's end-of-ring window valid: the first 16 samples are
+         * mirrored right after the ring head, so a DMA window that starts at
+         * the tail reads the current head instead of stale memory. */
+        memcpy(&s_audio_ring[AUDIO_RING_SAMPLES], &s_audio_ring[0], AUDIO_RING_GUARD);
     }
     /* Publish only after each newly mixed sample is in the ring. */
     s_write_pos = write_pos;

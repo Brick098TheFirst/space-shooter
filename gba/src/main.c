@@ -8,6 +8,11 @@
 #include "menu.h"
 
 int main(void) {
+    /* Fast ROM access: without this the cartridge runs at the default 4-cycle
+     * wait states with no prefetch, which throttles the whole game to a crawl
+     * (every ROM instruction and data read costs 3-4 cycles). */
+    REG_WAITCNT = WS_STANDARD;
+
     // Enable interrupts
     irq_init(NULL);
     irq_enable(II_VBLANK);

@@ -8,6 +8,11 @@
 
 EWRAM_BSS GameState g_game;
 
+/* The gameplay frame splits into a static base (starfield background + HUD
+ * cards) cached in gfx_static_layer, and a dynamic pass (entities + texts).
+ * Rebuilt once per run. */
+static bool s_game_static_valid = false;
+
 #define FIXED_ONE 256
 #define TO_FIXED(n) ((n) * 256)
 #define FROM_FIXED(n) ((n) >> 8)
@@ -319,6 +324,7 @@ void game_start(void) {
     g_game.player.invulnerable_timer = 90;
     g_game.combo = 1;
     g_game.intermission_timer = 30;
+    s_game_static_valid = false;
 
     audio_play_bgm(BGM_GAME);
 }
@@ -406,12 +412,22 @@ static void game_update_tick(void) {
         for (int b = 0; b < 8; b++) emit_engine_particle();
     }
 
+    /* spd is already in fixed-point pixels-per-tick (TO_FIXED(1)+110 = 1.43 px
+     * per tick, TO_FIXED(3)+200 = 3.78 px per tick while dashing).  The old
+     * code divided by 256 a second time, so the ship crept ~1/256 px per tick
+     * and controls felt frozen.  Apply the speed directly; scale diagonals by
+     * 181/256 (~1/sqrt(2)) so diagonal travel is no faster than cardinal. */
     int spd = (g_game.player.dash_remaining > 0) ? TO_FIXED(3) + 200 : TO_FIXED(1) + 110;
     int dir_x = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_x : mx;
     int dir_y = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_y : my;
 
-    g_game.player.x += dir_x * spd / (dir_x != 0 && dir_y != 0 ? 362 : 256);
-    g_game.player.y += dir_y * spd / (dir_x != 0 && dir_y != 0 ? 362 : 256);
+    if (dir_x != 0 && dir_y != 0) {
+        g_game.player.x += (dir_x * spd * 181) / 256;
+        g_game.player.y += (dir_y * spd * 181) / 256;
+    } else {
+        g_game.player.x += dir_x * spd;
+        g_game.player.y += dir_y * spd;
+    }
 
     // Bounds clamp (HUD margin at top)
     if (g_game.player.x < TO_FIXED(12)) g_game.player.x = TO_FIXED(12);
@@ -633,11 +649,30 @@ void game_update(void) {
     }
 }
 
+static void game_draw_static(void) {
+    starfield_draw_base(0, 0);
+
+    // HUD Glass Cards (static frames)
+    gfx_draw_glass_card(3, 2, 70, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(96, 2, 48, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(167, 2, 70, 16, PAL_BTN_BORDER, 14);
+
+    gfx_draw_text(160, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
+}
+
 void game_draw(void) {
     int ox = g_game.shake_x;
     int oy = g_game.shake_y;
 
-    starfield_draw(ox, oy);
+    if (!s_game_static_valid) {
+        gfx_set_target(gfx_static_layer);
+        game_draw_static();
+        gfx_set_target(NULL);
+        s_game_static_valid = true;
+    }
+    gfx_apply_static();
+
+    starfield_draw_stars(ox, oy);
 
     // Draw Powerups
     for (int i = 0; i < MAX_POWERUPS; i++) {
@@ -734,20 +769,14 @@ void game_draw(void) {
         }
     }
 
-    // ── HUD (Command Deck Style) ──
-    // Score Glass Card (Top Left)
-    gfx_draw_glass_card(3, 2, 70, 16, PAL_BTN_BORDER, 14);
+    // HUD dynamic text
     char buf[32];
     siprintf(buf, "%06u", (unsigned int)g_game.score);
     gfx_draw_text(6, 4, buf, PAL_TEXT_WHITE);
 
-    // Wave Pill (Top Center)
-    gfx_draw_glass_card(96, 2, 48, 16, PAL_BTN_BORDER, 14);
     siprintf(buf, "W%02d", g_game.wave);
     gfx_draw_text_centered(96, 4, 48, buf, PAL_TEXT_CYAN);
 
-    // Lives & Shields (Top Right)
-    gfx_draw_glass_card(167, 2, 70, 16, PAL_BTN_BORDER, 14);
     for (int i = 0; i < g_game.player.lives && i < 5; i++) {
         gfx_draw_char(170 + i * 8, 4, '^', PAL_TEXT_GREEN);
     }
@@ -772,7 +801,6 @@ void game_draw(void) {
     // Dash Bar (Bottom Right)
     int dash_ready = 81 - g_game.player.dash_cooldown;
     u8 dash_col = (g_game.player.dash_cooldown == 0) ? PAL_TEXT_GREEN : gfx_get_accent_color(g_settings.accent_index);
-    gfx_draw_text(160, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
     gfx_draw_progress_bar(188, SCREEN_HEIGHT - 9, 48, 5, dash_ready, 81, dash_col, 18);
 
     // Wave Announcement Banner

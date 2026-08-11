@@ -70,7 +70,7 @@ void starfield_update(void) {
     }
 }
 
-void starfield_draw(int offset_x, int offset_y) {
+void starfield_draw_base(int offset_x, int offset_y) {
     gfx_clear(PAL_SPACE_BLACK);
 
     for (int i = 0; i < NUM_NEBULAE; i++) {
@@ -86,6 +86,9 @@ void starfield_draw(int offset_x, int offset_y) {
         }
     }
 
+}
+
+void starfield_draw_stars(int offset_x, int offset_y) {
     for (int i = 0; i < NUM_STARS; i++) {
         int sx = (s_stars[i].x >> 8) + offset_x;
         int sy = (s_stars[i].y >> 8) + offset_y;
