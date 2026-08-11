@@ -1,34 +1,94 @@
-# space-shooter — SPACE UNLIMITED 🚀
+# Space Unlimited: Recharged 🚀
 
-A Scratch space-shooter game by **Brick098TheFirst**, now also available as a
-standalone desktop game for **Windows, macOS and Linux**.
+A native **C# / .NET 8 Windows** remake of the original Scratch space shooter.
+The Scratch project is preserved as `spaceshooter.sb3`; the new game is a fresh,
+controller-ready implementation rather than an automatic 1:1 conversion.
 
-## What's in this repo
+## What changed
 
-| Path | What it is |
+- Completely new command-deck menu, hangar, settings, pause and game-over screens
+- Native 1280×720, 16:9 renderer with correct letterboxing at every window size
+- Measured ship, laser, shield and asteroid sizes—no oversized converted sprites
+- Keyboard, mouse and Xbox-compatible XInput controller support
+- Three ship hulls, five paint colors, four engine trails and three weapon rigs
+- Escalating waves, asteroid splitting, enemy drones and aimed enemy fire
+- Dash with cooldown and invulnerability window
+- Shield, rapid-fire and repair pickups
+- Timed score combo and persistent local high score
+- Music/effects volume, difficulty, screen-shake and fullscreen settings
+- Original starfield, classic ship, laser, asteroid, shield, explosion, sound and
+  music assets reused selectively from the `.sb3`
+
+## Controls
+
+| Action | Keyboard / mouse | Xbox-compatible controller |
+|---|---|---|
+| Move | `WASD` or arrow keys | Left stick or D-pad |
+| Fire | `Space`, `Z`, or left mouse | `A` or right trigger |
+| Dash | `Shift` or `X` | `X` or right bumper |
+| Pause | `Esc` or `P` | Menu / Start |
+| Menu select | `Enter` / click | `A` |
+| Menu back | `Esc` / Backspace | `B` |
+
+## Run from Visual Studio
+
+Requirements: Windows 10/11 and Visual Studio 2022 with the **.NET desktop
+development** workload (or the .NET 8 SDK).
+
+1. Open `SpaceUnlimited.sln`.
+2. Select `SpaceUnlimited.Windows` as the startup project.
+3. Press **F5**.
+
+No NuGet packages or game engine downloads are required.
+
+## Make a portable Windows build
+
+From PowerShell at the repository root:
+
+```powershell
+.\build-windows.ps1
+```
+
+The self-contained x64 build is written to:
+
+```text
+release\SpaceUnlimited-win-x64\SpaceUnlimited.exe
+```
+
+Keep its generated `Assets` directory next to the executable. The self-contained
+publish does not require players to install .NET.
+
+For a smaller framework-dependent build:
+
+```powershell
+dotnet publish .\SpaceUnlimited.Windows -c Release -r win-x64 --self-contained false
+```
+
+## Display proportions
+
+Gameplay uses a fixed 1280×720 logical canvas. It is scaled uniformly and
+letterboxed instead of stretched. Source art keeps its aspect ratio, while fixed
+logical dimensions keep collision sizes and visual sizes aligned. See
+`SpaceUnlimited.Windows/Assets/README.md` for the exact asset-size policy.
+Validate the selected source files and logical-size policy with:
+
+```bash
+python3 tools/validate-assets.py
+```
+
+## Save data
+
+Settings and high score are saved to:
+
+```text
+%LOCALAPPDATA%\SpaceUnlimitedRecharged\settings.json
+```
+
+## Repository layout
+
+| Path | Purpose |
 |---|---|
-| `spaceshooter.sb3` | The original Scratch project, restored in full (13.4 MB). It's a zip — rename to `spaceshooter.zip` to browse its contents (`project.json` + all sounds and images). |
-| `SpaceUnlimited/` | A **1:1 copy** of the game as a self-contained HTML5 game with all original music, sounds and images. Runs on Windows, macOS and Linux — just open `SpaceUnlimited/index.html` in any browser. |
-| `SpaceUnlimited/README.md` | How to run it and the (tiny) list of adjustments made for the desktop version. |
-
-## Quick start
-
-```
-git clone https://github.com/Brick098TheFirst/space-shooter.git
-cd space-shooter/SpaceUnlimited
-# open index.html in any browser (no server, no internet needed)
-```
-
-Controls: mouse to move, hold click to shoot, `Enter` to start,
-`P`/`Esc` to pause, `M` to mute.
-
-## Note on the .sb3
-
-The `spaceshooter.sb3` on this branch is the real, complete project
-(13,374,133 bytes) recovered from commit `cfea49b`. An earlier rename commit
-had replaced it with a 2-byte placeholder, which made the file unopenable in
-Scratch — that is fixed here.
-
-## No CI/workflows
-
-This repository intentionally contains no `.github/workflows` files.
+| `SpaceUnlimited.Windows/` | Native C# WinForms game and selected assets |
+| `SpaceUnlimited.sln` | Visual Studio solution |
+| `build-windows.ps1` | Portable Windows x64 publish script |
+| `spaceshooter.sb3` | Preserved original Scratch 3 project |

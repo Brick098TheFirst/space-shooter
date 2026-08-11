@@ -1,0 +1,14 @@
+# .NET / Visual Studio output
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+
+# Local packaged releases
+release/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
