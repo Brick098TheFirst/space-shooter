@@ -22,6 +22,37 @@ static int get_diff_speed_mult(void) {
     }
 }
 
+static int get_max_dash_cooldown(void) {
+    int lv = g_settings.upgrade_levels[UPG_THRUSTERS];
+    if (lv >= 3) return 40;
+    if (lv == 2) return 52;
+    if (lv == 1) return 66;
+    return 81; // Base 1.35s
+}
+
+static int get_max_combo_cap(void) {
+    int lv = g_settings.upgrade_levels[UPG_COMBO];
+    if (lv >= 3) return 20;
+    if (lv == 2) return 16;
+    if (lv == 1) return 12;
+    return 8; // Base
+}
+
+static int get_max_combo_timer(void) {
+    int lv = g_settings.upgrade_levels[UPG_COMBO];
+    if (lv >= 3) return 310;
+    if (lv == 2) return 250;
+    if (lv == 1) return 200;
+    return 156; // Base 2.6s
+}
+
+static int get_bullet_bonus_dmg(void) {
+    int lv = g_settings.upgrade_levels[UPG_DAMAGE];
+    if (lv >= 3) return 2;
+    if (lv >= 1) return 1;
+    return 0;
+}
+
 IWRAM_CODE static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life) {
     for (int i = 0; i < MAX_PARTICLES; i++) {
         if (!g_game.particles[i].active) {
@@ -50,7 +81,7 @@ IWRAM_CODE static void trigger_explosion(int x, int y) {
         }
     }
 
-    // Spawn sparks (8 directions, fast bitwise math)
+    // Spawn sparks (8 directions)
     for (int p = 0; p < 8; p++) {
         int angle = p * 32;
         int spd = (rand() & 127) + 80;
@@ -81,7 +112,7 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
         if (!g_game.powerups[i].active) {
             g_game.powerups[i].x = TO_FIXED(x);
             g_game.powerups[i].y = TO_FIXED(y);
-            g_game.powerups[i].vy = 90; // gentle float downward
+            g_game.powerups[i].vy = 90; // Gentle float downward
             int roll = rand() % 100;
             if (roll < 40) g_game.powerups[i].type = PWR_SHIELD;
             else if (roll < 80) g_game.powerups[i].type = PWR_RAPID;
@@ -92,26 +123,31 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
     }
 }
 
-static void award_coins(int amount) {
-    g_settings.coins += amount;
-    if (g_settings.coins > 99999) g_settings.coins = 99999;
+static int s_game_frame = 0;
+
+static void award_coins(int base_amount) {
+    int scav_lv = g_settings.upgrade_levels[UPG_SCAVENGER];
+    int mult = 100 + scav_lv * 35; // +35% per level
+    int earned = (base_amount * mult) / 100;
+    if (earned < 1) earned = 1;
+    g_settings.coins += earned;
+    if (g_settings.coins > 9999999) g_settings.coins = 9999999;
 }
 
 static void award_score(int base_pts) {
     g_game.score += base_pts * g_game.combo;
-    if (g_game.combo < 8) g_game.combo++;
-    g_game.combo_timer = 156; // 2.6 seconds at 60 FPS
-    // Coins per kill (without combo multiplier to keep economy tight)
-    // Award is separate from score so shop stays balanced
+    int max_combo = get_max_combo_cap();
+    if (g_game.combo < max_combo) g_game.combo++;
+    g_game.combo_timer = get_max_combo_timer();
 }
 
 static int coins_for_asteroid(AsteroidType type) {
     switch (type) {
-        case AST_LARGE: return 15;
+        case AST_LARGE: return 20;
         case AST_MED_A:
-        case AST_MED_B: return 8;
-        case AST_SMALL: return 4;
-        default: return 3; // TINY
+        case AST_MED_B: return 12;
+        case AST_SMALL: return 6;
+        default: return 4; // TINY
     }
 }
 
@@ -127,7 +163,8 @@ static void damage_player(void) {
         trigger_explosion(px, py);
     } else {
         g_game.player.lives--;
-        g_game.player.invulnerable_timer = 100; // 1.6s
+        int od_lv = g_settings.upgrade_levels[UPG_OVERDRIVE];
+        g_game.player.invulnerable_timer = 100 + od_lv * 20; // Extra recovery
         g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
         g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 20);
         trigger_explosion(px, py);
@@ -198,7 +235,7 @@ static void destroy_asteroid(int idx, bool award) {
             spawn_asteroid(AST_SMALL, a->x - TO_FIXED(4), a->y, -spd, spd);
             spawn_asteroid(AST_TINY, a->x + TO_FIXED(4), a->y, spd, spd);
         }
-        try_spawn_powerup(ax, ay, 4); // was 15 — much rarer now
+        try_spawn_powerup(ax, ay, 4);
     }
 }
 
@@ -210,9 +247,9 @@ static void destroy_drone(int idx, bool award) {
     trigger_explosion(dx, dy);
 
     if (award) {
-        award_score(110);
-        award_coins(25);
-        try_spawn_powerup(dx, dy, 7); // was 28 — rare
+        award_score(120);
+        award_coins(40);
+        try_spawn_powerup(dx, dy, 8);
     }
 }
 
@@ -220,9 +257,14 @@ static void begin_wave(void) {
     g_game.wave++;
     g_game.wave_banner_timer = 120; // 2 seconds
 
+    // Wave bonus coins
+    if (g_game.wave > 1) {
+        award_coins(g_game.wave * 25);
+    }
+
     int diff_extra = (g_settings.difficulty == DIFF_ACE) ? 2 : 0;
     int ast_count = 3 + g_game.wave + diff_extra;
-    if (ast_count > 12) ast_count = 12;
+    if (ast_count > 14) ast_count = 14;
 
     int mult = get_diff_speed_mult();
 
@@ -238,7 +280,7 @@ static void begin_wave(void) {
 
     if (g_game.wave >= 3) {
         int drone_count = g_game.wave / 3;
-        if (drone_count > 4) drone_count = 4;
+        if (drone_count > 5) drone_count = 5;
         for (int i = 0; i < drone_count; i++) {
             if (i < MAX_DRONES) {
                 int spacing = (SCREEN_WIDTH - 60) / (drone_count > 1 ? drone_count - 1 : 1);
@@ -295,22 +337,40 @@ static void fire_player_weapon(void) {
     bool rapid = (g_game.player.rapid_fire_timer > 0);
     int px = g_game.player.x;
     int py = g_game.player.y;
+    int bonus = get_bullet_bonus_dmg();
 
     switch (g_settings.weapon_rig) {
         case WEAPON_FOCUSED:
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(5), 2, true);
+            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), 2 + bonus, true);
+            g_game.player.fire_cooldown = rapid ? 5 : 10;
+            break;
+        case WEAPON_SPREAD:
+            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + bonus, false);
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(4), -TO_FIXED(1), -TO_FIXED(4), 1 + bonus, false);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(4), TO_FIXED(1), -TO_FIXED(4), 1 + bonus, false);
+            g_game.player.fire_cooldown = rapid ? 7 : 14;
+            break;
+        case WEAPON_TRIPLE:
+            add_player_bullet(px - TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + bonus, false);
+            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), 2 + bonus, true);
+            add_player_bullet(px + TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + bonus, false);
             g_game.player.fire_cooldown = rapid ? 6 : 11;
             break;
-        case WEAPON_TWIN:
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1, false);
+        case WEAPON_PLASMA:
+            add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(7), -60, -TO_FIXED(5), 3 + bonus, true);
+            add_player_bullet(px + TO_FIXED(5), py - TO_FIXED(7), 60, -TO_FIXED(5), 3 + bonus, true);
             g_game.player.fire_cooldown = rapid ? 7 : 13;
             break;
-        default: // Spread
-            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), 1, false);
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(4), -TO_FIXED(1), -TO_FIXED(4), 1, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(4), TO_FIXED(1), -TO_FIXED(4), 1, false);
-            g_game.player.fire_cooldown = rapid ? 9 : 17;
+        case WEAPON_QUANTUM:
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), 4 + bonus, true);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), 4 + bonus, true);
+            add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(8), 4 + bonus, true);
+            g_game.player.fire_cooldown = rapid ? 4 : 8;
+            break;
+        default: // WEAPON_TWIN
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + bonus, false);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + bonus, false);
+            g_game.player.fire_cooldown = rapid ? 6 : 12;
             break;
     }
     audio_play_sfx(SFX_LASER);
@@ -326,8 +386,13 @@ void game_start(void) {
     g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
     g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 24);
     g_game.player.radius = 6;
-    g_game.player.lives = (g_settings.difficulty == DIFF_CADET) ? 4 : ((g_settings.difficulty == DIFF_ACE) ? 2 : 3);
-    g_game.player.shield_charges = (g_settings.difficulty == DIFF_CADET) ? 1 : 0;
+
+    int base_lives = (g_settings.difficulty == DIFF_CADET) ? 4 : ((g_settings.difficulty == DIFF_ACE) ? 2 : 3);
+    g_game.player.lives = base_lives + g_settings.upgrade_levels[UPG_HULL];
+
+    int base_shields = (g_settings.difficulty == DIFF_CADET) ? 1 : 0;
+    g_game.player.shield_charges = base_shields + g_settings.upgrade_levels[UPG_SHIELD];
+
     g_game.player.invulnerable_timer = 90;
     g_game.combo = 1;
     g_game.intermission_timer = 30;
@@ -340,6 +405,7 @@ void game_start(void) {
 
 /* One simulation tick. */
 static void game_update_tick(void) {
+    s_game_frame++;
     starfield_update();
 
     if (g_game.shake_timer > 0) {
@@ -403,6 +469,7 @@ static void game_update_tick(void) {
     if (key_is_down(KEY_DOWN))  my += 1;
 
     // Dash (B button or R/L shoulder)
+    int max_dash_cd = get_max_dash_cooldown();
     if ((key_hit(KEY_B) || key_hit(KEY_R) || key_hit(KEY_L)) && g_game.player.dash_cooldown == 0) {
         if (mx != 0 || my != 0) {
             g_game.player.dash_dir_x = mx;
@@ -411,13 +478,15 @@ static void game_update_tick(void) {
             g_game.player.dash_dir_x = 0;
             g_game.player.dash_dir_y = -1;
         }
-        g_game.player.dash_remaining = 13;
-        g_game.player.dash_cooldown = 81; // 1.35s
-        g_game.player.invulnerable_timer = 17; // 0.28s
+        g_game.player.dash_remaining = 14;
+        g_game.player.dash_cooldown = max_dash_cd;
+        g_game.player.invulnerable_timer = 18;
         for (int b = 0; b < 8; b++) emit_engine_particle();
     }
 
-    int spd = (g_game.player.dash_remaining > 0) ? TO_FIXED(3) + 200 : TO_FIXED(1) + 110;
+    int thrust_lv = g_settings.upgrade_levels[UPG_THRUSTERS];
+    int base_spd = TO_FIXED(1) + 110 + thrust_lv * 28;
+    int spd = (g_game.player.dash_remaining > 0) ? (TO_FIXED(3) + 200 + thrust_lv * 35) : base_spd;
     int dir_x = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_x : mx;
     int dir_y = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_y : my;
 
@@ -506,10 +575,30 @@ static void game_update_tick(void) {
         }
     }
 
-    // Update Powerups
+    // Update Powerups (With Scavenger Magnetic Pull!)
+    int scav_lv = g_settings.upgrade_levels[UPG_SCAVENGER];
+    int mag_dist_sq = (scav_lv > 0) ? (30 + scav_lv * 30) * (30 + scav_lv * 30) : 0;
+
     for (int i = 0; i < MAX_POWERUPS; i++) {
         if (g_game.powerups[i].active) {
             g_game.powerups[i].y += g_game.powerups[i].vy;
+
+            // Graviton magnetic pull
+            if (mag_dist_sq > 0) {
+                int pwx = FROM_FIXED(g_game.powerups[i].x);
+                int pwy = FROM_FIXED(g_game.powerups[i].y);
+                int plx = FROM_FIXED(g_game.player.x);
+                int ply = FROM_FIXED(g_game.player.y);
+                int dsq = (plx - pwx)*(plx - pwx) + (ply - pwy)*(ply - pwy);
+                if (dsq < mag_dist_sq && dsq > 9) {
+                    int pull = (scav_lv >= 3) ? 120 : (scav_lv == 2 ? 80 : 50);
+                    int d_x = (plx - pwx);
+                    int d_y = (ply - pwy);
+                    g_game.powerups[i].x += (d_x > 0 ? pull : -pull);
+                    g_game.powerups[i].y += (d_y > 0 ? pull : -pull);
+                }
+            }
+
             if (FROM_FIXED(g_game.powerups[i].y) > SCREEN_HEIGHT + 10) {
                 g_game.powerups[i].active = false;
             }
@@ -549,8 +638,11 @@ static void game_update_tick(void) {
             int dist_sq = (bx - ax)*(bx - ax) + (by - ay)*(by - ay);
             if (dist_sq <= (br + ar)*(br + ar)) {
                 g_game.asteroids[a].hp -= g_game.bullets[b].damage;
-                g_game.bullets[b].active = false;
-                consumed = true;
+                // Heavy quantum/flak bullets pierce small asteroids
+                if (!g_game.bullets[b].heavy || g_game.asteroids[a].type == AST_LARGE) {
+                    g_game.bullets[b].active = false;
+                    consumed = true;
+                }
                 if (g_game.asteroids[a].hp <= 0) {
                     destroy_asteroid(a, true);
                 }
@@ -608,6 +700,11 @@ static void game_update_tick(void) {
     }
 
     // Ship vs Powerups
+    int max_shields = 3 + g_settings.upgrade_levels[UPG_SHIELD];
+    int max_lives = 5 + g_settings.upgrade_levels[UPG_HULL];
+    int od_lv = g_settings.upgrade_levels[UPG_OVERDRIVE];
+    int rapid_duration = 540 + od_lv * 220; // Up to 20 seconds!
+
     for (int p = 0; p < MAX_POWERUPS; p++) {
         if (!g_game.powerups[p].active) continue;
         int pow_x = FROM_FIXED(g_game.powerups[p].x);
@@ -616,13 +713,14 @@ static void game_update_tick(void) {
         int dist_sq = (px - pow_x)*(px - pow_x) + (py - pow_y)*(py - pow_y);
         if (dist_sq <= (6 + 6)*(6 + 6)) {
             if (g_game.powerups[p].type == PWR_SHIELD) {
-                if (g_game.player.shield_charges < 3) g_game.player.shield_charges++;
+                if (g_game.player.shield_charges < max_shields) g_game.player.shield_charges++;
             } else if (g_game.powerups[p].type == PWR_RAPID) {
-                g_game.player.rapid_fire_timer = 540; // 9 seconds
+                g_game.player.rapid_fire_timer = rapid_duration;
             } else if (g_game.powerups[p].type == PWR_REPAIR) {
-                if (g_game.player.lives < 5) g_game.player.lives++;
+                if (g_game.player.lives < max_lives) g_game.player.lives++;
             }
             g_game.score += 75;
+            award_coins(15);
             g_game.powerups[p].active = false;
             audio_play_sfx(SFX_PICKUP);
         }
@@ -654,11 +752,11 @@ static void game_draw_static(void) {
     starfield_draw_base(0, 0);
 
     // HUD Glass Cards (static frames)
-    gfx_draw_glass_card(3, 2, 70, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(96, 2, 48, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(167, 2, 70, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(3, 2, 72, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(94, 2, 52, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(165, 2, 72, 16, PAL_BTN_BORDER, 14);
 
-    gfx_draw_text(160, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
+    gfx_draw_text(158, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
 }
 
 void game_draw(void) {
@@ -750,8 +848,8 @@ void game_draw(void) {
             int px = FROM_FIXED(g_game.player.x) - 10 + ox;
             int py = FROM_FIXED(g_game.player.y) - 8 + oy;
             int accent = g_settings.accent_index;
-            if (accent < 0 || accent > 4) accent = 1;
-            gfx_draw_sprite(px, py, 20, 16, spr_ship[accent]);
+            if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
+            gfx_draw_ship(px, py, accent, s_game_frame);
 
             // Draw shield bubble if shielded
             if (g_game.player.shield_charges > 0) {
@@ -778,17 +876,17 @@ void game_draw(void) {
     gfx_draw_text(6, 4, buf, PAL_TEXT_WHITE);
 
     siprintf(buf, "W%02d", g_game.wave);
-    gfx_draw_text_centered(96, 4, 48, buf, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(94, 4, 52, buf, PAL_TEXT_CYAN);
 
-    // Coins in same top bar (right side, small)
+    // Coins right side
     siprintf(buf, "$%u", (unsigned int)g_settings.coins);
-    gfx_draw_text(174, 4, buf, PAL_TEXT_GOLD);
+    gfx_draw_text(172, 4, buf, PAL_TEXT_GOLD);
 
-    for (int i = 0; i < g_game.player.lives && i < 5; i++) {
-        gfx_draw_char(170 + i * 7, 11, '^', PAL_TEXT_GREEN);
+    for (int i = 0; i < g_game.player.lives && i < 6; i++) {
+        gfx_draw_char(168 + i * 6, 11, '^', PAL_TEXT_GREEN);
     }
-    for (int i = 0; i < g_game.player.shield_charges && i < 3; i++) {
-        gfx_draw_char(209 + i * 7, 11, '*', PAL_TEXT_CYAN);
+    for (int i = 0; i < g_game.player.shield_charges && i < 6; i++) {
+        gfx_draw_char(204 + i * 6, 11, '*', PAL_TEXT_CYAN);
     }
 
     // Combo Indicator (Below score if > 1)
@@ -796,7 +894,8 @@ void game_draw(void) {
         siprintf(buf, "x%d", g_game.combo);
         u8 acc = gfx_get_accent_color(g_settings.accent_index);
         gfx_draw_text(6, 20, buf, acc);
-        gfx_draw_progress_bar(20, 22, 40, 4, g_game.combo_timer, 156, acc, 18);
+        int max_comb_t = get_max_combo_timer();
+        gfx_draw_progress_bar(20, 22, 42, 4, g_game.combo_timer, max_comb_t, acc, 18);
     }
 
     // Rapid Fire Timer (Below wave if active)
@@ -806,9 +905,10 @@ void game_draw(void) {
     }
 
     // Dash Bar (Bottom Right)
-    int dash_ready = 81 - g_game.player.dash_cooldown;
+    int max_dash_cd = get_max_dash_cooldown();
+    int dash_ready = max_dash_cd - g_game.player.dash_cooldown;
     u8 dash_col = (g_game.player.dash_cooldown == 0) ? PAL_TEXT_GREEN : gfx_get_accent_color(g_settings.accent_index);
-    gfx_draw_progress_bar(188, SCREEN_HEIGHT - 9, 48, 5, dash_ready, 81, dash_col, 18);
+    gfx_draw_progress_bar(186, SCREEN_HEIGHT - 9, 50, 5, dash_ready, max_dash_cd, dash_col, 18);
 
     // Wave Announcement Banner
     if (g_game.wave_banner_timer > 0) {

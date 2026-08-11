@@ -29,11 +29,24 @@ class GbaPlayer {
         this.fps = 0;
         this.frameCount = 0;
         this.lastFpsTime = performance.now();
+        this.sramSaveCounter = 0;
+        this.lastSavedSramB64 = null;
+        this.sramPtr = 0;
+        this.sramSize = 0;
 
         this.onFpsUpdate = options.onFpsUpdate || (() => {});
         this.onStatusChange = options.onStatusChange || (() => {});
 
         this.initInput();
+        this.initSaveListeners();
+    }
+
+    initSaveListeners() {
+        window.addEventListener("beforeunload", () => this.saveSram());
+        window.addEventListener("pagehide", () => this.saveSram());
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden") this.saveSram();
+        });
     }
 
     initInput() {
@@ -71,7 +84,7 @@ class GbaPlayer {
             case "Space":
             case "KeyZ":
             case "KeyJ":
-                return 8; // A (Fire / Select)
+                return 8; // A (Fire / Select / Buy)
             case "ShiftLeft":
             case "ShiftRight":
             case "KeyX":
@@ -114,10 +127,10 @@ class GbaPlayer {
             const dpadRight = gp.buttons[15]?.pressed || gp.axes[0] > 0.4;
 
             // Action Buttons
-            const btnA = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed; // A or RT (Fire)
+            const btnA = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed; // A or RT (Fire / Buy)
             const btnB = gp.buttons[2]?.pressed || gp.buttons[1]?.pressed || gp.buttons[5]?.pressed; // X, B or RB (Dash)
-            const btnL = gp.buttons[4]?.pressed || gp.buttons[6]?.pressed; // LB or LT
-            const btnR = gp.buttons[5]?.pressed || gp.buttons[7]?.pressed; // RB or RT
+            const btnL = gp.buttons[4]?.pressed || gp.buttons[6]?.pressed; // LB or LT (Prev Tab)
+            const btnR = gp.buttons[5]?.pressed || gp.buttons[7]?.pressed; // RB or RT (Next Tab)
             const btnStart = gp.buttons[9]?.pressed || gp.buttons[16]?.pressed; // Start / Menu
             const btnSelect = gp.buttons[8]?.pressed; // Back / Select
 
@@ -180,8 +193,6 @@ class GbaPlayer {
                         this.audioSourcePosition -= consumed;
                     }
                 } else {
-                    // A short startup/underrun is silence, never stale memory
-                    // or a repeated sample that sounds like static.
                     outL[i] = 0;
                     outR[i] = 0;
                 }
@@ -189,6 +200,32 @@ class GbaPlayer {
         };
 
         this.audioNode.connect(this.audioContext.destination);
+    }
+
+    saveSram() {
+        if (!this.m || !this.sramPtr || !this.sramSize) return;
+        const saveLen = Math.min(this.sramSize, 512);
+        const sramBytes = this.m.HEAPU8.subarray(this.sramPtr, this.sramPtr + saveLen);
+        
+        let hasData = false;
+        for (let i = 0; i < 48; i++) {
+            if (sramBytes[i] !== 0) { hasData = true; break; }
+        }
+        if (!hasData) return;
+
+        let binary = "";
+        for (let i = 0; i < sramBytes.length; i++) {
+            binary += String.fromCharCode(sramBytes[i]);
+        }
+        const b64 = btoa(binary);
+        if (b64 !== this.lastSavedSramB64) {
+            this.lastSavedSramB64 = b64;
+            try {
+                localStorage.setItem("space_shooter_gba_sram_v3", b64);
+            } catch (e) {
+                console.warn("Could not save to localStorage:", e);
+            }
+        }
     }
 
     async loadRom(romBuffer) {
@@ -252,9 +289,6 @@ class GbaPlayer {
         const audioCb = m.addFunction((dataPtr, frames) => {
             const src16 = new Int16Array(m.HEAPU8.buffer, dataPtr, frames * 2);
             for (let frame = 0; frame < frames; frame++) {
-                // Keep latency bounded by dropping the oldest complete stereo
-                // frame only when the queue is full.  Never use Array.shift()
-                // here: it reallocates and copies the queue at audio rate.
                 if (this.audioFramesAvailable >= this.audioBufferFrames) {
                     this.audioReadFrame = (this.audioReadFrame + 1) % this.audioBufferFrames;
                     this.audioFramesAvailable--;
@@ -296,6 +330,27 @@ class GbaPlayer {
             throw new Error("Failed to load Game Boy Advance ROM into mGBA core.");
         }
 
+        // Restore SRAM save data from localStorage if present
+        this.sramPtr = m._retro_get_memory_data(0);
+        this.sramSize = m._retro_get_memory_size(0);
+        if (this.sramPtr && this.sramSize > 0) {
+            const savedSram = localStorage.getItem("space_shooter_gba_sram_v3") ||
+                              localStorage.getItem("space_shooter_gba_sram_v2") ||
+                              localStorage.getItem("space_shooter_gba_sram");
+            if (savedSram) {
+                try {
+                    const raw = atob(savedSram);
+                    const u8 = new Uint8Array(raw.length);
+                    for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+                    const copyLen = Math.min(this.sramSize, u8.length);
+                    m.HEAPU8.set(u8.subarray(0, copyLen), this.sramPtr);
+                    console.log(`[SRAM] Restored ${copyLen} bytes of save data from localStorage.`);
+                } catch (e) {
+                    console.warn("Failed to restore saved SRAM:", e);
+                }
+            }
+        }
+
         this.running = true;
         this.paused = false;
         this.onStatusChange("Game Boy Advance ready!");
@@ -315,6 +370,13 @@ class GbaPlayer {
                 this.m._retro_run();
             }
 
+            // Periodically sync SRAM to localStorage (~once per second)
+            this.sramSaveCounter++;
+            if (this.sramSaveCounter >= 60) {
+                this.sramSaveCounter = 0;
+                this.saveSram();
+            }
+
             // FPS Meter
             if (now - this.lastFpsTime >= 1000) {
                 this.fps = this.frameCount;
@@ -331,6 +393,7 @@ class GbaPlayer {
 
     setPaused(paused) {
         this.paused = paused;
+        if (paused) this.saveSram();
         if (this.audioContext) {
             if (paused) this.audioContext.suspend();
             else this.audioContext.resume();
@@ -339,6 +402,7 @@ class GbaPlayer {
 
     reset() {
         if (this.m && this.running) {
+            this.saveSram();
             this.m._retro_reset();
         }
     }

@@ -22,6 +22,7 @@ void gfx_draw_rect(int x, int y, int w, int h, u8 color);
 void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_color);
 
 void gfx_draw_sprite(int x, int y, int w, int h, const u8* data);
+void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
 void gfx_draw_sprite_rotated(int cx, int cy, int w, int h, const u8* data, int angle_deg);
 void gfx_draw_sprite_clipped(int x, int y, int w, int h, const u8* data, int clip_x, int clip_y, int clip_w, int clip_h);
 
@@ -38,11 +39,16 @@ void gfx_draw_progress_bar(int x, int y, int w, int h, int current, int max_val,
 u8 gfx_get_accent_color(int accent_idx);
 u8 gfx_get_trail_color(int trail_idx);
 u8 gfx_get_laser_color(int laser_idx);
+
 const char* gfx_get_accent_name(int accent_idx);
+const char* gfx_get_accent_desc(int accent_idx);
 const char* gfx_get_trail_name(int trail_idx);
+const char* gfx_get_trail_desc(int trail_idx);
 const char* gfx_get_weapon_name(WeaponRig rig);
-const char* gfx_get_diff_name(Difficulty diff);
+const char* gfx_get_weapon_desc(WeaponRig rig);
 const char* gfx_get_laser_name(int laser_idx);
+const char* gfx_get_laser_desc(int laser_idx);
+const char* gfx_get_diff_name(Difficulty diff);
 
 // Laser variant sprites (generated at init)
 const u8* gfx_get_laser_standard_sprite(int laser_idx);

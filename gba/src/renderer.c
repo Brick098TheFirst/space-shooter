@@ -24,19 +24,16 @@ void gfx_init(void) {
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 
-    // Build laser colour variants (cyan/gold/violet/mint)
+    // Build laser colour variants (8 colours: Cyan, Gold, Violet, Mint, Red, Emerald, Void, Pink)
+    const u8 laser_cols[NUM_LASERS] = { 21, 24, 28, 27, 26, 62, 116, 120 };
+
     for (int l = 0; l < NUM_LASERS; l++) {
-        u8 col = 21;
-        if (l == 1) col = 24;
-        else if (l == 2) col = 28;
-        else if (l == 3) col = 27;
-        // standard: 21 outer, 16 core
+        u8 col = laser_cols[l];
         for (int i = 0; i < 4*10; i++) {
             u8 p = spr_laser_standard[i];
             if (p == 21) s_laser_std[l][i] = col;
             else s_laser_std[l][i] = p;
         }
-        // heavy: 22,23 outer, 16 core, 22/23 map to same col variant
         for (int i = 0; i < 6*14; i++) {
             u8 p = spr_laser_heavy[i];
             if (p == 22 || p == 23) s_laser_heavy[l][i] = col;
@@ -123,6 +120,51 @@ IWRAM_CODE void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
         }
         src += src_skip;
         dst += dst_skip;
+    }
+}
+
+// Dedicated ship renderer supporting static and animated dynamic Rainbow Chroma paint
+IWRAM_CODE void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame) {
+    if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 1;
+
+    if (accent_idx != 8) {
+        // Standard static paint
+        gfx_draw_sprite(x, y, 20, 16, spr_ship[accent_idx]);
+        return;
+    }
+
+    // Rainbow Chroma Paint: animated flowing spectrum wave!
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + 20 > SCREEN_WIDTH ? SCREEN_WIDTH : x + 20;
+    int y1 = y + 16 > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + 16;
+    if (x0 >= x1 || y0 >= y1) return;
+
+    const u8 rainbow_accents[7] = { 5, 0, 4, 3, 1, 2, 7 }; // Crimson, Orange, Gold, Mint, Cyan, Violet, Pink
+    const u8* src = spr_ship[8];
+
+    for (int py = y0; py < y1; py++) {
+        int sy = py - y;
+        int dst_idx = py * SCREEN_WIDTH + x0;
+        int src_idx = sy * 20 + (x0 - x);
+
+        for (int px = x0; px < x1; px++) {
+            int sx = px - x;
+            u8 pix = src[src_idx++];
+            if (pix != 0) {
+                if (pix >= 240 && pix <= 243) {
+                    // Rainbow accent pixel: moving chromatic wave across ship wings & fuselage
+                    int shade = pix - 240;
+                    int phase = ((anim_frame >> 1) + sx * 2 + sy) % 28;
+                    int color_step = phase / 4; // 0..6
+                    u8 base_acc = rainbow_accents[color_step];
+                    s_rt[dst_idx] = 48 + base_acc * 4 + shade;
+                } else {
+                    s_rt[dst_idx] = pix;
+                }
+            }
+            dst_idx++;
+        }
     }
 }
 
@@ -227,48 +269,136 @@ IWRAM_CODE void gfx_draw_progress_bar(int x, int y, int w, int h, int current, i
 }
 
 u8 gfx_get_accent_color(int accent_idx) {
-    switch (accent_idx) {
-        case 0: return 50;
-        case 1: return 54;
-        case 2: return 58;
-        case 3: return 62;
-        default: return 66;
+    if (accent_idx == 8) {
+        const u8 rainbow_cols[7] = { 70, 50, 66, 62, 54, 58, 78 };
+        return rainbow_cols[(REG_VCOUNT / 4) % 7];
     }
+    if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 1;
+    return 48 + accent_idx * 4 + 2;
 }
 
 u8 gfx_get_trail_color(int trail_idx) {
-    switch (trail_idx) {
-        case 0: return 69;
-        case 1: return 72;
-        case 2: return 75;
-        default: return 78;
+    if (trail_idx == 7) {
+        const u8 rainbow_cols[7] = { 70, 50, 66, 62, 54, 58, 78 };
+        return rainbow_cols[(REG_VCOUNT / 4) % 7];
     }
+    if (trail_idx < 0 || trail_idx >= NUM_TRAILS) trail_idx = 1;
+    return 184 + trail_idx * 3 + 1;
+}
+
+u8 gfx_get_laser_color(int laser_idx) {
+    const u8 cols[NUM_LASERS] = { 21, 24, 28, 27, 26, 62, 116, 120 };
+    if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
+    return cols[laser_idx];
 }
 
 const char* gfx_get_accent_name(int accent_idx) {
     switch (accent_idx) {
-        case 0: return "Solar orange";
-        case 1: return "Ion cyan";
-        case 2: return "Nova violet";
-        case 3: return "Plasma mint";
-        default: return "Pulsar gold";
+        case 0: return "Solar Orange";
+        case 1: return "Ion Cyan";
+        case 2: return "Nova Violet";
+        case 3: return "Plasma Mint";
+        case 4: return "Pulsar Gold";
+        case 5: return "Crimson Void";
+        case 6: return "Obsidian Dark";
+        case 7: return "Quantum Neon";
+        case 8: return "Rainbow Prism";
+        default: return "Custom Paint";
+    }
+}
+
+const char* gfx_get_accent_desc(int accent_idx) {
+    switch (accent_idx) {
+        case 0: return "Fleet amber hull";
+        case 1: return "Cadet issue blue";
+        case 2: return "Nebula purple coat";
+        case 3: return "Bio-polymer mint";
+        case 4: return "Gilded royal armor";
+        case 5: return "Raider crimson red";
+        case 6: return "Stealth gray alloy";
+        case 7: return "Zero-point pink glow";
+        case 8: return "Moving rainbow wave";
+        default: return "Ship paint finish";
     }
 }
 
 const char* gfx_get_trail_name(int trail_idx) {
     switch (trail_idx) {
-        case 0: return "Ember";
-        case 1: return "Ion";
-        case 2: return "Nova";
-        default: return "Aurora";
+        case 0: return "Ember Fire";
+        case 1: return "Ion Cyan";
+        case 2: return "Nova Purple";
+        case 3: return "Aurora Mint";
+        case 4: return "Solar Gold";
+        case 5: return "Crimson Blaze";
+        case 6: return "Void Shadow";
+        case 7: return "Prism Stream";
+        default: return "Drive Wake";
+    }
+}
+
+const char* gfx_get_trail_desc(int trail_idx) {
+    switch (trail_idx) {
+        case 0: return "Combustion burner";
+        case 1: return "Sub-light ion wake";
+        case 2: return "Exotic particle jet";
+        case 3: return "Plasma engine plume";
+        case 4: return "Photon flare thrust";
+        case 5: return "Heavy afterburner";
+        case 6: return "Tachyon dark plume";
+        case 7: return "Multispectral arc";
+        default: return "Engine exhaust";
     }
 }
 
 const char* gfx_get_weapon_name(WeaponRig rig) {
     switch (rig) {
-        case WEAPON_FOCUSED: return "Focused beam";
-        case WEAPON_TWIN:    return "Twin cannons";
-        default:             return "Spread cannons";
+        case WEAPON_TWIN:    return "Twin Cannons";
+        case WEAPON_SPREAD:  return "Spread Cannon";
+        case WEAPON_FOCUSED: return "Focused Beam";
+        case WEAPON_TRIPLE:  return "Triple Blaster";
+        case WEAPON_PLASMA:  return "Plasma Flak";
+        case WEAPON_QUANTUM: return "Quantum Core";
+        default:             return "Blaster";
+    }
+}
+
+const char* gfx_get_weapon_desc(WeaponRig rig) {
+    switch (rig) {
+        case WEAPON_TWIN:    return "Dual balanced shot";
+        case WEAPON_SPREAD:  return "3-way broad salvo";
+        case WEAPON_FOCUSED: return "Heavy piercing beam";
+        case WEAPON_TRIPLE:  return "Tri-barrel barrage";
+        case WEAPON_PLASMA:  return "Twin explosive flak";
+        case WEAPON_QUANTUM: return "High-energy annihilator";
+        default:             return "Main cannons";
+    }
+}
+
+const char* gfx_get_laser_name(int laser_idx) {
+    switch (laser_idx) {
+        case 0: return "Ion Cyan";
+        case 1: return "Solar Gold";
+        case 2: return "Nebula Violet";
+        case 3: return "Toxic Mint";
+        case 4: return "Crimson Fury";
+        case 5: return "Emerald Surge";
+        case 6: return "Void Shadow";
+        case 7: return "Prism Radiance";
+        default: return "Beam Crystal";
+    }
+}
+
+const char* gfx_get_laser_desc(int laser_idx) {
+    switch (laser_idx) {
+        case 0: return "Standard blue beam";
+        case 1: return "Amber photon laser";
+        case 2: return "Harmonic purple bolt";
+        case 3: return "Bio-toxin emerald glow";
+        case 4: return "Thermal overcharge pulse";
+        case 5: return "Gamma radiation green";
+        case 6: return "Dark matter particle";
+        case 7: return "Rainbow prismatic beam";
+        default: return "Laser wavelength";
     }
 }
 
@@ -280,29 +410,12 @@ const char* gfx_get_diff_name(Difficulty diff) {
     }
 }
 
-u8 gfx_get_laser_color(int laser_idx) {
-    switch (laser_idx) {
-        case 1: return 24;
-        case 2: return 28;
-        case 3: return 27;
-        default: return 21;
-    }
-}
-
-const char* gfx_get_laser_name(int laser_idx) {
-    switch (laser_idx) {
-        case 1: return "Gold";
-        case 2: return "Violet";
-        case 3: return "Mint";
-        default: return "Cyan";
-    }
-}
-
 const u8* gfx_get_laser_standard_sprite(int laser_idx) {
     if (!s_laser_ready) return spr_laser_standard;
     if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
     return s_laser_std[laser_idx];
 }
+
 const u8* gfx_get_laser_heavy_sprite(int laser_idx) {
     if (!s_laser_ready) return spr_laser_heavy;
     if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
