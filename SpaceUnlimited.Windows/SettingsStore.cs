@@ -30,9 +30,11 @@ internal sealed class PlayerSettings
     public int EffectsVolume { get; set; } = 75;
     public bool ScreenShake { get; set; } = true;
     public bool Fullscreen { get; set; }
-    public ShipStyle ShipStyle { get; set; } = ShipStyle.Interceptor;
+    // The original Scratch ship is the only hull. The enum remains for settings
+    // compatibility with earlier builds, but rendering always uses the classic art.
+    public ShipStyle ShipStyle { get; set; } = ShipStyle.Classic;
     public WeaponRig WeaponRig { get; set; } = WeaponRig.Twin;
-    public int AccentIndex { get; set; }
+    public int AccentIndex { get; set; } = 1;
     public int TrailIndex { get; set; } = 1;
     public int HighScore { get; set; }
 }
