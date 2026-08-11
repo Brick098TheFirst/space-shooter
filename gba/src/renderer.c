@@ -5,6 +5,10 @@ EWRAM_BSS static u8 s_back_buffer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((a
 
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
+    // vid_page is the VRAM page we render the completed back-buffer into.
+    // Start with the page bit clear (displaying MEM_VRAM / 0x06000000), so we
+    // draw into MEM_VRAM_BACK (0x0600A000) as the off-screen page.
+    vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 }
@@ -14,6 +18,13 @@ void gfx_flip(void) {
     u16* vram = (u16*)vid_page;
     const u16* src = (const u16*)s_back_buffer;
     dma3_cpy(vram, src, (SCREEN_WIDTH * SCREEN_HEIGHT));
+
+    // Flip the display page: toggle bit 4 of REG_DISPCNT so the frame we just
+    // rendered becomes visible, then retarget vid_page at the other (now
+    // off-screen) page for the next frame. Without this the display always
+    // shows page 0 while we keep writing to page 1 -> black screen.
+    REG_DISPCNT ^= DCNT_PAGE;
+    vid_page = (COLOR*)((REG_DISPCNT & DCNT_PAGE) ? MEM_VRAM : MEM_VRAM_BACK);
 }
 
 void gfx_clear(u8 color) {
