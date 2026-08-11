@@ -8,9 +8,9 @@
 #include "menu.h"
 
 int main(void) {
-    // Enable interrupts
+    // Enable interrupts (VBlank for gfx_flip + Timer0 for audio FIFO)
     irq_init(NULL);
-    irq_enable(II_VBLANK);
+    irq_enable(II_VBLANK | II_TIMER0);
 
     // Initialize systems
     gfx_init();

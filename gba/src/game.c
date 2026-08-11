@@ -323,11 +323,16 @@ void game_start(void) {
     audio_play_bgm(BGM_GAME);
 }
 
-#define GAME_SPEED_MULTIPLIER 2
+#define GAME_SPEED_MULTIPLIER 1
 
 /* One simulation tick.  menu_update() polls the keypad once per displayed
  * frame; keeping that poll outside this function means the two ticks below
- * still see edge-triggered buttons such as dash and pause correctly. */
+ * still see edge-triggered buttons such as dash and pause correctly.
+ * Reduced from 2 to 1 to eliminate stutter/lag on hardware: the previous
+ * double-tick doubled CPU cost per rendered frame and halved effective
+ * timer durations, causing visible hitching even though the VBlank counter
+ * still reported 60 FPS. Arcade tempo is now kept via tuned velocity
+ * constants instead of tick-doubling. */
 static void game_update_tick(void) {
     starfield_update();
 
@@ -406,12 +411,23 @@ static void game_update_tick(void) {
         for (int b = 0; b < 8; b++) emit_engine_particle();
     }
 
+    // Fixed-point velocities: TO_FIXED(n) is pixels*256.  The previous code
+    // did `dir*spd/256` which truncated almost the entire velocity (366->1).
+    // We now add full fixed-point increments and scale diagonal by ~0.707.
     int spd = (g_game.player.dash_remaining > 0) ? TO_FIXED(3) + 200 : TO_FIXED(1) + 110;
     int dir_x = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_x : mx;
     int dir_y = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_y : my;
 
-    g_game.player.x += dir_x * spd / (dir_x != 0 && dir_y != 0 ? 362 : 256);
-    g_game.player.y += dir_y * spd / (dir_x != 0 && dir_y != 0 ? 362 : 256);
+    if (dir_x != 0 || dir_y != 0) {
+        if (dir_x != 0 && dir_y != 0) {
+            // 181/256 ~= 0.707  ->  normalize diagonal to cardinal speed
+            g_game.player.x += (dir_x * spd * 181) >> 8;
+            g_game.player.y += (dir_y * spd * 181) >> 8;
+        } else {
+            g_game.player.x += dir_x * spd;
+            g_game.player.y += dir_y * spd;
+        }
+    }
 
     // Bounds clamp (HUD margin at top)
     if (g_game.player.x < TO_FIXED(12)) g_game.player.x = TO_FIXED(12);

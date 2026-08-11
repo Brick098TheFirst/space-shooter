@@ -50,7 +50,9 @@ static int audio_ring_level(u32 write_pos) {
 }
 
 /* Mix one signed 8-bit sample.  Playback cursors advance even when a volume
- * slider is at zero, so muting does not pause or later replay an effect. */
+ * slider is at zero, so muting does not pause or later replay an effect.
+ * Fast path for 0/100 avoids costly software divide on every sample (the GBA
+ * has no hardware divider, each /100 was ~30 cycles * 16k samples/sec). */
 static s8 audio_mix_sample(void) {
     int mixed = 0;
     int music_vol = g_settings.music_volume;
@@ -58,7 +60,11 @@ static s8 audio_mix_sample(void) {
 
     if (s_bgm_data && s_bgm_len > 0) {
         int sample = s_bgm_data[s_bgm_pos];
-        mixed += (sample * music_vol) / 100;
+        if (music_vol == 100) {
+            mixed += sample;
+        } else if (music_vol != 0) {
+            mixed += (sample * music_vol) / 100;
+        }
         s_bgm_pos++;
         if (s_bgm_pos >= s_bgm_len) {
             s_bgm_pos = 0;
@@ -68,7 +74,11 @@ static s8 audio_mix_sample(void) {
     for (int ch = 0; ch < MAX_ACTIVE_SFX; ch++) {
         if (s_sfx_channels[ch].active) {
             int sample = s_sfx_channels[ch].data[s_sfx_channels[ch].position];
-            mixed += (sample * sfx_vol) / 100;
+            if (sfx_vol == 100) {
+                mixed += sample;
+            } else if (sfx_vol != 0) {
+                mixed += (sample * sfx_vol) / 100;
+            }
             s_sfx_channels[ch].position++;
             if (s_sfx_channels[ch].position >= s_sfx_channels[ch].length) {
                 s_sfx_channels[ch].active = false;
