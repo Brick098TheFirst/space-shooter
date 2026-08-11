@@ -5,7 +5,7 @@ from pathlib import Path
 import struct
 import wave
 
-ROOT = Path(__file__).resolve().parents[1] / "SpaceUnlimited.Windows" / "Assets"
+ROOT = Path(__file__).resolve().parents[1] / "assets"
 IMAGES = ROOT / "Images"
 AUDIO = ROOT / "Audio"
 

@@ -1,7 +1,7 @@
 # Space Unlimited: Recharged 🚀
 
-A native **Game Boy Advance (GBA)** and **C# / .NET 8 Windows** remake of the original Scratch space shooter.
-The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for both modern platforms and authentic retro Game Boy Advance hardware.
+A native **Game Boy Advance (GBA)** remake of the original Scratch space shooter.
+The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for authentic retro Game Boy Advance hardware.
 
 ---
 
@@ -13,7 +13,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 - **Native Mode 4 Graphics Engine:** 240×160 60 FPS double-buffered page-flipped renderer with zero screen tearing and a custom 256-color palette.
 - **16.384 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
-- **2× Arcade Pace:** Gameplay advances two simulation ticks per displayed frame, while audio remains on its independent hardware timer so faster action does not pitch-shift or starve the soundtrack.
+- **Stable 60 FPS Game Loop:** Single-tick physics with fixed-point movement and optimized audio mixing for smooth gameplay on hardware.
 - **Complete Command Deck Interface:**
   - **Main Menu:** Play, Hangar, Settings, Controls & Guide, Credits + Live Ship Preview card.
   - **Hangar:** 5 Ship Paint Accents (Solar Orange, Ion Cyan, Nova Violet, Plasma Mint, Pulsar Gold), 4 Engine Trails (Ember, Ion, Nova, Aurora), and 3 Weapon Rigs (Spread Cannons, Twin Cannons, Focused Beam).
@@ -57,7 +57,7 @@ To regenerate the 8-bit 16.384 kHz signed-PCM audio and indexed graphics C array
 npm run generate-assets
 ```
 
-The WAV files under `SpaceUnlimited.Windows/Assets/Audio/` are the source assets and are included in the repository. The GBA cannot play WAV containers directly: the generator downsamples them to signed 8-bit PCM in `gba/src/audio_data.c`, which is linked into the ROM. `audio.c` mixes that data into an EWRAM ring and feeds DirectSound FIFO A from a Timer 0 interrupt.
+The WAV files under `assets/Audio/` are the source assets and are included in the repository. The GBA cannot play WAV containers directly: the generator downsamples them to signed 8-bit PCM in `gba/src/audio_data.c`, which is linked into the ROM. `audio.c` mixes that data into an EWRAM ring and feeds DirectSound FIFO A from a Timer 0 interrupt.
 
 ### GBA audio implementation notes
 
@@ -78,33 +78,14 @@ Navigate to `http://localhost:3000` to play in browser or download the `.gba` RO
 
 ---
 
-## 🪟 Windows (.NET 8) Version
-
-### Run from Visual Studio
-
-1. Open `SpaceUnlimited.sln`.
-2. Select `SpaceUnlimited.Windows` as the startup project.
-3. Press **F5**.
-
-### Make a portable Windows publish
-
-```powershell
-.\build-windows.ps1
-```
-
-The output executable is written to `release\SpaceUnlimited-win-x64\SpaceUnlimited.exe`.
-
----
-
 ## 📁 Repository Layout
 
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
+| `assets/` | Source audio (`Audio/`) and images (`Images/`) extracted from `spaceshooter.sb3` |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |
 | `web/` | Web emulator player UI, styling, and WebAssembly mGBA assets |
 | `server.js` | Web server for live interactive preview and ROM downloads |
-| `SpaceUnlimited.Windows/` | Windows C# / .NET 8 WinForms game |
-| `SpaceUnlimited.sln` | Visual Studio solution |
 | `spaceshooter.sb3` | Preserved original Scratch 3 project file |

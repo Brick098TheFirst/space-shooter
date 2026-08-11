@@ -51,7 +51,7 @@ os.makedirs('gba/include', exist_ok=True)
 os.makedirs('gba/src', exist_ok=True)
 
 # 1. Process Audio
-audio_dir = 'SpaceUnlimited.Windows/Assets/Audio'
+audio_dir = 'assets/Audio'
 menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 16384)
 game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16384)
 laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16384)
@@ -332,7 +332,7 @@ def find_closest_color(r, g, b, min_idx=1, max_idx=255):
             best_idx = i
     return best_idx
 
-img_dir = 'SpaceUnlimited.Windows/Assets/Images'
+img_dir = 'assets/Images'
 
 w_ship, h_ship, px_ship = decode_png(os.path.join(img_dir, 'classic-ship.png'))
 _, _, ship_scaled = scale_image(w_ship, h_ship, px_ship, 20, 16)
