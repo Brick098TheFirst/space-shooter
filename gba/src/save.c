@@ -8,6 +8,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V1 0x53554742 // 'SUGB' legacy
 #define SAVE_MAGIC_V2 0x53554743 // 'SUGC' legacy
 #define SAVE_MAGIC_V3 0x53554744 // 'SUGD' expanded shop & tech upgrades
+#define SAVE_MAGIC_V4 0x53554745 // 'SUGE' new core upgrades + 12 lasers + 8 rigs + 5 lvls
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -48,7 +49,7 @@ typedef struct {
     u32 checksum;
 } SaveDataV2;
 
-// Layout V3 (48 bytes)
+// Layout V3 (48 bytes) - 7 upgrades x3 levels
 typedef struct {
     u32 magic;
     u8  difficulty;
@@ -65,13 +66,45 @@ typedef struct {
     u16 owned_trails;
     u16 owned_rigs;
     u16 owned_lasers;
-    u8  upgrade_levels[NUM_UPGRADES]; // 7 bytes (0..3)
+    u8  upgrade_levels[7];
     u8  pad0;
     u32 pad1;
     u32 pad2;
     u32 checksum;
 } SaveDataV3;
 
+// Layout V4 (52 bytes) - 8 upgrades x5 levels, expanded rigs/lasers
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;   // up to 8 rigs in 16 bits
+    u16 owned_lasers; // up to 12 lasers in 16 bits
+    u8  upgrade_levels[NUM_UPGRADES]; // 8 x 0..5
+    u8  pad0;
+    u8  pad1;
+    u8  pad2;
+    u32 checksum;
+} SaveDataV4;
+
+static u32 calc_checksum_v4(const SaveDataV4* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV4) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
 static u32 calc_checksum_v3(const SaveDataV3* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -80,7 +113,6 @@ static u32 calc_checksum_v3(const SaveDataV3* data) {
     }
     return sum;
 }
-
 static u32 calc_checksum_v2(const SaveDataV2* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -89,7 +121,6 @@ static u32 calc_checksum_v2(const SaveDataV2* data) {
     }
     return sum;
 }
-
 static u32 calc_checksum_v1(const SaveDataV1* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -106,14 +137,14 @@ void save_init_defaults(void) {
     g_settings.screen_shake = true;
     g_settings.accent_index = 1; // Ion Cyan free starter
     g_settings.trail_index = 1;  // Ion free starter
-    g_settings.weapon_rig = WEAPON_TWIN; // Twin free starter
-    g_settings.laser_index = 0; // Cyan free starter
+    g_settings.weapon_rig = WEAPON_SINGLE; // NEW: single weak starter
+    g_settings.laser_index = 0; // Ion Basic weak starter
     g_settings.high_score = 0;
     g_settings.coins = 0;
     g_settings.owned_accents = (1 << 1); // Ion Cyan
     g_settings.owned_trails  = (1 << 1); // Ion
-    g_settings.owned_rigs    = (1 << WEAPON_TWIN);
-    g_settings.owned_lasers  = (1 << 0); // Cyan
+    g_settings.owned_rigs    = (1 << WEAPON_SINGLE); // only single
+    g_settings.owned_lasers  = (1 << 0); // Ion Basic
     for (int i = 0; i < NUM_UPGRADES; i++) {
         g_settings.upgrade_levels[i] = 0;
     }
@@ -122,7 +153,39 @@ void save_init_defaults(void) {
 void save_load(void) {
     save_init_defaults();
 
-    // 1. Try V3 first
+    // Try V4
+    SaveDataV4 d4;
+    u8* dest4 = (u8*)&d4;
+    for (u32 i = 0; i < sizeof(SaveDataV4); i++) dest4[i] = SRAM_BASE[i];
+    if (d4.magic == SAVE_MAGIC_V4 && d4.checksum == calc_checksum_v4(&d4)) {
+        if (d4.difficulty <= 2) g_settings.difficulty = (Difficulty)d4.difficulty;
+        g_settings.music_volume = d4.music_volume <= 100 ? d4.music_volume : 80;
+        g_settings.sfx_volume = d4.sfx_volume <= 100 ? d4.sfx_volume : 80;
+        g_settings.screen_shake = (d4.screen_shake != 0);
+        if (d4.accent_index < NUM_ACCENTS) g_settings.accent_index = d4.accent_index;
+        if (d4.trail_index < NUM_TRAILS) g_settings.trail_index = d4.trail_index;
+        if (d4.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d4.weapon_rig;
+        if (d4.laser_index < NUM_LASERS) g_settings.laser_index = d4.laser_index;
+        g_settings.high_score = d4.high_score;
+        g_settings.coins = d4.coins;
+        g_settings.owned_accents = d4.owned_accents ? d4.owned_accents : (1<<1);
+        g_settings.owned_trails  = d4.owned_trails  ? d4.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d4.owned_rigs    ? d4.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = d4.owned_lasers  ? d4.owned_lasers  : (1<<0);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d4.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1 << g_settings.laser_index))) g_settings.laser_index = 0;
+        return;
+    }
+
+    // Fallback V3 -> migrate
     SaveDataV3 d3;
     u8* dest3 = (u8*)&d3;
     for (u32 i = 0; i < sizeof(SaveDataV3); i++) dest3[i] = SRAM_BASE[i];
@@ -133,27 +196,47 @@ void save_load(void) {
         g_settings.screen_shake = (d3.screen_shake != 0);
         if (d3.accent_index < NUM_ACCENTS) g_settings.accent_index = d3.accent_index;
         if (d3.trail_index < NUM_TRAILS) g_settings.trail_index = d3.trail_index;
-        if (d3.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d3.weapon_rig;
-        if (d3.laser_index < NUM_LASERS) g_settings.laser_index = d3.laser_index;
+
+        // Weapon rig migration: old 0..5 -> new 1..6
+        int old_rig = d3.weapon_rig;
+        if (old_rig >= 0 && old_rig <= 5) {
+            g_settings.weapon_rig = (WeaponRig)(old_rig + 1);
+        }
+        if (d3.laser_index < 8) g_settings.laser_index = d3.laser_index;
+
         g_settings.high_score = d3.high_score;
         g_settings.coins = d3.coins;
         g_settings.owned_accents = d3.owned_accents ? d3.owned_accents : (1<<1);
         g_settings.owned_trails  = d3.owned_trails  ? d3.owned_trails  : (1<<1);
-        g_settings.owned_rigs    = d3.owned_rigs    ? d3.owned_rigs    : (1<<WEAPON_TWIN);
-        g_settings.owned_lasers  = d3.owned_lasers  ? d3.owned_lasers  : (1<<0);
-        for (int i = 0; i < NUM_UPGRADES; i++) {
-            g_settings.upgrade_levels[i] = d3.upgrade_levels[i] <= 3 ? d3.upgrade_levels[i] : 0;
+        // Owned rigs shift by 1
+        g_settings.owned_rigs = (1 << WEAPON_SINGLE);
+        for (int i = 0; i < 6; i++) {
+            if (d3.owned_rigs & (1 << i)) {
+                g_settings.owned_rigs |= (1 << (i + 1));
+            }
         }
+        g_settings.owned_lasers  = d3.owned_lasers  ? d3.owned_lasers  : (1<<0);
 
-        // Safety repair: ensure equipped items are owned
-        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
-        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
-        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_TWIN;
-        if (!(g_settings.owned_lasers & (1 << g_settings.laser_index))) g_settings.laser_index = 0;
+        // Upgrade levels migration
+        // Old mapping: 0 shield,1 hull,2 thrusters,3 scavenger,4 damage,5 overdrive,6 combo
+        // New: 0 engine,1 fire_rate,2 damage,3 shield,4 hull,5 dash,6 scavenger,7 overdrive
+        int old_lv[7];
+        for (int i = 0; i < 7; i++) old_lv[i] = (d3.upgrade_levels[i] <= 3 ? d3.upgrade_levels[i] : 0);
+
+        g_settings.upgrade_levels[UPG_SHIELD] = old_lv[0] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[0];
+        g_settings.upgrade_levels[UPG_HULL] = old_lv[1] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[1];
+        g_settings.upgrade_levels[UPG_ENGINE] = old_lv[2] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[2];
+        g_settings.upgrade_levels[UPG_DASH] = old_lv[2] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[2];
+        g_settings.upgrade_levels[UPG_SCAVENGER] = old_lv[3] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[3];
+        g_settings.upgrade_levels[UPG_DAMAGE] = old_lv[4] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[4];
+        g_settings.upgrade_levels[UPG_OVERDRIVE] = old_lv[5] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[5];
+        g_settings.upgrade_levels[UPG_FIRE_RATE] = old_lv[6] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[6];
+
+        save_write();
         return;
     }
 
-    // 2. Fallback to V2
+    // V2 fallback
     SaveDataV2 d2;
     u8* dest2 = (u8*)&d2;
     for (u32 i = 0; i < sizeof(SaveDataV2); i++) dest2[i] = SRAM_BASE[i];
@@ -164,19 +247,22 @@ void save_load(void) {
         g_settings.screen_shake = (d2.screen_shake != 0);
         if (d2.accent_index < NUM_ACCENTS) g_settings.accent_index = d2.accent_index;
         if (d2.trail_index < NUM_TRAILS) g_settings.trail_index = d2.trail_index;
-        if (d2.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d2.weapon_rig;
-        if (d2.laser_index < NUM_LASERS) g_settings.laser_index = d2.laser_index;
         g_settings.high_score = d2.high_score;
         g_settings.coins = d2.coins;
         g_settings.owned_accents = d2.owned_accents ? d2.owned_accents : (1<<1);
         g_settings.owned_trails  = d2.owned_trails  ? d2.owned_trails  : (1<<1);
-        g_settings.owned_rigs    = d2.owned_rigs    ? d2.owned_rigs    : (1<<WEAPON_TWIN);
+        g_settings.owned_rigs = (1 << WEAPON_SINGLE);
+        for (int i = 0; i < 6; i++) {
+            if (d2.owned_rigs & (1 << i)) {
+                g_settings.owned_rigs |= (1 << (i+1));
+            }
+        }
         g_settings.owned_lasers  = d2.owned_lasers  ? d2.owned_lasers  : (1<<0);
         save_write();
         return;
     }
 
-    // 3. Fallback to V1
+    // V1 fallback
     SaveDataV1 d1;
     u8* dest1 = (u8*)&d1;
     for (u32 i = 0; i < sizeof(SaveDataV1); i++) dest1[i] = SRAM_BASE[i];
@@ -187,20 +273,19 @@ void save_load(void) {
         g_settings.screen_shake = (d1.screen_shake != 0);
         if (d1.accent_index < NUM_ACCENTS) g_settings.accent_index = d1.accent_index;
         if (d1.trail_index < NUM_TRAILS) g_settings.trail_index = d1.trail_index;
-        if (d1.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d1.weapon_rig;
         g_settings.high_score = d1.high_score;
         g_settings.owned_accents |= (1 << g_settings.accent_index);
         g_settings.owned_trails  |= (1 << g_settings.trail_index);
-        g_settings.owned_rigs    |= (1 << g_settings.weapon_rig);
+        g_settings.owned_rigs    |= (1 << WEAPON_SINGLE);
         if (g_settings.coins == 0 && g_settings.high_score > 0) g_settings.coins = 250;
         save_write();
     }
 }
 
 void save_write(void) {
-    SaveDataV3 data;
-    memset(&data, 0, sizeof(SaveDataV3));
-    data.magic = SAVE_MAGIC_V3;
+    SaveDataV4 data;
+    memset(&data, 0, sizeof(SaveDataV4));
+    data.magic = SAVE_MAGIC_V4;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -218,15 +303,15 @@ void save_write(void) {
     for (int i = 0; i < NUM_UPGRADES; i++) {
         data.upgrade_levels[i] = g_settings.upgrade_levels[i];
     }
-    data.checksum = calc_checksum_v3(&data);
+    data.checksum = calc_checksum_v4(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV3); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV4); i++) {
         SRAM_BASE[i] = src[i];
     }
 }
 
-// ── Shop Pricing (Expensive Progression Grind) ───────────────────────────
+// ── Shop Pricing ────────────────────────────────────────────────────────
 int shop_get_accent_price(int idx) {
     switch (idx) {
         case 0: return 800;     // Solar Orange
@@ -237,7 +322,7 @@ int shop_get_accent_price(int idx) {
         case 5: return 30000;   // Crimson Void
         case 6: return 65000;   // Obsidian Shadow
         case 7: return 120000;  // Quantum Neon
-        case 8: return 1000000; // Rainbow Prism (1 Million)
+        case 8: return 1000000; // Rainbow Prism
         default: return 9999999;
     }
 }
@@ -258,61 +343,70 @@ int shop_get_trail_price(int idx) {
 
 int shop_get_rig_price(WeaponRig rig) {
     switch (rig) {
-        case WEAPON_TWIN:    return 0;       // Twin Cannons (Starter)
-        case WEAPON_SPREAD:  return 2500;    // Spread Cannons
-        case WEAPON_FOCUSED: return 7500;    // Focused Beam
-        case WEAPON_TRIPLE:  return 20000;   // Triple Blaster
-        case WEAPON_PLASMA:  return 50000;   // Plasma Wave
-        case WEAPON_QUANTUM: return 100000;  // Quantum Core
+        case WEAPON_SINGLE:  return 0;       // Single weak starter
+        case WEAPON_TWIN:    return 500;     // Twin
+        case WEAPON_SPREAD:  return 2500;    // Spread
+        case WEAPON_FOCUSED: return 6500;    // Focused
+        case WEAPON_TRIPLE:  return 14000;   // Triple
+        case WEAPON_PLASMA:  return 30000;   // Plasma
+        case WEAPON_QUANTUM: return 65000;   // Quantum
+        case WEAPON_NOVA:    return 150000;  // Nova final god
         default: return 999999;
     }
 }
 
 int shop_get_laser_price(int idx) {
     switch (idx) {
-        case 0: return 0;       // Ion Cyan (Starter)
-        case 1: return 1800;    // Solar Gold
-        case 2: return 4500;    // Nebula Violet
-        case 3: return 9500;    // Toxic Mint
-        case 4: return 22000;   // Crimson Fury
-        case 5: return 48000;   // Emerald Surge
-        case 6: return 85000;   // Void Shadow
-        case 7: return 150000;  // Rainbow Laser
+        case 0: return 0;       // Ion Basic starter weak
+        case 1: return 1200;    // Solar Gold
+        case 2: return 3500;    // Nebula Violet
+        case 3: return 7500;    // Toxic Mint
+        case 4: return 15000;   // Crimson Fury
+        case 5: return 30000;   // Emerald Surge
+        case 6: return 60000;   // Void Shadow
+        case 7: return 100000;  // Rainbow Laser
+        case 8: return 40000;   // Inferno Red alt path
+        case 9: return 70000;   // Frost Blue
+        case 10: return 110000; // Photon Gold
+        case 11: return 250000; // Omega Prism final god
         default: return 999999;
     }
 }
 
+// New upgrade pricing: 5 levels (0->1,1->2,2->3,3->4,4->5)
 int shop_get_upgrade_price(UpgradeType upg, int level) {
-    // Tech begins around 50,000 coins and scales steeply across all three tiers.
-    // level: 0 = buying lv 1, 1 = buying lv 2, 2 = buying lv 3
-    if (level < 0 || level >= 3) return 999999;
+    if (level < 0 || level >= UPG_MAX_LEVEL) return 999999;
     switch (upg) {
-        case UPG_SHIELD: {
-            const int p[3] = { 50000, 125000, 300000 };
+        case UPG_ENGINE: {
+            const int p[5] = { 800, 2500, 7000, 18000, 40000 };
             return p[level];
         }
-        case UPG_HULL: {
-            const int p[3] = { 55000, 140000, 325000 };
-            return p[level];
-        }
-        case UPG_THRUSTERS: {
-            const int p[3] = { 50000, 120000, 280000 };
-            return p[level];
-        }
-        case UPG_SCAVENGER: {
-            const int p[3] = { 55000, 135000, 320000 };
+        case UPG_FIRE_RATE: {
+            const int p[5] = { 1000, 3000, 8000, 20000, 45000 };
             return p[level];
         }
         case UPG_DAMAGE: {
-            const int p[3] = { 65000, 160000, 375000 };
+            const int p[5] = { 1500, 4000, 10000, 25000, 55000 };
+            return p[level];
+        }
+        case UPG_SHIELD: {
+            const int p[5] = { 1200, 3500, 9000, 22000, 50000 };
+            return p[level];
+        }
+        case UPG_HULL: {
+            const int p[5] = { 1200, 3500, 9000, 22000, 50000 };
+            return p[level];
+        }
+        case UPG_DASH: {
+            const int p[5] = { 800, 2500, 7000, 18000, 40000 };
+            return p[level];
+        }
+        case UPG_SCAVENGER: {
+            const int p[5] = { 1000, 3000, 8000, 20000, 45000 };
             return p[level];
         }
         case UPG_OVERDRIVE: {
-            const int p[3] = { 50000, 115000, 265000 };
-            return p[level];
-        }
-        case UPG_COMBO: {
-            const int p[3] = { 60000, 150000, 350000 };
+            const int p[5] = { 1000, 3000, 7500, 18000, 40000 };
             return p[level];
         }
         default: return 999999;
@@ -419,7 +513,7 @@ bool shop_try_purchase_laser(int idx) {
 bool shop_try_purchase_upgrade(UpgradeType upg) {
     if (upg < 0 || upg >= NUM_UPGRADES) return false;
     int current_lv = g_settings.upgrade_levels[upg];
-    if (current_lv >= 3) return false; // Already maxed
+    if (current_lv >= UPG_MAX_LEVEL) return false;
     int price = shop_get_upgrade_price(upg, current_lv);
     if (g_settings.coins < (u32)price) return false;
     g_settings.coins -= price;
@@ -430,67 +524,90 @@ bool shop_try_purchase_upgrade(UpgradeType upg) {
 
 const char* shop_get_upgrade_name(UpgradeType upg) {
     switch (upg) {
+        case UPG_ENGINE:    return "Ion Engine";
+        case UPG_FIRE_RATE: return "Fire Rate";
+        case UPG_DAMAGE:    return "Plasma Core";
         case UPG_SHIELD:    return "Shield Battery";
-        case UPG_HULL:      return "Reinforced Hull";
-        case UPG_THRUSTERS: return "Hyper Thruster";
-        case UPG_SCAVENGER: return "Coin Scavenger";
-        case UPG_DAMAGE:    return "Plasma Reactor";
+        case UPG_HULL:      return "Hull Plating";
+        case UPG_DASH:      return "Afterburner";
+        case UPG_SCAVENGER: return "Graviton Magnet";
         case UPG_OVERDRIVE: return "Overdrive Unit";
-        case UPG_COMBO:     return "Combo Matrix";
         default:            return "Unknown Tech";
     }
 }
 
 const char* shop_get_upgrade_desc_line1(UpgradeType upg) {
     switch (upg) {
-        case UPG_SHIELD:    return "+1 Shield Cap/Lv";
-        case UPG_HULL:      return "+1 Extra Life/Lv";
-        case UPG_THRUSTERS: return "+15% Speed & Dash";
-        case UPG_SCAVENGER: return "+35% Coins & Magnet";
-        case UPG_DAMAGE:    return "+1 Bullet Damage";
-        case UPG_OVERDRIVE: return "+40% Buff Time";
-        case UPG_COMBO:     return "+Chain Window & x20";
+        case UPG_ENGINE:    return "Ship speed 0.7->2x";
+        case UPG_FIRE_RATE: return "2/sec -> 10/sec";
+        case UPG_DAMAGE:    return "+1 dmg per lvl";
+        case UPG_SHIELD:    return "+Shield cap & start";
+        case UPG_HULL:      return "+Extra life per lvl";
+        case UPG_DASH:      return "-Dash cd & +invuln";
+        case UPG_SCAVENGER: return "+Coins & magnet";
+        case UPG_OVERDRIVE: return "+Rapid duration";
         default:            return "";
     }
 }
 
 const char* shop_get_upgrade_desc_line2(UpgradeType upg, int level) {
     switch (upg) {
-        case UPG_SHIELD:
-            if (level == 0) return "Start with 1 shld";
-            if (level == 1) return "Start with 2 shld";
-            if (level == 2) return "Start with 3 shld";
-            return "Max 6 shield cap";
-        case UPG_HULL:
-            if (level == 0) return "Start with +1 life";
-            if (level == 1) return "Start with +2 lives";
-            if (level == 2) return "Start with +3 lives";
-            return "Start with 6 lives";
-        case UPG_THRUSTERS:
-            if (level == 0) return "Dash cooldown -20%";
-            if (level == 1) return "Dash cooldown -35%";
-            if (level == 2) return "Dash cooldown -50%";
-            return "Ultra agile thrust";
-        case UPG_SCAVENGER:
-            if (level == 0) return "+35% Coin drops";
-            if (level == 1) return "+70% Coins + Magnet";
-            if (level == 2) return "+105% Coins & Pull";
-            return "Double coin harvest";
+        case UPG_ENGINE:
+            if (level == 0) return "Lv0 Slow 0.7x";
+            if (level == 1) return "Lv1 0.85x speed";
+            if (level == 2) return "Lv2 1.0x normal";
+            if (level == 3) return "Lv3 1.2x fast";
+            if (level == 4) return "Lv4 1.56x v-fast";
+            return "MAX 2.0x Speed!";
+        case UPG_FIRE_RATE:
+            if (level == 0) return "Lv0 2 shots/sec";
+            if (level == 1) return "Lv1 ~3/sec";
+            if (level == 2) return "Lv2 ~4/sec";
+            if (level == 3) return "Lv3 ~6/sec";
+            if (level == 4) return "Lv4 ~8/sec";
+            return "MAX 10+/sec!";
         case UPG_DAMAGE:
-            if (level == 0) return "+1 Heavy Laser dmg";
-            if (level == 1) return "+1 All Weapons dmg";
-            if (level == 2) return "+2 Max Firepower";
-            return "Maximum devastation";
+            if (level == 0) return "+0 dmg base";
+            if (level == 1) return "+1 all weapons";
+            if (level == 2) return "+2 heavy dmg";
+            if (level == 3) return "+3 god mode";
+            if (level == 4) return "+4 pierce boost";
+            return "MAX +5 devastation";
+        case UPG_SHIELD:
+            if (level == 0) return "0 start 2 max";
+            if (level == 1) return "1 start 3 max";
+            if (level == 2) return "1 start 4 max";
+            if (level == 3) return "2 start 5 max";
+            if (level == 4) return "2 start 6 max";
+            return "MAX 3 start 6 cap";
+        case UPG_HULL:
+            if (level == 0) return "2 lives only!";
+            if (level == 1) return "3 lives normal";
+            if (level == 2) return "4 lives sturdy";
+            if (level == 3) return "5 lives tank";
+            if (level == 4) return "6 lives beast";
+            return "MAX 7 lives";
+        case UPG_DASH:
+            if (level == 0) return "Long cd 1.35s";
+            if (level == 1) return "Cd 1.1s -20%";
+            if (level == 2) return "Cd 0.86s -35%";
+            if (level == 3) return "Cd 0.66s -50%";
+            if (level == 4) return "Cd 0.5s -65%";
+            return "MAX cd 0.4s";
+        case UPG_SCAVENGER:
+            if (level == 0) return "No magnet 1x $";
+            if (level == 1) return "+35% $ small mag";
+            if (level == 2) return "+70% $ med mag";
+            if (level == 3) return "+105% $ big mag";
+            if (level == 4) return "+140% $ huge mag";
+            return "MAX +175% & pull";
         case UPG_OVERDRIVE:
-            if (level == 0) return "Rapid lasts 12 sec";
-            if (level == 1) return "Rapid lasts 16 sec";
-            if (level == 2) return "Rapid lasts 20 sec";
-            return "Extended overdrive";
-        case UPG_COMBO:
-            if (level == 0) return "Max Combo x12 cap";
-            if (level == 1) return "Max Combo x16 cap";
-            if (level == 2) return "Max Combo x20 cap";
-            return "Score titan status";
+            if (level == 0) return "Rapid 8 sec";
+            if (level == 1) return "Rapid 11 sec";
+            if (level == 2) return "Rapid 14 sec";
+            if (level == 3) return "Rapid 18 sec";
+            if (level == 4) return "Rapid 22 sec";
+            return "MAX Rapid 26 sec";
         default:
             return "";
     }

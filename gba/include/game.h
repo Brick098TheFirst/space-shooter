@@ -3,12 +3,12 @@
 
 #include "types.h"
 
-#define MAX_ASTEROIDS 18
-#define MAX_BULLETS 40
-#define MAX_DRONES 6
+#define MAX_ASTEROIDS 28
+#define MAX_BULLETS 64
+#define MAX_DRONES 8
 #define MAX_POWERUPS 6
 #define MAX_PARTICLES 64
-#define MAX_EXPLOSIONS 8
+#define MAX_EXPLOSIONS 10
 
 typedef struct {
     int x; // 8.8 fixed point
