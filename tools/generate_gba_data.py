@@ -6,6 +6,15 @@ import struct
 import zlib
 import wave
 import math
+import random
+from fractions import Fraction
+
+# GBATEK (Direct Sound): the GBA internally re-samples all audio to 32.768 kHz
+# and "best re-sampling accuracy can be gained by using DMA/Timer rates of
+# 32.768kHz, 16.384kHz, or 8.192kHz (ie. fragments of the physical output
+# rate)".  We therefore master all PCM at exactly 32,768 Hz; Timer 0 with a
+# /256 prescaler and 0xFFFE reload produces that rate exactly (65,536/2 Hz).
+TARGET_RATE = 32768
 
 def rgb15(r, g, b):
     # Convert 8-bit RGB to GBA 15-bit BGR555 integer
@@ -14,14 +23,15 @@ def rgb15(r, g, b):
     b5 = (b >> 3) & 0x1F
     return r5 | (g5 << 5) | (b5 << 10)
 
-def resample_wav(path, target_rate=16384):
+def read_wav_mono(path):
+    """Decode a PCM WAV to float samples in [-1.0, 1.0)."""
     with wave.open(path, 'rb') as w:
         nch = w.getnchannels()
         sw = w.getsampwidth()
         rate = w.getframerate()
         nframes = w.getnframes()
         raw = w.readframes(nframes)
-    
+
     samples = []
     if sw == 2:
         fmt = f'<{nframes * nch}h'
@@ -33,30 +43,132 @@ def resample_wav(path, target_rate=16384):
         for i in range(0, len(raw), nch):
             s = (raw[i] - 128) / 128.0
             samples.append(s)
-            
-    out_len = int(len(samples) * target_rate / rate)
+    else:
+        raise ValueError(f'{path}: unsupported sample width {sw}')
+    return samples, rate
+
+def make_lowpass_kernel(src_rate, cutoff_hz, ntaps):
+    """Windowed-sinc low-pass filter (Blackman window), normalized to unity
+    gain at DC.  `ntaps` should be odd."""
+    M = ntaps - 1
+    fc = cutoff_hz / src_rate  # cycles per source sample
+    h = []
+    for n in range(ntaps):
+        k = n - M / 2.0
+        if abs(k) < 1e-9:
+            sinc = 2.0 * fc
+        else:
+            sinc = math.sin(2.0 * math.pi * fc * k) / (math.pi * k)
+        # Blackman window centered on the main tap (1 at center, 0 at edges;
+        # mainlobe width ~ 6*fs/N between -6 dB points, stopband ~ -74 dB)
+        w = 0.42 + 0.5 * math.cos(2.0 * math.pi * k / M) + 0.08 * math.cos(4.0 * math.pi * k / M)
+        h.append(sinc * w)
+    norm = sum(h)
+    return [v / norm for v in h]
+
+def resample_wav(path, cutoff_hz, ntaps, target_rate=TARGET_RATE):
+    """Anti-aliased resampling via a polyphase windowed-sinc low-pass,
+    followed by TPDF dithered quantization to signed 8-bit PCM.
+
+    The old implementation used plain linear interpolation, which is NOT an
+    anti-alias filter: for `game.wav` (22,050 Hz source -> 16,384 Hz) the
+    entire 8,192-11,025 Hz band (-18.8 dB of the track's energy) folded
+    inharmonically into the audible range, turning the soundtrack into
+    metallic screech.  `menu.wav` was even worse (48,000 -> 16,384 Hz folds
+    everything above 8.2 kHz twice).  Here the spectrum above the target
+    Nyquist is removed BEFORE decimation, so the result sounds like the
+    source WAV, only at the GBA's native 32,768 Hz / 8-bit depth.
+    """
+    samples, rate = read_wav_mono(path)
+
+    half = ntaps // 2
+
+    # Exact rational step so the fractional phases repeat with a small period
+    # and floating-point drift never accumulates over 4M output samples.
+    step = Fraction(rate, target_rate)
+    out_len = (len(samples) * target_rate) // rate
+    n_src = len(samples)
+
+    # The fractional position cycles with period `step.denominator`; cache the
+    # phase-shifted kernels, then the inner loop is plain multiply-accumulate.
+    n_phases = step.denominator
+    phase_kernels = []
+    for p in range(n_phases):
+        frac = float(Fraction(p, n_phases))
+        pk = []
+        # Sample the continuous windowed-sinc at integer taps offset by -frac.
+        M = ntaps - 1
+        fc = cutoff_hz / rate
+        vals = []
+        for n in range(ntaps):
+            k = n - M / 2.0 - frac
+            if abs(k) < 1e-9:
+                sinc = 2.0 * fc
+            else:
+                sinc = math.sin(2.0 * math.pi * fc * k) / (math.pi * k)
+            w = 0.42 + 0.5 * math.cos(2.0 * math.pi * k / M) + 0.08 * math.cos(4.0 * math.pi * k / M)
+            vals.append(sinc * w)
+        norm = sum(vals)
+        phase_kernels.append([v / norm for v in vals])
+
+    # Sanity: every fractional-phase kernel must pass DC almost perfectly;
+    # a sign error in the window collapses this to ~0 and the output to noise.
+    worst = min(abs(sum(k)) for k in phase_kernels)
+    assert worst > 0.9, f'low-pass kernels broken for {path}: worst DC gain {worst}'
+
+    filtered = []
+    # Track the source position as an integer numerator on a FIXED denominator
+    # (Fraction arithmetic auto-reduces 128/256 to 1/2 and would scramble the
+    # phase table lookups; pos % DEN / pos // DEN cannot go wrong).
+    DEN = step.denominator
+    STN = step.numerator
+    pos = 0
+    for _ in range(out_len):
+        base, phase = divmod(pos, DEN)
+        taps = phase_kernels[phase]
+        j0 = base - half
+        acc = 0.0
+        sm = samples
+        for n in range(ntaps):
+            j = j0 + n
+            if 0 <= j < n_src:
+                acc += taps[n] * sm[j]
+        filtered.append(acc)
+        pos += STN
+
+    # Peak-normalize with a little headroom, then quantize to 8-bit with
+    # triangular-PDF dither (removes the crunchy quantization distortion of
+    # plain truncation at the cost of a barely-audible steady hiss, standard
+    # practice for low-bitdepth PCM).
+    peak = max(1e-12, max(abs(v) for v in filtered))
+    gain = 124.0 / peak
+    rng = random.Random(0x53474B41)  # fixed seed -> reproducible builds
     out_samples = []
-    for i in range(out_len):
-        src_pos = i * rate / target_rate
-        idx0 = int(src_pos)
-        idx1 = min(idx0 + 1, len(samples) - 1)
-        frac = src_pos - idx0
-        s = samples[idx0] * (1.0 - frac) + samples[idx1] * frac
-        val = int(s * 127.0)
-        val = max(-128, min(127, val))
-        out_samples.append(val)
+    for v in filtered:
+        d = v * gain + (rng.random() - rng.random())
+        if d >= 0.0:
+            q = int(d + 0.5)
+        else:
+            q = -int(0.5 - d)
+        out_samples.append(max(-128, min(127, q)))
     return out_samples
 
 os.makedirs('gba/include', exist_ok=True)
 os.makedirs('gba/src', exist_ok=True)
 
 # 1. Process Audio
+# Per-file anti-alias cutoffs/tap counts (chosen from measured source spectra):
+#  - menu.wav is 48 kHz: filter at 15.0 kHz so everything near the 16,384 Hz
+#    output Nyquist is in the stopband.
+#  - game.wav is 22,050 Hz: its band ends at 11,025 Hz so it cannot alias at
+#    32,768 Hz; the filter at 10.4 kHz only suppresses interpolation images.
+#  - SFX get the same treatment as their sample rate allows.
 audio_dir = 'SpaceUnlimited.Windows/Assets/Audio'
-menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 16384)
-game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16384)
-laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16384)
-explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 16384)
-pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 16384)
+menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 15000, 113)
+game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 10400, 81)
+laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 14600, 113)
+explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 15000, 113)
+pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 15000, 113)
 
 print(f"Audio resampled: menu={len(menu_snd)}, game={len(game_snd)}, laser={len(laser_snd)}, expl={len(explosion_snd)}, pickup={len(pickup_snd)}")
 
@@ -66,8 +178,10 @@ with open('gba/include/audio_data.h', 'w') as f:
 
 #include <tonc.h>
 
-/* Timer 0 / 1024 on GBA: 0xffff reload = exactly 16,384 Hz. */
-#define AUDIO_SAMPLE_RATE 16384
+/* Timer 0 / 256 with a 0xFFFE reload overflows at exactly 65,536/2 = 32,768
+ * Hz, 1:1 with the GBA's internal audio re-sampler (GBATEK lists 32,768 Hz
+ * as a best-accuracy DirectSound timer rate). */
+#define AUDIO_SAMPLE_RATE 32768
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

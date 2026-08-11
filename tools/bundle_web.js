@@ -13,6 +13,20 @@ if (fs.existsSync("SpaceUnlimited.gba")) {
     fs.copyFileSync("SpaceUnlimited.gba", "web/dist/SpaceUnlimited.gba");
 }
 
+// Copy the original audio assets: the WASM core's DirectSound path cannot
+// deliver a continuous stream, so the client mirrors the GBA audio engine by
+// playing these WAVs via WebAudio, synced to the in-ROM engine state.
+const audioDir = "web/dist/audio";
+fs.mkdirSync(audioDir, { recursive: true });
+for (const name of ["menu", "game", "laser", "explosion", "pickup"]) {
+    const src = `SpaceUnlimited.Windows/Assets/Audio/${name}.wav`;
+    if (fs.existsSync(src)) {
+        fs.copyFileSync(src, `${audioDir}/${name}.wav`);
+    } else {
+        console.warn(`WARNING: missing audio asset ${src}`);
+    }
+}
+
 console.log("Bundling web emulator client...");
 esbuild.buildSync({
     entryPoints: ["web/src/emulator-client.js"],

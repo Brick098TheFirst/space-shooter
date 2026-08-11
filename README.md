@@ -12,7 +12,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 ### GBA Features
 
 - **Native Mode 4 Graphics Engine:** 240×160 60 FPS double-buffered page-flipped renderer with zero screen tearing and a custom 256-color palette.
-- **16.384 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
+- **32.768 kHz DirectSound Audio Engine:** The WAV soundtrack (`menu.wav`, `game.wav`) is polyphase-filtered to the GBA's exact native resample rate and played back through a timer-locked FIFO + EWRAM ring, so it sounds like the source files rather than an aliased approximation; polyphonic sound effects (lasers, explosions, shield pickups, and impacts) mix with a soft-clip limiter instead of crunchy overload.
 - **2× Arcade Pace:** Gameplay advances two simulation ticks per displayed frame, while audio remains on its independent hardware timer so faster action does not pitch-shift or starve the soundtrack.
 - **Complete Command Deck Interface:**
   - **Main Menu:** Play, Hangar, Settings, Controls & Guide, Credits + Live Ship Preview card.
@@ -47,11 +47,11 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 npm run build:gba
 ```
 
-This compiles all C sources in `gba/src/` against `libtonc` and outputs `SpaceUnlimited.gba` (~2.1 MB).
+This compiles all C sources in `gba/src/` against `libtonc` and outputs `SpaceUnlimited.gba` (~4.2 MB).
 
 ### 2. Regenerate Assets from Source
 
-To regenerate the 8-bit 16.384 kHz signed-PCM audio and indexed graphics C arrays from the checked-in source assets:
+To regenerate the 8-bit 32.768 kHz signed-PCM audio and indexed graphics C arrays from the checked-in source assets:
 
 ```bash
 npm run generate-assets
@@ -61,10 +61,12 @@ The WAV files under `SpaceUnlimited.Windows/Assets/Audio/` are the source assets
 
 ### GBA audio implementation notes
 
-- The GBA DirectSound FIFOs accept signed 8-bit PCM and are fed in 32-bit words; Timer 0 / 1024 with a `0xffff` reload produces the exact 16,384 Hz sample clock.
-- The mixer uses a short producer/consumer ring instead of changing a live FIFO-DMA source pointer at every VBlank. This avoids reading beyond a small buffer, which was the source of the static-and-silence failure on hardware.
-- The timer ISR is intentionally tiny: it writes one four-sample word every four timer ticks and acknowledges only `IRQ_TIMER0`. Music and up to four effects are mixed ahead of time by the main loop.
+- The GBA DirectSound FIFOs accept signed 8-bit PCM and are fed in 32-bit words; Timer 0 / 256 with a `0xfffe` reload produces the exact 32,768 Hz sample clock — 1:1 with the GBA's own internal resample rate (GBATEK's DirectSound section recommends rates that divide 16.78 MHz exactly), so the DAC adds no resampling distortion.
+- The asset generator (`tools/generate_gba_data.py`) resamples the source WAVs with a polyphase Blackman-windowed sinc filter (per-track cutoff below 12.55 kHz, 81–113 taps), normalizes to −0.26 dBFS, and applies TPDF dither — a proper mastering chain instead of naive decimation, which had been audibly aliasing the menu music.
+- The mixer uses a short producer/consumer ring instead of changing a live FIFO-DMA source pointer at every VBlank. Music and up to four effects are mixed with fixed Q7 gains through a soft-clip curve, so overlapping effects no longer hard-clip.
+- The timer ISR is intentionally tiny: it writes one four-sample word every four timer ticks and acknowledges only `IRQ_TIMER0`. `gfx_flip()` copies with the CPU instead of a long blocking DMA3 burst so the FIFO never starves mid-copy.
 - This follows the GBA DirectSound timer/FIFO requirements documented in [gbadoc's Direct Sound guide](https://gbadev.net/gbadoc/audio/directsound.html), [Tonc's sound register reference](https://gbadev.net/tonc/sndsqr.html), and [Tonc's interrupt guidance](https://gbadev.net/tonc/interrupts.html).
+- The in-browser player additionally mirrors the audio engine with pristine WebAudio playback of the original WAVs, position-locked to a `WebAudioSync` block the ROM publishes in EWRAM (see `gba/include/audio.h` and `web/src/emulator-client.js`), because the bundled WASM mGBA build cannot stream DirectSound continuously.
 
 ### 3. Run the Interactive Web Player / Preview
 

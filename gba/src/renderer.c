@@ -17,7 +17,15 @@ void gfx_flip(void) {
     VBlankIntrWait();
     u16* vram = (u16*)vid_page;
     const u16* src = (const u16*)s_back_buffer;
-    dma3_cpy(vram, src, (SCREEN_WIDTH * SCREEN_HEIGHT));
+    /* Copy the frame with the CPU, not with a single blocking DMA3 burst.
+     * A 38 KB DMA transfer halts the CPU for ~2+ ms while DirectSound FIFO A
+     * holds only ~16-32 samples (~0.5-1 ms at 32,768 Hz): the timer-driven
+     * audio IRQ could not feed the FIFO during the copy, so the output
+     * collapsed into a ~60 Hz crackle every frame.  GBATEK's DMA section
+     * explicitly warns that long DMA bursts starve the sound FIFO.  tonccpy
+     * copies word-wise from IWRAM so the audio interrupt can pre-empt it and
+     * keep the FIFO fed. */
+    tonccpy(vram, src, SCREEN_WIDTH * SCREEN_HEIGHT);
 
     // Flip the display page: toggle bit 4 of REG_DISPCNT so the frame we just
     // rendered becomes visible, then retarget vid_page at the other (now

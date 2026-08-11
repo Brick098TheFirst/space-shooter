@@ -26,7 +26,8 @@ const MIME_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".svg": "image/svg+xml",
-    ".json": "application/json"
+    ".json": "application/json",
+    ".wav": "audio/wav"
 };
 
 
