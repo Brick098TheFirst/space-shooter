@@ -3,8 +3,9 @@
 
 #include <tonc.h>
 
-/* Timer 0 / 1024 on GBA: 0xffff reload = exactly 16,384 Hz. */
-#define AUDIO_SAMPLE_RATE 16384
+/* DirectSound 18,157 Hz: exact match to 280,896 CPU cycles / 924 cycles = 304 samples/frame. */
+#define AUDIO_SAMPLE_RATE 18157
+#define AUDIO_SAMPLES_PER_FRAME 304
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

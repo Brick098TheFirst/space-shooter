@@ -8,25 +8,11 @@
 
 EWRAM_BSS GameState g_game;
 
-/* The gameplay frame splits into a static base (starfield background + HUD
- * cards) cached in gfx_static_layer, and a dynamic pass (entities + texts).
- * Rebuilt once per run. */
 static bool s_game_static_valid = false;
 
 #define FIXED_ONE 256
 #define TO_FIXED(n) ((n) * 256)
 #define FROM_FIXED(n) ((n) >> 8)
-
-static int int_sqrt(int val) {
-    if (val <= 0) return 0;
-    int x = val;
-    int y = (x + 1) / 2;
-    while (y < x) {
-        x = y;
-        y = (x + val / x) / 2;
-    }
-    return x;
-}
 
 static int get_diff_speed_mult(void) {
     switch (g_settings.difficulty) {
@@ -36,7 +22,7 @@ static int get_diff_speed_mult(void) {
     }
 }
 
-static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life) {
+IWRAM_CODE static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life) {
     for (int i = 0; i < MAX_PARTICLES; i++) {
         if (!g_game.particles[i].active) {
             g_game.particles[i].x = x;
@@ -52,7 +38,7 @@ static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life) {
     }
 }
 
-static void trigger_explosion(int x, int y) {
+IWRAM_CODE static void trigger_explosion(int x, int y) {
     for (int i = 0; i < MAX_EXPLOSIONS; i++) {
         if (!g_game.explosions[i].active) {
             g_game.explosions[i].x = x;
@@ -64,14 +50,14 @@ static void trigger_explosion(int x, int y) {
         }
     }
 
-    // Spawn sparks
-    for (int p = 0; p < 12; p++) {
-        int angle = (p * 256) / 12;
-        int spd = (rand() % 180) + 80;
+    // Spawn sparks (8 directions, fast bitwise math)
+    for (int p = 0; p < 8; p++) {
+        int angle = p * 32;
+        int spd = (rand() & 127) + 80;
         int vx = (lu_cos(angle * 256) * spd) >> 12;
         int vy = (lu_sin(angle * 256) * spd) >> 12;
-        u8 col = 128 + (rand() % 30);
-        spawn_particle(TO_FIXED(x), TO_FIXED(y), vx, vy, col, (rand() % 16) + 12);
+        u8 col = 128 + (rand() & 31);
+        spawn_particle(TO_FIXED(x), TO_FIXED(y), vx, vy, col, (rand() & 15) + 12);
     }
 
     if (g_settings.screen_shake) {
@@ -80,13 +66,13 @@ static void trigger_explosion(int x, int y) {
     audio_play_sfx(SFX_EXPLOSION);
 }
 
-static void emit_engine_particle(void) {
+IWRAM_CODE static void emit_engine_particle(void) {
     u8 col = gfx_get_trail_color(g_settings.trail_index);
-    int px = g_game.player.x + (rand() % 1024) - 512;
+    int px = g_game.player.x + (rand() & 1023) - 512;
     int py = g_game.player.y + TO_FIXED(8);
-    int pvx = (rand() % 256) - 128;
-    int pvy = (rand() % 200) + 200;
-    spawn_particle(px, py, pvx, pvy, col, (rand() % 8) + 6);
+    int pvx = (rand() & 255) - 128;
+    int pvy = (rand() & 127) + 200;
+    spawn_particle(px, py, pvx, pvy, col, (rand() & 7) + 6);
 }
 
 static void try_spawn_powerup(int x, int y, int chance_pct) {
@@ -331,16 +317,14 @@ void game_start(void) {
 
 #define GAME_SPEED_MULTIPLIER 2
 
-/* One simulation tick.  menu_update() polls the keypad once per displayed
- * frame; keeping that poll outside this function means the two ticks below
- * still see edge-triggered buttons such as dash and pause correctly. */
+/* One simulation tick. */
 static void game_update_tick(void) {
     starfield_update();
 
     if (g_game.shake_timer > 0) {
         g_game.shake_timer--;
-        g_game.shake_x = (rand() % 5) - 2;
-        g_game.shake_y = (rand() % 5) - 2;
+        g_game.shake_x = (rand() & 3) - (rand() & 3);
+        g_game.shake_y = (rand() & 3) - (rand() & 3);
     } else {
         g_game.shake_x = 0;
         g_game.shake_y = 0;
@@ -389,7 +373,7 @@ static void game_update_tick(void) {
     if (g_game.player.invulnerable_timer > 0) g_game.player.invulnerable_timer--;
     if (g_game.player.rapid_fire_timer > 0) g_game.player.rapid_fire_timer--;
 
-    // Input Handling (the menu layer polls once before the simulation ticks)
+    // Input Handling
     int mx = 0;
     int my = 0;
     if (key_is_down(KEY_LEFT))  mx -= 1;
@@ -412,11 +396,6 @@ static void game_update_tick(void) {
         for (int b = 0; b < 8; b++) emit_engine_particle();
     }
 
-    /* spd is already in fixed-point pixels-per-tick (TO_FIXED(1)+110 = 1.43 px
-     * per tick, TO_FIXED(3)+200 = 3.78 px per tick while dashing).  The old
-     * code divided by 256 a second time, so the ship crept ~1/256 px per tick
-     * and controls felt frozen.  Apply the speed directly; scale diagonals by
-     * 181/256 (~1/sqrt(2)) so diagonal travel is no faster than cardinal. */
     int spd = (g_game.player.dash_remaining > 0) ? TO_FIXED(3) + 200 : TO_FIXED(1) + 110;
     int dir_x = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_x : mx;
     int dir_y = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_y : my;
@@ -436,7 +415,7 @@ static void game_update_tick(void) {
     if (g_game.player.y > TO_FIXED(SCREEN_HEIGHT - 12)) g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 12);
 
     if (mx != 0 || my != 0 || g_game.player.dash_remaining > 0) {
-        if ((rand() % 2) == 0) emit_engine_particle();
+        if ((rand() & 1) == 0) emit_engine_particle();
     }
 
     // Fire weapon (A button)
@@ -492,12 +471,13 @@ static void game_update_tick(void) {
 
             g_game.drones[i].shoot_timer--;
             if (g_game.drones[i].y > TO_FIXED(20) && g_game.drones[i].shoot_timer <= 0) {
-                int dx = g_game.player.x - g_game.drones[i].x;
-                int dy = g_game.player.y - g_game.drones[i].y;
-                int dist = int_sqrt((dx >> 8)*(dx >> 8) + (dy >> 8)*(dy >> 8));
+                int dx = (g_game.player.x - g_game.drones[i].x) >> 8;
+                int dy = (g_game.player.y - g_game.drones[i].y) >> 8;
+                int dist_sq = dx*dx + dy*dy;
+                int dist = Sqrt(dist_sq);
                 if (dist > 5) {
-                    int bvx = ((dx / dist) * 170 * mult) >> 16;
-                    int bvy = ((dy / dist) * 170 * mult) >> 16;
+                    int bvx = (dx * 170 * mult) / (dist << 8);
+                    int bvy = (dy * 170 * mult) / (dist << 8);
                     add_enemy_bullet(g_game.drones[i].x, g_game.drones[i].y + TO_FIXED(6), bvx, bvy);
                 }
                 g_game.drones[i].shoot_timer = ((rand() % 60) + 70) * 256 / mult;

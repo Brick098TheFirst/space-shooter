@@ -3,33 +3,25 @@
 #include <string.h>
 
 /*
- * GBA DirectSound is an 8-bit signed PCM FIFO.  Earlier revisions fed it
- * from a Timer 0 IRQ.  At 16,384 Hz the interrupt dispatcher alone consumed
- * most of the CPU (the game crawled at ~8 fps, the audio ring starved and
- * music came out in bursts); at 1,024 Hz the FIFO still glitched because
- * refilling a 32-sample FIFO from an IRQ has zero timing margin.
+ * GBA DirectSound Engine (18,157 Hz Double-Buffered DirectSound via DMA 1)
  *
- * This revision uses the hardware the way it is meant to be used: Timer 0 at
- * 1,024 Hz directly triggers DMA 2 (16 bytes per trigger) to copy the next
- * 16 mixed samples from the ring into FIFO A.  The DMA fires at the exact
- * timer overflow — no interrupt latency, no FIFO underruns — and the
- * per-trigger cost is just a few cycles.  The timer IRQ still runs at
- * 1,024 Hz but only to advance the ring read pointer and re-arm the one-shot
- * DMA (mGBA's repeat-DMA mode stops transferring after a few seconds, so the
- * DMA is re-armed instead), keeping the dispatcher overhead at ~6% of the
- * CPU.  The ring keeps a 16-byte mirror of its head so a DMA window never
- * crosses the end of the buffer.
+ * DirectSound hardware playback operates at 18,157 Hz (exactly 304 samples
+ * per video frame: 280,896 CPU cycles / 924 cycles per sample = 304 samples).
+ *
+ * Timer 0 clocks DirectSound Channel A at 924-cycle intervals (reload 64,612).
+ * DMA 1 runs in DirectSound FIFO mode (DMA_AT_SPECIAL), automatically copying
+ * 16 bytes into REG_FIFO_A whenever the FIFO is half-empty (19 transfers / frame).
+ *
+ * Audio is double-buffered (2 x 304 = 608 bytes) in fast 32-bit IWRAM.
+ * On each VBlank interrupt, the buffer index toggles and DMA restarts seamlessly
+ * at buffer 0 after buffer 1 finishes.
+ *
+ * Real-time software mixing runs with zero software division for high performance.
  */
-#define AUDIO_RING_SAMPLES 2048u
-#define AUDIO_RING_MASK (AUDIO_RING_SAMPLES - 1u)
-#define AUDIO_RING_GUARD 16u
-#define AUDIO_TARGET_SAMPLES 512u
-#define AUDIO_SAMPLES_PER_IRQ 16u
-#define MAX_ACTIVE_SFX 4
 
-#if (AUDIO_RING_SAMPLES & AUDIO_RING_MASK) != 0
-#error "AUDIO_RING_SAMPLES must be a power of two"
-#endif
+#define AUDIO_SAMPLES_PER_FRAME 304
+#define AUDIO_DOUBLE_BUF_SIZE (AUDIO_SAMPLES_PER_FRAME * 2)
+#define MAX_ACTIVE_SFX 4
 
 typedef struct {
     const s8* data;
@@ -38,12 +30,9 @@ typedef struct {
     bool active;
 } SfxChannel;
 
-/* +guard: DMA windows that cross the end of the ring read the mirrored head.
- * The ring lives in IWRAM (.bss), which also makes the per-frame mix
- * faster than EWRAM. */
-static s8 s_audio_ring[AUDIO_RING_SAMPLES + AUDIO_RING_GUARD] __attribute__((aligned(4)));
-static volatile u32 s_read_pos = 0;
-static volatile u32 s_write_pos = 0;
+static s8 s_audio_buf[AUDIO_DOUBLE_BUF_SIZE] __attribute__((aligned(4)));
+static volatile u8 s_active_buf = 0;
+static s8* volatile s_mix_buf = &s_audio_buf[0];
 static bool s_audio_started = false;
 
 static BgmTrack s_current_bgm = BGM_NONE;
@@ -53,54 +42,22 @@ static u32 s_bgm_pos = 0;
 
 static SfxChannel s_sfx_channels[MAX_ACTIVE_SFX];
 
-static int audio_ring_level(u32 write_pos) {
-    return (int)((write_pos - s_read_pos) & AUDIO_RING_MASK);
-}
+IWRAM_CODE static void audio_vblank_isr(void) {
+    if (!s_audio_started) return;
 
-/* Mix one signed 8-bit sample.  Playback cursors advance even when a volume
- * slider is at zero, so muting does not pause or later replay an effect. */
-static s8 audio_mix_sample(void) {
-    int mixed = 0;
-    int music_vol = g_settings.music_volume;
-    int sfx_vol = g_settings.sfx_volume;
-
-    if (s_bgm_data && s_bgm_len > 0) {
-        int sample = s_bgm_data[s_bgm_pos];
-        mixed += (sample * music_vol) / 100;
-        s_bgm_pos++;
-        if (s_bgm_pos >= s_bgm_len) {
-            s_bgm_pos = 0;
-        }
+    if (s_active_buf == 1) {
+        // Buffer 1 completed: restart DMA at Buffer 0
+        REG_DMA1CNT = 0;
+        REG_DMA1SAD = (u32)&s_audio_buf[0];
+        REG_DMA1DAD = (u32)&REG_FIFO_A;
+        REG_DMA1CNT = DMA_ENABLE | DMA_REPEAT | DMA_32 | DMA_AT_SPECIAL | DMA_SRC_INC | DMA_DST_FIXED;
+        s_mix_buf = &s_audio_buf[AUDIO_SAMPLES_PER_FRAME];
+        s_active_buf = 0;
+    } else {
+        // Buffer 0 completed: DMA seamlessly continues reading Buffer 1
+        s_mix_buf = &s_audio_buf[0];
+        s_active_buf = 1;
     }
-
-    for (int ch = 0; ch < MAX_ACTIVE_SFX; ch++) {
-        if (s_sfx_channels[ch].active) {
-            int sample = s_sfx_channels[ch].data[s_sfx_channels[ch].position];
-            mixed += (sample * sfx_vol) / 100;
-            s_sfx_channels[ch].position++;
-            if (s_sfx_channels[ch].position >= s_sfx_channels[ch].length) {
-                s_sfx_channels[ch].active = false;
-            }
-        }
-    }
-
-    if (mixed > 127) mixed = 127;
-    if (mixed < -128) mixed = -128;
-    return (s8)mixed;
-}
-
-/* This runs from the Timer 0 IRQ at 1,024 Hz.  The DMA (triggered by the
- * same timer overflow, in hardware) copies the 16 samples at s_read_pos into
- * FIFO A; all this ISR has to do is advance the read pointer and repoint the
- * DMA source at the next window, so it stays tiny. */
-IWRAM_CODE static void audio_timer_isr(void) {
-    u32 read_pos = s_read_pos;
-    REG_DMA2SAD = (u32)&s_audio_ring[read_pos];
-    s_read_pos = (read_pos + AUDIO_SAMPLES_PER_IRQ) & AUDIO_RING_MASK;
-    /* Re-arm the one-shot DMA for the next timer overflow. */
-    REG_DMA2CNT = DMA_ENABLE | DMA_AT_SPECIAL | DMA_32 |
-                  DMA_SRC_INC | DMA_DST_FIXED | (AUDIO_SAMPLES_PER_IRQ / 4);
-    REG_IF = IRQ_TIMER0;
 }
 
 void audio_init(void) {
@@ -108,9 +65,9 @@ void audio_init(void) {
     s_bgm_data = NULL;
     s_bgm_len = 0;
     s_bgm_pos = 0;
-    s_read_pos = 0;
-    s_write_pos = 0;
     s_audio_started = false;
+    s_active_buf = 0;
+    s_mix_buf = &s_audio_buf[0];
 
     for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
         s_sfx_channels[i].data = NULL;
@@ -118,60 +75,48 @@ void audio_init(void) {
         s_sfx_channels[i].position = 0;
         s_sfx_channels[i].active = false;
     }
-    memset(s_audio_ring, 0, sizeof(s_audio_ring));
+    memset(s_audio_buf, 0, sizeof(s_audio_buf));
 
-    /* Stop a previous timer, then enable the sound master before touching
-     * the remaining sound registers (required by the hardware). */
+    // Turn off existing DMA and Timer
+    REG_DMA1CNT = 0;
     REG_TM0CNT = 0;
+
+    // Enable Sound Master
     REG_SOUNDCNT_X = SSTAT_ENABLE;
     REG_SOUNDCNT_L = 0;
 
-    /* DirectSound A to both speakers, 100% ratio, FIFO reset pulse. */
-    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL | SDS_ARESET;
-    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL;
-    for (int i = 0; i < 4; i++) {
-        REG_FIFO_A = 0;
-    }
+    // DirectSound A: 100% volume, Left & Right speakers, Timer 0, FIFO reset
+    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL | SDS_ARESET | SDS_ATMR0;
+    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL | SDS_ATMR0;
 
-    /* Timer 0 / 1024 with reload 0xFFF0 gives 1,024 Hz.  DMA 2 is triggered
-     * by this timer (special start condition) and copies 16 bytes per
-     * overflow into FIFO A: 1,024 x 16 = 16,384 samples/s.  The ISR just
-     * repoints the DMA source each overflow. */
-    REG_DMA2CNT = 0;
-    REG_TM0CNT_L = 0xFFF0;
-    REG_IF = IRQ_TIMER0;
-    irq_add(II_TIMER0, audio_timer_isr);
+    // Timer 0: 18,157 Hz (65536 - 924 = 64612 = 0xFC64)
+    REG_TM0CNT_L = 64612;
+
+    // Register VBlank audio buffer swap handler
+    irq_add(II_VBLANK, audio_vblank_isr);
 }
 
 void audio_start(void) {
     if (s_audio_started) return;
 
-    /* Prime the hardware FIFO before the first timer overflow. */
-    for (int i = 0; i < 4; i++) {
-        u32 word = 0;
-        for (u32 j = 0; j < 4; j++) {
-            u32 read_pos = s_read_pos;
-            s8 sample = 0;
-            if (read_pos != s_write_pos) {
-                sample = s_audio_ring[read_pos];
-                s_read_pos = (read_pos + 1u) & AUDIO_RING_MASK;
-            }
-            word |= ((u32)(u8)sample) << (j * 8u);
-        }
-        REG_FIFO_A = word;
-    }
+    // Initial mix for both buffers
+    s_mix_buf = &s_audio_buf[0];
+    audio_update();
+    s_mix_buf = &s_audio_buf[AUDIO_SAMPLES_PER_FRAME];
+    audio_update();
 
-    /* DMA 2: timer-0-triggered, 16 bytes per trigger from the ring to FIFO A.
-     * Deliberately one-shot (no REPEAT): mGBA's repeat-DMA stops transferring
-     * after a few seconds, while a one-shot DMA re-armed by the timer ISR is
-     * rock solid.  The ISR advances the source and re-arms it each overflow. */
-    REG_DMA2SAD = (u32)&s_audio_ring[0];
-    REG_DMA2DAD = (u32)&REG_FIFO_A;
-    REG_DMA2CNT = DMA_ENABLE | DMA_AT_SPECIAL | DMA_32 |
-                  DMA_SRC_INC | DMA_DST_FIXED | (AUDIO_SAMPLES_PER_IRQ / 4);
+    s_active_buf = 0;
+    s_mix_buf = &s_audio_buf[AUDIO_SAMPLES_PER_FRAME];
+
+    // Start DMA 1 in FIFO mode (Destination is REG_FIFO_A)
+    REG_DMA1SAD = (u32)&s_audio_buf[0];
+    REG_DMA1DAD = (u32)&REG_FIFO_A;
+    REG_DMA1CNT = DMA_ENABLE | DMA_REPEAT | DMA_32 | DMA_AT_SPECIAL | DMA_SRC_INC | DMA_DST_FIXED;
+
+    // Start Timer 0 (CPU frequency, no IRQ)
+    REG_TM0CNT_H = TM_FREQ_1 | TM_ENABLE;
 
     s_audio_started = true;
-    REG_TM0CNT_H = TM_FREQ_1024 | TM_IRQ | TM_ENABLE;
 }
 
 void audio_play_bgm(BgmTrack track) {
@@ -189,9 +134,6 @@ void audio_play_bgm(BgmTrack track) {
         s_bgm_data = NULL;
         s_bgm_len = 0;
     }
-
-    /* Do not let the tail of the previous track remain queued. */
-    s_read_pos = s_write_pos;
 }
 
 void audio_stop_bgm(void) {
@@ -199,7 +141,6 @@ void audio_stop_bgm(void) {
     s_bgm_data = NULL;
     s_bgm_len = 0;
     s_bgm_pos = 0;
-    s_read_pos = s_write_pos;
 }
 
 void audio_play_sfx(SfxId sfx) {
@@ -240,25 +181,67 @@ void audio_stop_all(void) {
     audio_stop_bgm();
     for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
         s_sfx_channels[i].active = false;
+        s_sfx_channels[i].data = NULL;
+        s_sfx_channels[i].length = 0;
+        s_sfx_channels[i].position = 0;
     }
 }
 
-void audio_update(void) {
-    u32 write_pos = s_write_pos;
-    bool wrapped = false;
-    while (audio_ring_level(write_pos) < (int)AUDIO_TARGET_SAMPLES) {
-        s_audio_ring[write_pos] = audio_mix_sample();
-        write_pos = (write_pos + 1u) & AUDIO_RING_MASK;
-        if (write_pos == 0) {
-            wrapped = true;
+IWRAM_CODE void audio_update(void) {
+    if (!s_audio_started) return;
+
+    s8* dst = s_mix_buf;
+    if (!dst) return;
+
+    const s8* bgm = s_bgm_data;
+    u32 bgm_len = s_bgm_len;
+    u32 bgm_pos = s_bgm_pos;
+
+    // Collect active SFX channels
+    int active_sfx[MAX_ACTIVE_SFX];
+    int active_sfx_count = 0;
+    for (int ch = 0; ch < MAX_ACTIVE_SFX; ch++) {
+        if (s_sfx_channels[ch].active && s_sfx_channels[ch].data && s_sfx_channels[ch].length > 0) {
+            active_sfx[active_sfx_count++] = ch;
         }
     }
-    if (wrapped) {
-        /* Keep the DMA's end-of-ring window valid: the first 16 samples are
-         * mirrored right after the ring head, so a DMA window that starts at
-         * the tail reads the current head instead of stale memory. */
-        memcpy(&s_audio_ring[AUDIO_RING_SAMPLES], &s_audio_ring[0], AUDIO_RING_GUARD);
+
+    if (!bgm && active_sfx_count == 0) {
+        memset(dst, 0, AUDIO_SAMPLES_PER_FRAME);
+        return;
     }
-    /* Publish only after each newly mixed sample is in the ring. */
-    s_write_pos = write_pos;
+
+    // Convert 0..100 volume scale to 0..256 fixed-point multiplier (0 division)
+    int music_scale = (g_settings.music_volume * 655) >> 8;
+    int sfx_scale = (g_settings.sfx_volume * 655) >> 8;
+
+    for (int i = 0; i < AUDIO_SAMPLES_PER_FRAME; i++) {
+        int mixed = 0;
+
+        if (bgm && bgm_len > 0) {
+            mixed += (bgm[bgm_pos] * music_scale) >> 8;
+            bgm_pos++;
+            if (bgm_pos >= bgm_len) {
+                bgm_pos = 0;
+            }
+        }
+
+        for (int j = 0; j < active_sfx_count; j++) {
+            int ch = active_sfx[j];
+            SfxChannel* sc = &s_sfx_channels[ch];
+            if (sc->position < sc->length) {
+                mixed += (sc->data[sc->position] * sfx_scale) >> 8;
+                sc->position++;
+            } else {
+                sc->active = false;
+            }
+        }
+
+        if (mixed > 127) mixed = 127;
+        else if (mixed < -128) mixed = -128;
+
+        dst[i] = (s8)mixed;
+    }
+
+    s_bgm_pos = bgm_pos;
 }
