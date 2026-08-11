@@ -8,9 +8,10 @@
 
 #define NUM_ACCENTS 9
 #define NUM_TRAILS 8
-#define NUM_RIGS 6
-#define NUM_LASERS 8
-#define NUM_UPGRADES 7
+#define NUM_RIGS 8
+#define NUM_LASERS 12
+#define NUM_UPGRADES 8
+#define UPG_MAX_LEVEL 5
 
 typedef enum {
     DIFF_CADET = 0,
@@ -19,22 +20,25 @@ typedef enum {
 } Difficulty;
 
 typedef enum {
-    WEAPON_TWIN      = 0,
-    WEAPON_SPREAD    = 1,
-    WEAPON_FOCUSED   = 2,
-    WEAPON_TRIPLE    = 3,
-    WEAPON_PLASMA    = 4,
-    WEAPON_QUANTUM   = 5
+    WEAPON_SINGLE    = 0, // starter: 1 weak bullet
+    WEAPON_TWIN      = 1,
+    WEAPON_SPREAD    = 2,
+    WEAPON_FOCUSED   = 3,
+    WEAPON_TRIPLE    = 4,
+    WEAPON_PLASMA    = 5,
+    WEAPON_QUANTUM   = 6,
+    WEAPON_NOVA      = 7  // final mega weapon
 } WeaponRig;
 
 typedef enum {
-    UPG_SHIELD    = 0,
-    UPG_HULL      = 1,
-    UPG_THRUSTERS = 2,
-    UPG_SCAVENGER = 3,
-    UPG_DAMAGE    = 4,
-    UPG_OVERDRIVE = 5,
-    UPG_COMBO     = 6
+    UPG_ENGINE      = 0, // ship move speed: 0.70x .. 2.00x
+    UPG_FIRE_RATE   = 1, // shoot interval: 2/sec .. 10/sec
+    UPG_DAMAGE      = 2, // bullet damage
+    UPG_SHIELD      = 3, // shield cap
+    UPG_HULL        = 4, // extra lives
+    UPG_DASH        = 5, // dash cooldown / invuln
+    UPG_SCAVENGER   = 6, // coin bonus + magnet
+    UPG_OVERDRIVE   = 7  // rapid & powerup duration
 } UpgradeType;
 
 typedef enum {

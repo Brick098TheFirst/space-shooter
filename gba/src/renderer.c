@@ -23,15 +23,32 @@ static bool s_laser_ready = false;
  * consistent without changing the global Mode 4 palette at runtime. */
 static const u8 s_rainbow_colors[7] = { 70, 50, 66, 62, 54, 58, 78 };
 
+/* 12 laser colours matching expanded crystal list */
+static const u8 s_laser_palette[NUM_LASERS] = {
+    21,  // 0 Ion Cyan - basic weak
+    24,  // 1 Solar Gold
+    28,  // 2 Nebula Violet
+    27,  // 3 Toxic Mint
+    26,  // 4 Crimson Fury
+    62,  // 5 Emerald Surge
+    116, // 6 Void Shadow
+    120, // 7 Rainbow (animated)
+    70,  // 8 Inferno Red
+    54,  // 9 Frost Blue
+    66,  //10 Photon Gold
+    78   //11 Omega Prism - final god laser
+};
+
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
     vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 
-    // Build the seven static laser variants. Index 7 is drawn as an animated
-    // multi-colour spectrum by gfx_draw_laser (the cached pink is a fallback).
-    const u8 laser_cols[NUM_LASERS] = { 21, 24, 28, 27, 26, 62, 116, 120 };
+    // Build laser variants. Rainbow (7) and Omega (11) are special animated.
+    const u8 laser_cols[NUM_LASERS] = {
+        21, 24, 28, 27, 26, 62, 116, 120, 70, 54, 66, 78
+    };
 
     for (int l = 0; l < NUM_LASERS; l++) {
         u8 col = laser_cols[l];
@@ -354,9 +371,8 @@ u8 gfx_get_trail_color(int trail_idx) {
 }
 
 u8 gfx_get_laser_color(int laser_idx) {
-    const u8 cols[NUM_LASERS] = { 21, 24, 28, 27, 26, 62, 116, 120 };
     if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
-    return cols[laser_idx];
+    return s_laser_palette[laser_idx];
 }
 
 const char* gfx_get_accent_name(int accent_idx) {
@@ -419,31 +435,35 @@ const char* gfx_get_trail_desc(int trail_idx) {
 
 const char* gfx_get_weapon_name(WeaponRig rig) {
     switch (rig) {
+        case WEAPON_SINGLE:  return "Single Blaster";
         case WEAPON_TWIN:    return "Twin Cannons";
         case WEAPON_SPREAD:  return "Spread Cannon";
         case WEAPON_FOCUSED: return "Focused Beam";
         case WEAPON_TRIPLE:  return "Triple Blaster";
         case WEAPON_PLASMA:  return "Plasma Flak";
         case WEAPON_QUANTUM: return "Quantum Core";
+        case WEAPON_NOVA:    return "Nova Annihilator";
         default:             return "Blaster";
     }
 }
 
 const char* gfx_get_weapon_desc(WeaponRig rig) {
     switch (rig) {
+        case WEAPON_SINGLE:  return "Weak solo - 1 rock";
         case WEAPON_TWIN:    return "Dual balanced shot";
         case WEAPON_SPREAD:  return "3-way broad salvo";
         case WEAPON_FOCUSED: return "Heavy piercing beam";
         case WEAPON_TRIPLE:  return "Tri-barrel barrage";
         case WEAPON_PLASMA:  return "Twin explosive flak";
-        case WEAPON_QUANTUM: return "High-energy annihilator";
+        case WEAPON_QUANTUM: return "High-energy drill";
+        case WEAPON_NOVA:    return "5x god piercing!";
         default:             return "Main cannons";
     }
 }
 
 const char* gfx_get_laser_name(int laser_idx) {
     switch (laser_idx) {
-        case 0: return "Ion Cyan";
+        case 0: return "Ion Basic";
         case 1: return "Solar Gold";
         case 2: return "Nebula Violet";
         case 3: return "Toxic Mint";
@@ -451,20 +471,28 @@ const char* gfx_get_laser_name(int laser_idx) {
         case 5: return "Emerald Surge";
         case 6: return "Void Shadow";
         case 7: return "Rainbow Laser";
+        case 8: return "Inferno Red";
+        case 9: return "Frost Blue";
+        case 10: return "Photon Gold";
+        case 11: return "Omega Prism";
         default: return "Beam Crystal";
     }
 }
 
 const char* gfx_get_laser_desc(int laser_idx) {
     switch (laser_idx) {
-        case 0: return "Standard blue beam";
-        case 1: return "Amber photon laser";
-        case 2: return "Harmonic purple bolt";
-        case 3: return "Bio-toxin emerald glow";
-        case 4: return "Thermal overcharge pulse";
-        case 5: return "Gamma radiation green";
-        case 6: return "Dark matter particle";
-        case 7: return "Animated spectrum beam";
+        case 0: return "Starter - weak 1dmg";
+        case 1: return "Amber photon +1";
+        case 2: return "Purple bolt +1";
+        case 3: return "Toxin glow +2";
+        case 4: return "Thermal over +2";
+        case 5: return "Gamma green +3";
+        case 6: return "Dark matter +3";
+        case 7: return "Spectrum + pierce";
+        case 8: return "Inferno heat +2";
+        case 9: return "Frost bite +3";
+        case 10: return "Photon burst +4";
+        case 11: return "GOD! Pierce+5dmg";
         default: return "Laser wavelength";
     }
 }
