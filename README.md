@@ -1,94 +1,100 @@
 # Space Unlimited: Recharged 🚀
 
-A native **C# / .NET 8 Windows** remake of the original Scratch space shooter.
-The Scratch project is preserved as `spaceshooter.sb3`; the new game is a fresh,
-controller-ready implementation rather than an automatic 1:1 conversion.
+A native **Game Boy Advance (GBA)** and **C# / .NET 8 Windows** remake of the original Scratch space shooter.
+The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for both modern platforms and authentic retro Game Boy Advance hardware.
 
-## What changed
+---
 
-- Completely new command-deck menu, hangar, settings, pause and game-over screens
-- Native 1280×720, 16:9 renderer with correct letterboxing at every window size
-- Measured ship, laser, shield and asteroid sizes—no oversized converted sprites
-- Keyboard, mouse and Xbox-compatible XInput controller support
-- The original Scratch ship silhouette, five paint colors, four engine trails and three weapon rigs
-- Escalating waves, asteroid splitting, enemy drones and aimed enemy fire
-- Dash with cooldown and invulnerability window
-- Shield, rapid-fire and repair pickups
-- Timed score combo and persistent local high score
-- Music/effects volume, difficulty, screen-shake and fullscreen settings
-- Original starfield, classic ship, laser, asteroid, shield, explosion, sound and
-  music assets reused selectively from the `.sb3`
+## 🕹️ Game Boy Advance (GBA) Version
 
-## Controls
+The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly to a `.gba` ROM playable on real hardware (flashcarts, EverDrive, EZ-Flash), handheld emulators (Miyoo Mini, Anbernic, Steam Deck), standalone emulators (mGBA, VisualBoyAdvance, Delta), and via the included WebAssembly browser player.
 
-| Action | Keyboard / mouse | Xbox-compatible controller |
-|---|---|---|
-| Move | `WASD` or arrow keys | Left stick or D-pad |
-| Fire | `Space`, `Z`, or left mouse | `A` or right trigger |
-| Dash | `Shift` or `X` | `X` or right bumper |
-| Pause | `Esc` or `P` | Menu / Start |
-| Menu select | `Enter` / click | `A` |
-| Menu back | `Esc` / Backspace | `B` |
+### GBA Features
 
-## Run from Visual Studio
+- **Native Mode 4 Graphics Engine:** 240×160 60 FPS double-buffered page-flipped renderer with zero screen tearing and a custom 256-color palette.
+- **16 kHz DirectSound Audio Engine:** High-quality dual-channel DMA streaming for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
+- **Complete Command Deck Interface:**
+  - **Main Menu:** Play, Hangar, Settings, Controls & Guide, Credits + Live Ship Preview card.
+  - **Hangar:** 5 Ship Paint Accents (Solar Orange, Ion Cyan, Nova Violet, Plasma Mint, Pulsar Gold), 4 Engine Trails (Ember, Ion, Nova, Aurora), and 3 Weapon Rigs (Spread Cannons, Twin Cannons, Focused Beam).
+  - **Settings:** Difficulty modes (Cadet, Pilot, Ace), Music Volume, SFX Volume, Screen Shake toggle, and High Score reset.
+  - **Controls & Guide Screen:** Full button diagram and pickup guide.
+  - **In-Game Pause:** Frosted glass overlay with Resume, Restart, and Main Menu options.
+  - **Game Over Screen:** Final score, best record indicator, waves cleared, and quick restart.
+- **SRAM Save Persistence:** Settings and high scores persist to cartridge backup memory (`0x0E000000`).
+- **Arcade Gameplay:** Asteroid splitting, sinusoidal enemy drones with aimed plasma shots, powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×8).
+- **Dash Mechanic:** High-speed evasion burst with invulnerability window, engine trail particle fountain, and recharge meter.
 
-Requirements: Windows 10/11 and Visual Studio 2022 with the **.NET desktop
-development** workload (or the .NET 8 SDK).
+### GBA Controls
+
+| Action | GBA Button | Keyboard (Web Player) | Xbox / USB Gamepad |
+|---|---|---|---|
+| Move Ship | **D-Pad** | `WASD` or Arrow keys | Left Stick or D-Pad |
+| Fire Weapon | **A** | `Space`, `Z`, or `J` | `A` or `Right Trigger` |
+| Dash (Invincible) | **B** / **R** / **L** | `Shift`, `X`, or `K` | `X`, `B`, or `Right Bumper` |
+| Pause / Menu | **START** | `Enter` or `P` | `Start` / Menu |
+| Menu Select | **A** | `Space` or `Enter` | `A` |
+| Menu Back / Cancel | **B** | `Escape` or `Backspace` | `B` |
+| Options / Reset | **SELECT** | `Backspace` or `Tab` | `Back` / View |
+
+---
+
+## 🛠️ Building & Running the GBA Version
+
+### 1. Build the GBA ROM (`SpaceUnlimited.gba`)
+
+```bash
+npm run build:gba
+```
+
+This compiles all C sources in `gba/src/` against `libtonc` and outputs `SpaceUnlimited.gba` (~2.1 MB).
+
+### 2. Regenerate Assets from Source
+
+To regenerate the 8-bit 16 kHz audio and indexed graphics C arrays from `SpaceUnlimited.Windows/Assets/`:
+
+```bash
+npm run generate-assets
+```
+
+### 3. Run the Interactive Web Player / Preview
+
+To launch the web-based mGBA player with live controller and keyboard support on port 3000:
+
+```bash
+npm start
+```
+
+Navigate to `http://localhost:3000` to play in browser or download the `.gba` ROM.
+
+---
+
+## 🪟 Windows (.NET 8) Version
+
+### Run from Visual Studio
 
 1. Open `SpaceUnlimited.sln`.
 2. Select `SpaceUnlimited.Windows` as the startup project.
 3. Press **F5**.
 
-No NuGet packages or game engine downloads are required.
-
-## Make a portable Windows build
-
-From PowerShell at the repository root:
+### Make a portable Windows publish
 
 ```powershell
 .\build-windows.ps1
 ```
 
-The self-contained x64 build is written to:
+The output executable is written to `release\SpaceUnlimited-win-x64\SpaceUnlimited.exe`.
 
-```text
-release\SpaceUnlimited-win-x64\SpaceUnlimited.exe
-```
+---
 
-Keep its generated `Assets` directory next to the executable. The self-contained
-publish does not require players to install .NET.
+## 📁 Repository Layout
 
-For a smaller framework-dependent build:
-
-```powershell
-dotnet publish .\SpaceUnlimited.Windows -c Release -r win-x64 --self-contained false
-```
-
-## Display proportions
-
-Gameplay uses a fixed 1280×720 logical canvas. It is scaled uniformly and
-letterboxed instead of stretched. Source art keeps its aspect ratio, while fixed
-logical dimensions keep collision sizes and visual sizes aligned. See
-`SpaceUnlimited.Windows/Assets/README.md` for the exact asset-size policy.
-Validate the selected source files and logical-size policy with:
-
-```bash
-python3 tools/validate-assets.py
-```
-
-## Save data
-
-Settings and high score are saved to:
-
-```text
-%LOCALAPPDATA%\SpaceUnlimitedRecharged\settings.json
-```
-
-## Repository layout
-
-| Path | Purpose |
+| Path | Description |
 |---|---|
-| `SpaceUnlimited.Windows/` | Native C# WinForms game and selected assets |
+| `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
+| `gba/` | GBA C source code and headers (`src/`, `include/`) |
+| `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |
+| `web/` | Web emulator player UI, styling, and WebAssembly mGBA assets |
+| `server.js` | Web server for live interactive preview and ROM downloads |
+| `SpaceUnlimited.Windows/` | Windows C# / .NET 8 WinForms game |
 | `SpaceUnlimited.sln` | Visual Studio solution |
-| `build-windows.ps1` | Portable Windows x64 publish script |
-| `spaceshooter.sb3` | Preserved original Scratch 3 project |
+| `spaceshooter.sb3` | Preserved original Scratch 3 project file |
