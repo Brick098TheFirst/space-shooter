@@ -134,11 +134,11 @@ os.makedirs('gba/src', exist_ok=True)
 
 # 1. Process Audio
 audio_dir = 'SpaceUnlimited.Windows/Assets/Audio'
-menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 16384)
-game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 16384)
-laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 16384)
-explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 16384)
-pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 16384)
+menu_snd = resample_wav(os.path.join(audio_dir, 'menu.wav'), 18157)
+game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 18157)
+laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 18157)
+explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 18157)
+pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 18157)
 
 # Normalize the tracks as a group: the loudest source (full-scale) maps to
 # 0.85 so the music keeps headroom when the mixer sums it with SFX, while the
@@ -162,8 +162,9 @@ with open('gba/include/audio_data.h', 'w') as f:
 
 #include <tonc.h>
 
-/* Timer 0 / 1024 on GBA: 0xffff reload = exactly 16,384 Hz. */
-#define AUDIO_SAMPLE_RATE 16384
+/* DirectSound 18,157 Hz: exact match to 280,896 CPU cycles / 924 cycles = 304 samples/frame. */
+#define AUDIO_SAMPLE_RATE 18157
+#define AUDIO_SAMPLES_PER_FRAME 304
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

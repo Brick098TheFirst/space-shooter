@@ -4,17 +4,9 @@
 EWRAM_BSS static u8 s_back_buffer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
 EWRAM_BSS u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
 
-/* Most of the screen (menus, HUD, starfield base) is identical from frame to
- * frame, and every pixel costs ~20-40 cycles to write on this target.  The
- * screens are therefore split into a static layer, rendered once per screen
- * change, and a small dynamic pass per frame.  gfx_apply_static() blits the
- * cached layer into the back buffer with a single DMA transfer before the
- * dynamic sprites/text are drawn.  This is what keeps a full 60 FPS while
- * the audio ring stays fed. */
 static u8* s_rt = s_back_buffer;
 
 void gfx_set_target(u8* buf) {
-    /* NULL selects the normal frame back buffer again. */
     s_rt = buf ? buf : s_back_buffer;
 }
 
@@ -24,9 +16,6 @@ void gfx_apply_static(void) {
 
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
-    // vid_page is the VRAM page we render the completed back-buffer into.
-    // Start with the page bit clear (displaying MEM_VRAM / 0x06000000), so we
-    // draw into MEM_VRAM_BACK (0x0600A000) as the off-screen page.
     vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
@@ -38,10 +27,6 @@ void gfx_flip(void) {
     const u16* src = (const u16*)s_back_buffer;
     dma3_cpy(vram, src, (SCREEN_WIDTH * SCREEN_HEIGHT));
 
-    // Flip the display page: toggle bit 4 of REG_DISPCNT so the frame we just
-    // rendered becomes visible, then retarget vid_page at the other (now
-    // off-screen) page for the next frame. Without this the display always
-    // shows page 0 while we keep writing to page 1 -> black screen.
     REG_DISPCNT ^= DCNT_PAGE;
     vid_page = (COLOR*)((REG_DISPCNT & DCNT_PAGE) ? MEM_VRAM : MEM_VRAM_BACK);
 }
@@ -65,8 +50,10 @@ IWRAM_CODE void gfx_fill_rect(int x, int y, int w, int h, u8 color) {
     int span = x1 - x0;
     if (span <= 0) return;
     
+    u8* dst = &s_rt[y0 * SCREEN_WIDTH + x0];
     for (int py = y0; py < y1; py++) {
-        memset(&s_rt[py * SCREEN_WIDTH + x0], color, span);
+        memset(dst, color, span);
+        dst += SCREEN_WIDTH;
     }
 }
 
@@ -92,33 +79,54 @@ IWRAM_CODE void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
     int y0 = y < 0 ? 0 : y;
     int x1 = x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
     int y1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
-    
+    if (x0 >= x1 || y0 >= y1) return;
+
+    int span_x = x1 - x0;
+    int src_skip = w - span_x;
+    const u8* src = &data[(y0 - y) * w + (x0 - x)];
+    u8* dst = &s_rt[y0 * SCREEN_WIDTH + x0];
+    int dst_skip = SCREEN_WIDTH - span_x;
+
     for (int py = y0; py < y1; py++) {
-        int sy = py - y;
-        const u8* src_row = &data[sy * w];
-        u8* dst_row = &s_rt[py * SCREEN_WIDTH];
-        for (int px = x0; px < x1; px++) {
-            int sx = px - x;
-            u8 pix = src_row[sx];
+        int count = span_x;
+        while (count--) {
+            u8 pix = *src++;
             if (pix != 0) {
-                dst_row[px] = pix;
+                *dst = pix;
             }
+            dst++;
         }
+        src += src_skip;
+        dst += dst_skip;
     }
 }
 
 IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
     if (c < 32 || c > 127) c = '?';
+    if ((unsigned)x <= SCREEN_WIDTH - 5 && (unsigned)y <= SCREEN_HEIGHT - 7) {
+        const u8* glyph = font_5x7[c - 32];
+        u8* dst = &s_rt[y * SCREEN_WIDTH + x];
+        for (int r = 0; r < 7; r++) {
+            u8 row = glyph[r];
+            if (row & 0x10) dst[0] = color;
+            if (row & 0x08) dst[1] = color;
+            if (row & 0x04) dst[2] = color;
+            if (row & 0x02) dst[3] = color;
+            if (row & 0x01) dst[4] = color;
+            dst += SCREEN_WIDTH;
+        }
+        return;
+    }
+    if (x < -5 || x >= SCREEN_WIDTH || y < -7 || y >= SCREEN_HEIGHT) return;
     const u8* glyph = font_5x7[c - 32];
     for (int r = 0; r < 7; r++) {
         int py = y + r;
         if ((unsigned)py >= SCREEN_HEIGHT) continue;
         u8 row = glyph[r];
-        u8* dst = &s_rt[py * SCREEN_WIDTH];
         for (int col = 0; col < 5; col++) {
             int px = x + col;
             if ((unsigned)px < SCREEN_WIDTH && (row & (1 << (4 - col)))) {
-                dst[px] = color;
+                s_rt[py * SCREEN_WIDTH + px] = color;
             }
         }
     }
