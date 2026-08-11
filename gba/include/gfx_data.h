@@ -16,7 +16,7 @@
 
 extern const u16 master_palette[256];
 
-extern const u8 spr_ship[5][20 * 16];
+extern const u8 spr_ship[9][20 * 16];
 extern const u8 spr_ast_large[24 * 24];
 extern const u8 spr_ast_med_a[16 * 16];
 extern const u8 spr_ast_med_b[16 * 16];

@@ -9,9 +9,14 @@
 static GameScreen s_current_screen = SCREEN_MAIN_MENU;
 static int s_menu_selected = 0;
 static int s_anim_frame = 0;
-static char s_detail_buf[128];
+
+// Shop state
+static int s_shop_category = 0; // 0=PAINTS, 1=TRAILS, 2=WEAPONS, 3=LASERS, 4=TECH
+static int s_shop_selected[5] = { 0, 0, 0, 0, 0 };
+static int s_shop_scroll[5]   = { 0, 0, 0, 0, 0 };
+
 static int s_shop_msg_timer = 0;
-static char s_shop_msg[32] = {0};
+static char s_shop_msg[36] = {0};
 static u8 s_shop_msg_col = PAL_TEXT_GOLD;
 
 static bool s_static_valid = false;
@@ -59,6 +64,32 @@ static void shop_set_msg(const char* msg, u8 col) {
     s_shop_msg_timer = 90; // 1.5s
 }
 
+static int shop_get_category_count(int cat) {
+    switch (cat) {
+        case 0: return NUM_ACCENTS;
+        case 1: return NUM_TRAILS;
+        case 2: return NUM_RIGS;
+        case 3: return NUM_LASERS;
+        case 4: return NUM_UPGRADES;
+        default: return 0;
+    }
+}
+
+static void format_price(char* dst, int price) {
+    if (price >= 1000000) {
+        siprintf(dst, "%dM", price / 1000000);
+    } else if (price >= 100000) {
+        siprintf(dst, "%dk", price / 1000);
+    } else if (price >= 10000) {
+        siprintf(dst, "%dk", price / 1000);
+    } else if (price >= 1000) {
+        if (price % 1000 == 0) siprintf(dst, "%dk", price / 1000);
+        else siprintf(dst, "%d.%dk", price / 1000, (price % 1000) / 100);
+    } else {
+        siprintf(dst, "%dc", price);
+    }
+}
+
 static void update_main_menu(void) {
     const int count = 5;
     if (key_hit(KEY_UP)) {
@@ -89,148 +120,162 @@ static void update_main_menu(void) {
     }
 }
 
-// Shop replaces Hangar — buy cosmetics with coins earned in game
+// ──────────────────────────────────────────────────────────────────────────
+// HANGAR / SHOP UPDATE
+// ──────────────────────────────────────────────────────────────────────────
 static void update_hangar(void) {
-    const int count = 6; // Paint, Trail, Rig, Laser, Launch, Back
     if (s_shop_msg_timer > 0) s_shop_msg_timer--;
+
+    int cat = s_shop_category;
+    int count = shop_get_category_count(cat);
+
+    // Switch Category Tabs via L/R triggers OR Left/Right
+    if (key_hit(KEY_L)) {
+        s_shop_category = (s_shop_category + 4) % 5;
+        menu_static_invalidate();
+        return;
+    }
+    if (key_hit(KEY_R)) {
+        s_shop_category = (s_shop_category + 1) % 5;
+        menu_static_invalidate();
+        return;
+    }
+    if (key_hit(KEY_LEFT)) {
+        s_shop_category = (s_shop_category + 4) % 5;
+        menu_static_invalidate();
+        return;
+    }
+    if (key_hit(KEY_RIGHT)) {
+        s_shop_category = (s_shop_category + 1) % 5;
+        menu_static_invalidate();
+        return;
+    }
+
+    // Browse items within current category
     if (key_hit(KEY_UP)) {
-        s_menu_selected = (s_menu_selected + count - 1) % count;
+        s_shop_selected[cat] = (s_shop_selected[cat] + count - 1) % count;
+        // Keep in view (5 visible)
+        int sel = s_shop_selected[cat];
+        if (sel < s_shop_scroll[cat]) s_shop_scroll[cat] = sel;
+        else if (sel >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = sel - 4;
+        menu_static_invalidate();
     }
     if (key_hit(KEY_DOWN)) {
-        s_menu_selected = (s_menu_selected + 1) % count;
+        s_shop_selected[cat] = (s_shop_selected[cat] + 1) % count;
+        int sel = s_shop_selected[cat];
+        if (sel < s_shop_scroll[cat]) s_shop_scroll[cat] = sel;
+        else if (sel >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = sel - 4;
+        menu_static_invalidate();
     }
 
-    int delta = 0;
-    if (key_hit(KEY_LEFT))  delta = -1;
-    if (key_hit(KEY_RIGHT)) delta = 1;
-
-    if (delta != 0) {
-        switch (s_menu_selected) {
-            case 0: // Paint
-                g_settings.accent_index = (g_settings.accent_index + delta + NUM_ACCENTS) % NUM_ACCENTS;
-                menu_static_invalidate();
-                break;
-            case 1: // Trail
-                g_settings.trail_index = (g_settings.trail_index + delta + NUM_TRAILS) % NUM_TRAILS;
-                menu_static_invalidate();
-                break;
-            case 2: // Rig
-                g_settings.weapon_rig = (WeaponRig)((g_settings.weapon_rig + delta + NUM_RIGS) % NUM_RIGS);
-                menu_static_invalidate();
-                break;
-            case 3: // Laser colour
-                g_settings.laser_index = (g_settings.laser_index + delta + NUM_LASERS) % NUM_LASERS;
-                menu_static_invalidate();
-                break;
-            default: break;
-        }
-    }
-
-    if (key_hit(KEY_A) || key_hit(KEY_START)) {
-        bool consumed = false;
-        switch (s_menu_selected) {
-            case 0: { // Paint buy/equip
-                int idx = g_settings.accent_index;
-                if (shop_is_accent_owned(idx)) {
-                    shop_equip_accent(idx);
-                    shop_set_msg("EQUIPPED", PAL_TEXT_GREEN);
+    // Action (A button): Buy or Equip
+    if (key_hit(KEY_A)) {
+        int sel = s_shop_selected[cat];
+        switch (cat) {
+            case 0: { // Paints
+                if (shop_is_accent_owned(sel)) {
+                    shop_equip_accent(sel);
+                    shop_set_msg("EQUIPPED PAINT!", PAL_TEXT_GREEN);
                 } else {
-                    if (shop_try_purchase_accent(idx)) {
-                        shop_set_msg("BOUGHT!", PAL_TEXT_GOLD);
+                    if (shop_try_purchase_accent(sel)) {
+                        shop_set_msg("PURCHASED PAINT!", PAL_TEXT_GOLD);
                         audio_play_sfx(SFX_PICKUP);
                     } else {
-                        char tmp[24];
-                        siprintf(tmp, "NEED %dc", shop_get_accent_price(idx));
+                        char tmp[32];
+                        char pbuf[16];
+                        format_price(pbuf, shop_get_accent_price(sel));
+                        siprintf(tmp, "NEED %s COINS!", pbuf);
                         shop_set_msg(tmp, PAL_TEXT_RED);
                     }
                 }
-                consumed = true;
                 break;
             }
-            case 1: { // Trail
-                int idx = g_settings.trail_index;
-                if (shop_is_trail_owned(idx)) {
-                    shop_equip_trail(idx);
-                    shop_set_msg("EQUIPPED", PAL_TEXT_GREEN);
+            case 1: { // Trails
+                if (shop_is_trail_owned(sel)) {
+                    shop_equip_trail(sel);
+                    shop_set_msg("EQUIPPED TRAIL!", PAL_TEXT_GREEN);
                 } else {
-                    if (shop_try_purchase_trail(idx)) {
-                        shop_set_msg("BOUGHT!", PAL_TEXT_GOLD);
+                    if (shop_try_purchase_trail(sel)) {
+                        shop_set_msg("PURCHASED TRAIL!", PAL_TEXT_GOLD);
                         audio_play_sfx(SFX_PICKUP);
                     } else {
-                        char tmp[24];
-                        siprintf(tmp, "NEED %dc", shop_get_trail_price(idx));
+                        char tmp[32];
+                        char pbuf[16];
+                        format_price(pbuf, shop_get_trail_price(sel));
+                        siprintf(tmp, "NEED %s COINS!", pbuf);
                         shop_set_msg(tmp, PAL_TEXT_RED);
                     }
                 }
-                consumed = true;
                 break;
             }
-            case 2: { // Rig
-                WeaponRig rig = g_settings.weapon_rig;
+            case 2: { // Weapon Rigs
+                WeaponRig rig = (WeaponRig)sel;
                 if (shop_is_rig_owned(rig)) {
                     shop_equip_rig(rig);
-                    shop_set_msg("EQUIPPED", PAL_TEXT_GREEN);
+                    shop_set_msg("EQUIPPED WEAPON!", PAL_TEXT_GREEN);
                 } else {
                     if (shop_try_purchase_rig(rig)) {
-                        shop_set_msg("BOUGHT!", PAL_TEXT_GOLD);
+                        shop_set_msg("PURCHASED WEAPON!", PAL_TEXT_GOLD);
                         audio_play_sfx(SFX_PICKUP);
                     } else {
-                        char tmp[24];
-                        siprintf(tmp, "NEED %dc", shop_get_rig_price(rig));
+                        char tmp[32];
+                        char pbuf[16];
+                        format_price(pbuf, shop_get_rig_price(rig));
+                        siprintf(tmp, "NEED %s COINS!", pbuf);
                         shop_set_msg(tmp, PAL_TEXT_RED);
                     }
                 }
-                consumed = true;
                 break;
             }
-            case 3: { // Laser
-                int idx = g_settings.laser_index;
-                if (shop_is_laser_owned(idx)) {
-                    shop_equip_laser(idx);
-                    shop_set_msg("EQUIPPED", PAL_TEXT_GREEN);
+            case 3: { // Laser Crystals
+                if (shop_is_laser_owned(sel)) {
+                    shop_equip_laser(sel);
+                    shop_set_msg("EQUIPPED LASER!", PAL_TEXT_GREEN);
                 } else {
-                    if (shop_try_purchase_laser(idx)) {
-                        shop_set_msg("BOUGHT!", PAL_TEXT_GOLD);
+                    if (shop_try_purchase_laser(sel)) {
+                        shop_set_msg("PURCHASED LASER!", PAL_TEXT_GOLD);
                         audio_play_sfx(SFX_PICKUP);
                     } else {
-                        char tmp[24];
-                        siprintf(tmp, "NEED %dc", shop_get_laser_price(idx));
+                        char tmp[32];
+                        char pbuf[16];
+                        format_price(pbuf, shop_get_laser_price(sel));
+                        siprintf(tmp, "NEED %s COINS!", pbuf);
                         shop_set_msg(tmp, PAL_TEXT_RED);
                     }
                 }
-                consumed = true;
                 break;
             }
-            case 4: { // Launch Run
-                // Ensure we don't launch with a locked cosmetic equipped for free
-                if (!shop_is_accent_owned(g_settings.accent_index)) g_settings.accent_index = 1;
-                if (!shop_is_trail_owned(g_settings.trail_index)) g_settings.trail_index = 1;
-                if (!shop_is_rig_owned(g_settings.weapon_rig)) g_settings.weapon_rig = WEAPON_TWIN;
-                if (!shop_is_laser_owned(g_settings.laser_index)) g_settings.laser_index = 0;
-                save_write();
-                game_start();
-                s_current_screen = SCREEN_PLAYING;
-                consumed = true;
-                break;
-            }
-            case 5: { // Back
-                if (!shop_is_accent_owned(g_settings.accent_index)) g_settings.accent_index = 1;
-                if (!shop_is_trail_owned(g_settings.trail_index)) g_settings.trail_index = 1;
-                if (!shop_is_rig_owned(g_settings.weapon_rig)) g_settings.weapon_rig = WEAPON_TWIN;
-                if (!shop_is_laser_owned(g_settings.laser_index)) g_settings.laser_index = 0;
-                menu_open(SCREEN_MAIN_MENU);
-                consumed = true;
+            case 4: { // Tech Upgrades
+                UpgradeType upg = (UpgradeType)sel;
+                int current_lv = shop_get_upgrade_level(upg);
+                if (current_lv >= 3) {
+                    shop_set_msg("MAX LEVEL REACHED!", PAL_TEXT_GOLD);
+                } else {
+                    if (shop_try_purchase_upgrade(upg)) {
+                        shop_set_msg("TECH UPGRADED!", PAL_TEXT_GOLD);
+                        audio_play_sfx(SFX_PICKUP);
+                    } else {
+                        char tmp[32];
+                        char pbuf[16];
+                        format_price(pbuf, shop_get_upgrade_price(upg, current_lv));
+                        siprintf(tmp, "NEED %s COINS!", pbuf);
+                        shop_set_msg(tmp, PAL_TEXT_RED);
+                    }
+                }
                 break;
             }
         }
-        if (consumed) menu_static_invalidate();
+        menu_static_invalidate();
+    }
+
+    if (key_hit(KEY_START)) {
+        save_write();
+        game_start();
+        s_current_screen = SCREEN_PLAYING;
     }
 
     if (key_hit(KEY_B)) {
-        if (!shop_is_accent_owned(g_settings.accent_index)) g_settings.accent_index = 1;
-        if (!shop_is_trail_owned(g_settings.trail_index)) g_settings.trail_index = 1;
-        if (!shop_is_rig_owned(g_settings.weapon_rig)) g_settings.weapon_rig = WEAPON_TWIN;
-        if (!shop_is_laser_owned(g_settings.laser_index)) g_settings.laser_index = 0;
+        save_write();
         menu_open(SCREEN_MAIN_MENU);
     }
 }
@@ -288,7 +333,6 @@ static void update_settings(void) {
             menu_static_invalidate();
         } else if (s_menu_selected == 4) {
             g_settings.high_score = 0;
-            // keep coins
             save_write();
             menu_static_invalidate();
         } else if (s_menu_selected == 5) {
@@ -333,7 +377,7 @@ static void update_paused(void) {
                 s_current_screen = SCREEN_PLAYING;
                 break;
             case 1: // Restart
-                save_write(); // persist coins earned this run
+                save_write();
                 game_start();
                 s_current_screen = SCREEN_PLAYING;
                 break;
@@ -360,7 +404,7 @@ static void update_game_over(void) {
                 game_start();
                 s_current_screen = SCREEN_PLAYING;
                 break;
-            case 1: // Hangar (Shop)
+            case 1: // Shop
                 menu_open(SCREEN_HANGAR);
                 break;
             case 2: // Main Menu
@@ -420,13 +464,12 @@ void menu_update(void) {
 // RENDERING
 // ──────────────────────────────────────────────────────────────────────────
 
-/* Static half of the ship preview card: frame, labels and info rows. */
 static void draw_ship_preview_static(int card_x, int card_y, int card_w, int card_h) {
     gfx_draw_glass_card(card_x, card_y, card_w, card_h, PAL_BTN_BORDER, 14);
-    gfx_draw_text(card_x + 6, card_y + 4, "SHIP PREVIEW", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 6, card_y + 13, "Original Mk I", PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 4, "SHIP PROFILE", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 6, card_y + 13, "Cyber Mk I", PAL_TEXT_WHITE);
 
-    gfx_draw_rect(card_x + 4, card_y + 45, card_w - 8, 1, 20);
+    gfx_fill_rect(card_x + 4, card_y + 45, card_w - 8, 1, 20);
 
     gfx_draw_text(card_x + 6, card_y + 49, "PAINT", PAL_TEXT_CYAN);
     gfx_draw_text(card_x + 36, card_y + 49, gfx_get_accent_name(g_settings.accent_index), PAL_TEXT_WHITE);
@@ -450,13 +493,12 @@ static void draw_ship_preview_static(int card_x, int card_y, int card_w, int car
     gfx_draw_text(card_x + 36, card_y + 99, buf, PAL_TEXT_WHITE);
 }
 
-/* Dynamic half: the ship sprite and its flickering engine flare. */
 static void draw_ship_preview_dynamic(int card_x, int card_y, int card_w) {
     int ship_x = card_x + (card_w - 20) / 2;
     int ship_y = card_y + 25;
     int accent = g_settings.accent_index;
-    if (accent < 0 || accent > 4) accent = 1;
-    gfx_draw_sprite(ship_x, ship_y, 20, 16, spr_ship[accent]);
+    if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
+    gfx_draw_ship(ship_x, ship_y, accent, s_anim_frame);
 
     u8 trail_col = gfx_get_trail_color(g_settings.trail_index);
     if ((s_anim_frame & 4) == 0) {
@@ -496,109 +538,308 @@ static void render_main_menu_dynamic(void) {
     draw_ship_preview_dynamic(108, 10, 126);
 }
 
-// Shop: 4 purchasable categories + Launch + Back
+// ──────────────────────────────────────────────────────────────────────────
+// SHOP / HANGAR RENDERER (Clean, spacious, non-cramped layout)
+// ──────────────────────────────────────────────────────────────────────────
 static void render_hangar_static(void) {
     starfield_draw_base(0, 0);
 
-    gfx_draw_text(10, 6, "SHOP", PAL_TEXT_WHITE);
-    gfx_draw_text(10, 14, "Buy paint, trails, rigs, lasers", 17);
-    // Coins top-right
-    char coin_buf[16];
-    siprintf(coin_buf, "$%u", (unsigned int)g_settings.coins);
-    gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(coin_buf)*6, 6, coin_buf, PAL_TEXT_GOLD);
-    gfx_fill_rect(10, 24, SCREEN_WIDTH - 20, 1, 20);
+    // Top Header
+    gfx_draw_text(6, 4, "UPGRADE HANGAR", PAL_TEXT_CYAN);
 
-    // Buttons: Paint, Trail, Rig, Laser, Launch, Back
-    // We draw them as unselected; dynamic pass will highlight selected
-    char buf[32];
-    // Price suffix handling
-    const char* suffix;
+    char coin_buf[24];
+    siprintf(coin_buf, "$%u COINS", (unsigned int)g_settings.coins);
+    int coin_x = SCREEN_WIDTH - 6 - (int)strlen(coin_buf) * 6;
+    gfx_draw_text(coin_x, 4, coin_buf, PAL_TEXT_GOLD);
+    gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
-    // Paint
-    if (shop_is_accent_owned(g_settings.accent_index)) suffix = "OWNED";
-    else { siprintf(buf, "%dc", shop_get_accent_price(g_settings.accent_index)); suffix = buf; }
-    siprintf(buf, "Paint: %s %s", gfx_get_accent_name(g_settings.accent_index), suffix);
-    // To keep button width, we just show name, price drawn separately in card?
-    siprintf(buf, "Paint: %s", gfx_get_accent_name(g_settings.accent_index));
-    gfx_draw_button(10, 28, 116, 14, buf, false);
-    // Trail
-    siprintf(buf, "Trail: %s", gfx_get_trail_name(g_settings.trail_index));
-    gfx_draw_button(10, 44, 116, 14, buf, false);
-    // Rig
-    siprintf(buf, "Rig: %s", gfx_get_weapon_name(g_settings.weapon_rig));
-    gfx_draw_button(10, 60, 116, 14, buf, false);
-    // Laser
-    siprintf(buf, "Laser: %s", gfx_get_laser_name(g_settings.laser_index));
-    gfx_draw_button(10, 76, 116, 14, buf, false);
+    // Category Tabs (PAINTS, TRAILS, WEAPON, LASERS, TECH)
+    const char* tab_names[5] = { "PAINTS", "TRAILS", "WEAPON", "LASERS", "TECH" };
+    const int tab_x[5] = { 6, 52, 98, 144, 190 };
+    const int tab_w = 44;
 
-    gfx_draw_button(10, 98, 116, 14, "Launch Run", false);
-    gfx_draw_button(10, 114, 116, 14, "Back", false);
+    for (int t = 0; t < 5; t++) {
+        bool is_active = (t == s_shop_category);
+        u8 border = is_active ? PAL_TEXT_CYAN : 20;
+        u8 bg = is_active ? PAL_BTN_HOVER : PAL_BTN_BG;
+        u8 txt = is_active ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
+        gfx_draw_glass_card(tab_x[t], 17, tab_w, 12, border, bg);
+        gfx_draw_text_centered(tab_x[t], 19, tab_w, tab_names[t], txt);
+    }
 
-    draw_ship_preview_static(132, 28, 100, 112);
+    // Left Panel Card (Catalog List)
+    gfx_draw_glass_card(4, 31, 116, 112, PAL_BTN_BORDER, 14);
 
-    gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "LEFT/RIGHT Cycle  A Buy/Equip  B Back", PAL_TEXT_WHITE);
+    // Right Panel Card (Preview & Item Stats)
+    gfx_draw_glass_card(122, 31, 114, 112, PAL_BTN_BORDER, 14);
 }
 
 static void render_hangar_dynamic(void) {
     menu_draw_base();
 
-    char buf[40];
-    char price_buf[20];
-    // Highlight selected button with price logic
-    switch (s_menu_selected) {
-        case 0: {
-            bool owned = shop_is_accent_owned(g_settings.accent_index);
-            if (!owned) siprintf(price_buf, "%dc", shop_get_accent_price(g_settings.accent_index));
-            else siprintf(price_buf, "OWNED");
-            siprintf(buf, "Paint: %s", gfx_get_accent_name(g_settings.accent_index));
-            gfx_draw_button(10, 28, 116, 14, buf, true);
-            // price badge near preview
-            gfx_draw_badge(134, 128, price_buf, owned ? PAL_TEXT_GREEN : PAL_TEXT_GOLD);
-            break;
+    int cat = s_shop_category;
+    int count = shop_get_category_count(cat);
+    int selected = s_shop_selected[cat];
+    int scroll = s_shop_scroll[cat];
+
+    // Draw Left Panel Catalog Rows (5 visible)
+    for (int i = 0; i < 5; i++) {
+        int item_idx = scroll + i;
+        if (item_idx >= count) break;
+
+        int row_y = 34 + i * 21;
+        bool is_sel = (item_idx == selected);
+
+        u8 border = is_sel ? PAL_TEXT_CYAN : 20;
+        u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
+        gfx_draw_glass_card(6, row_y, 112, 19, border, bg);
+
+        // Get item name & status
+        char name_buf[16] = {0};
+        char badge_buf[12] = {0};
+        u8 badge_col = PAL_TEXT_GOLD;
+
+        switch (cat) {
+            case 0: { // Paints
+                strncpy(name_buf, gfx_get_accent_name(item_idx), 11);
+                bool eq = (g_settings.accent_index == item_idx);
+                bool own = shop_is_accent_owned(item_idx);
+                if (eq) { strncpy(badge_buf, "[EQ]", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GREEN; }
+                else if (own) { strncpy(badge_buf, "OWN", sizeof(badge_buf)-1); badge_col = PAL_TEXT_CYAN; }
+                else { format_price(badge_buf, shop_get_accent_price(item_idx)); badge_col = PAL_TEXT_GOLD; }
+                break;
+            }
+            case 1: { // Trails
+                strncpy(name_buf, gfx_get_trail_name(item_idx), 11);
+                bool eq = (g_settings.trail_index == item_idx);
+                bool own = shop_is_trail_owned(item_idx);
+                if (eq) { strncpy(badge_buf, "[EQ]", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GREEN; }
+                else if (own) { strncpy(badge_buf, "OWN", sizeof(badge_buf)-1); badge_col = PAL_TEXT_CYAN; }
+                else { format_price(badge_buf, shop_get_trail_price(item_idx)); badge_col = PAL_TEXT_GOLD; }
+                break;
+            }
+            case 2: { // Weapons
+                strncpy(name_buf, gfx_get_weapon_name((WeaponRig)item_idx), 11);
+                bool eq = (g_settings.weapon_rig == item_idx);
+                bool own = shop_is_rig_owned((WeaponRig)item_idx);
+                if (eq) { strncpy(badge_buf, "[EQ]", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GREEN; }
+                else if (own) { strncpy(badge_buf, "OWN", sizeof(badge_buf)-1); badge_col = PAL_TEXT_CYAN; }
+                else { format_price(badge_buf, shop_get_rig_price((WeaponRig)item_idx)); badge_col = PAL_TEXT_GOLD; }
+                break;
+            }
+            case 3: { // Lasers
+                strncpy(name_buf, gfx_get_laser_name(item_idx), 11);
+                bool eq = (g_settings.laser_index == item_idx);
+                bool own = shop_is_laser_owned(item_idx);
+                if (eq) { strncpy(badge_buf, "[EQ]", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GREEN; }
+                else if (own) { strncpy(badge_buf, "OWN", sizeof(badge_buf)-1); badge_col = PAL_TEXT_CYAN; }
+                else { format_price(badge_buf, shop_get_laser_price(item_idx)); badge_col = PAL_TEXT_GOLD; }
+                break;
+            }
+            case 4: { // Tech Upgrades
+                strncpy(name_buf, shop_get_upgrade_name((UpgradeType)item_idx), 11);
+                int lv = shop_get_upgrade_level((UpgradeType)item_idx);
+                if (lv >= 3) { strncpy(badge_buf, "MAX", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GOLD; }
+                else { siprintf(badge_buf, "L%d/3", lv); badge_col = lv > 0 ? PAL_TEXT_GREEN : PAL_TEXT_CYAN; }
+                break;
+            }
         }
-        case 1: {
-            bool owned = shop_is_trail_owned(g_settings.trail_index);
-            if (!owned) siprintf(price_buf, "%dc", shop_get_trail_price(g_settings.trail_index));
-            else siprintf(price_buf, "OWNED");
-            siprintf(buf, "Trail: %s", gfx_get_trail_name(g_settings.trail_index));
-            gfx_draw_button(10, 44, 116, 14, buf, true);
-            gfx_draw_badge(134, 128, price_buf, owned ? PAL_TEXT_GREEN : PAL_TEXT_GOLD);
-            break;
+
+        if (is_sel) {
+            gfx_draw_char(9, row_y + 6, '>', PAL_TEXT_CYAN);
+            gfx_draw_text(16, row_y + 6, name_buf, PAL_TEXT_WHITE);
+        } else {
+            gfx_draw_text(10, row_y + 6, name_buf, PAL_TEXT_CYAN);
         }
-        case 2: {
-            bool owned = shop_is_rig_owned(g_settings.weapon_rig);
-            if (!owned) siprintf(price_buf, "%dc", shop_get_rig_price(g_settings.weapon_rig));
-            else siprintf(price_buf, "OWNED");
-            siprintf(buf, "Rig: %s", gfx_get_weapon_name(g_settings.weapon_rig));
-            gfx_draw_button(10, 60, 116, 14, buf, true);
-            gfx_draw_badge(134, 128, price_buf, owned ? PAL_TEXT_GREEN : PAL_TEXT_GOLD);
-            break;
+
+        int b_x = 114 - (int)strlen(badge_buf) * 6;
+        gfx_draw_text(b_x, row_y + 6, badge_buf, badge_col);
+    }
+
+    // Scroll indicators
+    if (scroll > 0) {
+        gfx_draw_char(110, 32, '^', PAL_TEXT_CYAN);
+    }
+    if (scroll + 5 < count) {
+        gfx_draw_char(110, 134, 'v', PAL_TEXT_CYAN);
+    }
+
+    // ── Right Panel: Live Ship Preview Chamber ──
+    gfx_draw_glass_card(124, 33, 110, 35, 20, PAL_SPACE_BLACK);
+    int preview_accent = (cat == 0) ? selected : g_settings.accent_index;
+    int preview_trail  = (cat == 1) ? selected : g_settings.trail_index;
+    int preview_laser  = (cat == 3) ? selected : g_settings.laser_index;
+
+    if (preview_accent < 0 || preview_accent >= NUM_ACCENTS) preview_accent = 1;
+    int ship_x = 124 + (110 - 20) / 2;
+    int ship_y = 37;
+    gfx_draw_ship(ship_x, ship_y, preview_accent, s_anim_frame);
+
+    u8 trail_col = gfx_get_trail_color(preview_trail);
+    if ((s_anim_frame & 4) == 0) {
+        gfx_fill_rect(ship_x + 8, ship_y + 16, 4, 3, trail_col);
+    } else {
+        gfx_fill_rect(ship_x + 7, ship_y + 16, 6, 2, trail_col);
+    }
+
+    // Animated laser bolts firing upward in weapon/laser tabs
+    if (cat == 2 || cat == 3) {
+        int laser_y = ship_y - 2 - ((s_anim_frame * 2) % 18);
+        if (laser_y >= 35) {
+            const u8* lspr = gfx_get_laser_standard_sprite(preview_laser);
+            gfx_draw_sprite(ship_x + 4, laser_y, 4, 6, lspr);
+            gfx_draw_sprite(ship_x + 12, laser_y, 4, 6, lspr);
         }
-        case 3: {
-            bool owned = shop_is_laser_owned(g_settings.laser_index);
-            if (!owned) siprintf(price_buf, "%dc", shop_get_laser_price(g_settings.laser_index));
-            else siprintf(price_buf, "OWNED");
-            siprintf(buf, "Laser: %s", gfx_get_laser_name(g_settings.laser_index));
-            gfx_draw_button(10, 76, 116, 14, buf, true);
-            gfx_draw_badge(134, 128, price_buf, owned ? PAL_TEXT_GREEN : PAL_TEXT_GOLD);
+    }
+
+    gfx_fill_rect(126, 70, 106, 1, 20);
+
+    // Right Panel: Item Title & Subtitle
+    const char* full_name = "";
+    const char* desc1 = "";
+    const char* desc2 = "";
+    char status_buf[32] = {0};
+    u8 status_col = PAL_TEXT_GOLD;
+
+    bool is_owned = false;
+    bool is_equipped = false;
+    int item_price = 0;
+
+    switch (cat) {
+        case 0: // Paints
+            full_name = gfx_get_accent_name(selected);
+            desc1 = gfx_get_accent_desc(selected);
+            desc2 = "Hull skin finish";
+            is_owned = shop_is_accent_owned(selected);
+            is_equipped = (g_settings.accent_index == selected);
+            item_price = shop_get_accent_price(selected);
             break;
-        }
-        case 4:
-            gfx_draw_button(10, 98, 116, 14, "Launch Run", true);
+        case 1: // Trails
+            full_name = gfx_get_trail_name(selected);
+            desc1 = gfx_get_trail_desc(selected);
+            desc2 = "Drive exhaust wake";
+            is_owned = shop_is_trail_owned(selected);
+            is_equipped = (g_settings.trail_index == selected);
+            item_price = shop_get_trail_price(selected);
             break;
-        default:
-            gfx_draw_button(10, 114, 116, 14, "Back", true);
+        case 2: // Weapons
+            full_name = gfx_get_weapon_name((WeaponRig)selected);
+            desc1 = gfx_get_weapon_desc((WeaponRig)selected);
+            desc2 = "Primary ordnance";
+            is_owned = shop_is_rig_owned((WeaponRig)selected);
+            is_equipped = (g_settings.weapon_rig == selected);
+            item_price = shop_get_rig_price((WeaponRig)selected);
+            break;
+        case 3: // Lasers
+            full_name = gfx_get_laser_name(selected);
+            desc1 = gfx_get_laser_desc(selected);
+            desc2 = "Laser crystal core";
+            is_owned = shop_is_laser_owned(selected);
+            is_equipped = (g_settings.laser_index == selected);
+            item_price = shop_get_laser_price(selected);
+            break;
+        case 4: // Tech Upgrades
+            full_name = shop_get_upgrade_name((UpgradeType)selected);
+            desc1 = shop_get_upgrade_desc_line1((UpgradeType)selected);
+            int cur_lv = shop_get_upgrade_level((UpgradeType)selected);
+            desc2 = shop_get_upgrade_desc_line2((UpgradeType)selected, cur_lv);
+            if (cur_lv >= 3) {
+                is_owned = true;
+                item_price = 0;
+            } else {
+                is_owned = false;
+                item_price = shop_get_upgrade_price((UpgradeType)selected, cur_lv);
+            }
             break;
     }
-    draw_ship_preview_dynamic(132, 28, 100);
 
-    // Shop message popup if active (centered above hint)
+    gfx_draw_text_centered(122, 73, 114, full_name, PAL_TEXT_WHITE);
+
+    // Status subtitle line
+    if (cat == 4) {
+        int cur_lv = shop_get_upgrade_level((UpgradeType)selected);
+        if (cur_lv >= 3) {
+            siprintf(status_buf, "LEVEL MAX (3/3)");
+            status_col = PAL_TEXT_GOLD;
+        } else {
+            char pbuf[16];
+            format_price(pbuf, item_price);
+            siprintf(status_buf, "LVL %d/3 - COST: %s", cur_lv, pbuf);
+            status_col = PAL_TEXT_GOLD;
+        }
+    } else {
+        if (is_equipped) {
+            siprintf(status_buf, "[EQUIPPED]");
+            status_col = PAL_TEXT_GREEN;
+        } else if (is_owned) {
+            siprintf(status_buf, "[OWNED]");
+            status_col = PAL_TEXT_CYAN;
+        } else {
+            char pbuf[16];
+            format_price(pbuf, item_price);
+            siprintf(status_buf, "COST: %s", pbuf);
+            status_col = PAL_TEXT_GOLD;
+        }
+    }
+    gfx_draw_text_centered(122, 83, 114, status_buf, status_col);
+
+    // Description lines
+    gfx_draw_text_centered(122, 94, 114, desc1, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(122, 104, 114, desc2, 17);
+
+    // Action Button at Bottom Right (x=126, y=118, w=106, h=21)
+    if (cat == 4) {
+        int cur_lv = shop_get_upgrade_level((UpgradeType)selected);
+        if (cur_lv >= 3) {
+            gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+            gfx_draw_text_centered(126, 125, 106, "MAX LEVEL", PAL_TEXT_GOLD);
+        } else {
+            bool can_afford = (g_settings.coins >= (u32)item_price);
+            char pbuf[16];
+            format_price(pbuf, item_price);
+            char btn_text[28];
+            if (can_afford) {
+                siprintf(btn_text, "[A] UPGRADE %s", pbuf);
+                gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+                gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_GOLD);
+            } else {
+                siprintf(btn_text, "NEED %s", pbuf);
+                gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_RED, PAL_BTN_BG);
+                gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_RED);
+            }
+        }
+    } else {
+        if (is_equipped) {
+            gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GREEN, PAL_BTN_HOVER);
+            gfx_draw_text_centered(126, 125, 106, "EQUIPPED", PAL_TEXT_GREEN);
+        } else if (is_owned) {
+            gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_CYAN, PAL_BTN_HOVER);
+            gfx_draw_text_centered(126, 125, 106, "[A] EQUIP", PAL_TEXT_WHITE);
+        } else {
+            bool can_afford = (g_settings.coins >= (u32)item_price);
+            char pbuf[16];
+            format_price(pbuf, item_price);
+            char btn_text[28];
+            if (can_afford) {
+                siprintf(btn_text, "[A] BUY %s", pbuf);
+                gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+                gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_GOLD);
+            } else {
+                siprintf(btn_text, "NEED %s", pbuf);
+                gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_RED, PAL_BTN_BG);
+                gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_RED);
+            }
+        }
+    }
+
+    // Bottom Toast / Navigation Hint
     if (s_shop_msg_timer > 0) {
-        int w = (int)strlen(s_shop_msg)*6 + 10;
-        int x = (SCREEN_WIDTH - w)/2;
-        int y = 132;
-        gfx_draw_glass_card(x, y, w, 12, s_shop_msg_col, 15);
-        gfx_draw_text_centered(x, y+3, w, s_shop_msg, s_shop_msg_col);
+        int w = (int)strlen(s_shop_msg) * 6 + 12;
+        int x = (SCREEN_WIDTH - w) / 2;
+        gfx_draw_glass_card(x, 146, w, 12, s_shop_msg_col, 15);
+        gfx_draw_text_centered(x, 148, w, s_shop_msg, s_shop_msg_col);
+    } else {
+        gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "L/R: Tab  D-PAD: Pick  A: Buy/Equip  B: Exit", PAL_TEXT_WHITE);
     }
 }
 
@@ -662,7 +903,6 @@ static void render_settings_dynamic(void) {
             break;
     }
 
-    // Detail text follows the selection
     const char* desc = "";
     switch (s_menu_selected) {
         case 0:
@@ -697,13 +937,13 @@ static void render_controls_static(void) {
 
     gfx_draw_glass_card(122, 20, 110, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(126, 24, "PICKUPS & COMBO", PAL_TEXT_CYAN);
-    gfx_draw_text(126, 36, "[*] Shield (max 3)", 164);
-    gfx_draw_text(126, 48, "[>] Rapid fire 9s", PAL_TEXT_GOLD);
+    gfx_draw_text(126, 36, "[*] Shield (max 6)", 164);
+    gfx_draw_text(126, 48, "[>] Rapid fire 12s", PAL_TEXT_GOLD);
     gfx_draw_text(126, 60, "[+] Repair +1 life", PAL_TEXT_GREEN);
-    gfx_draw_text(126, 76, "POWERUPS ARE RARE", PAL_TEXT_GOLD);
-    gfx_draw_text(126, 86, "4% asteroids", PAL_TEXT_WHITE);
-    gfx_draw_text(126, 96, "7% drones", PAL_TEXT_WHITE);
-    gfx_draw_text(126, 108, "COMBO up to x8", PAL_TEXT_CYAN);
+    gfx_draw_text(126, 76, "SHOP TECH TREE", PAL_TEXT_GOLD);
+    gfx_draw_text(126, 86, "7 Upgrades x Lv3", PAL_TEXT_WHITE);
+    gfx_draw_text(126, 96, "6 Weapon Rigs", PAL_TEXT_WHITE);
+    gfx_draw_text(126, 108, "COMBO up to x20", PAL_TEXT_CYAN);
 
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
@@ -723,8 +963,8 @@ static void render_credits_static(void) {
     gfx_draw_text_centered(20, 54, 200, "Original Scratch Project", 17);
     gfx_draw_text_centered(20, 66, 200, "Game Boy Advance Port", PAL_TEXT_WHITE);
     gfx_draw_text_centered(20, 78, 200, "Native ARMv4T / Tonc", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(20, 90, 200, "DirectSound 16.384kHz", PAL_TEXT_GOLD);
-    gfx_draw_text_centered(20, 102, 200, "Coins + Shop System", PAL_TEXT_GREEN);
+    gfx_draw_text_centered(20, 90, 200, "DirectSound 18.157kHz", PAL_TEXT_GOLD);
+    gfx_draw_text_centered(20, 102, 200, "Full Shop & Tech Tree", PAL_TEXT_GREEN);
 
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
@@ -734,10 +974,8 @@ static void render_credits_dynamic(void) {
 }
 
 static void render_paused(void) {
-    // Draw running game frame in background
     game_draw();
 
-    // Translucent pause overlay (rebuilt every frame: cheap, rare screen)
     int w = 110;
     int h = 88;
     int x = (SCREEN_WIDTH - w) / 2;
@@ -766,7 +1004,7 @@ static void render_game_over(void) {
     char buf[32];
     siprintf(buf, "Score: %06u", (unsigned int)g_game.score);
     gfx_draw_text_centered(x, y + 18, w, buf, PAL_TEXT_WHITE);
-    siprintf(buf, "Coins $%u", (unsigned int)g_settings.coins);
+    siprintf(buf, "Coins: $%u", (unsigned int)g_settings.coins);
     gfx_draw_text_centered(x, y + 28, w, buf, PAL_TEXT_GOLD);
 
     if (g_game.is_new_high_score) {
@@ -824,7 +1062,7 @@ void menu_draw(void) {
             }
             render_credits_dynamic();
             break;
-        case SCREEN_PLAYING:   game_draw(); break; // marker inside game_draw
+        case SCREEN_PLAYING:   game_draw(); break;
         case SCREEN_PAUSED:    render_paused(); break;
         case SCREEN_GAME_OVER: render_game_over(); break;
     }

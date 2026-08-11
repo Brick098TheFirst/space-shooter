@@ -614,8 +614,8 @@
     <!-- Game Boy Advance Console Frame -->
     <div class="gba-console">
       <!-- L / R Triggers -->
-      <button class="gba-trigger left" id="btn-l" title="L Trigger (Dash)">L (DASH)</button>
-      <button class="gba-trigger right" id="btn-r" title="R Trigger (Dash)">R (DASH)</button>
+      <button class="gba-trigger left" id="btn-l" title="L Trigger (Dash / Prev Shop Tab)">L (DASH/TAB)</button>
+      <button class="gba-trigger right" id="btn-r" title="R Trigger (Dash / Next Shop Tab)">R (DASH/TAB)</button>
 
       <!-- Screen Housing -->
       <div class="gba-screen-housing">
@@ -673,7 +673,7 @@
             <span class="action-label">DASH</span>
           </div>
           <div class="action-btn-wrap">
-            <button class="action-btn a-btn" id="btn-a" aria-label="A (Fire / Select)">A</button>
+            <button class="action-btn a-btn" id="btn-a" aria-label="A (Fire / Buy / Equip)">A</button>
             <span class="action-label">FIRE</span>
           </div>
         </div>
@@ -695,7 +695,7 @@
           <span id="status-text">Ready (60 FPS)</span>
         </div>
         <a href="/SpaceUnlimited.gba" download="SpaceUnlimited.gba" class="tool-btn primary" id="btn-download">
-          💾 Download .GBA ROM (2.1 MB)
+          💾 Download .GBA ROM (2.4 MB)
         </a>
       </div>
     </div>
@@ -716,34 +716,34 @@
           </thead>
           <tbody>
             <tr>
-              <td><strong>Move Ship</strong></td>
+              <td><strong>Move Ship / Navigate</strong></td>
               <td><span class="key-badge">WASD</span> / <span class="key-badge">Arrows</span></td>
               <td>Left Stick / D-Pad</td>
               <td>D-Pad</td>
             </tr>
             <tr>
-              <td><strong>Fire Weapon</strong></td>
+              <td><strong>Fire / Buy / Equip</strong></td>
               <td><span class="key-badge">Space</span> / <span class="key-badge">Z</span> / <span class="key-badge">J</span></td>
               <td><span class="key-badge">A</span> / <span class="key-badge">RT</span></td>
               <td><span class="key-badge">A</span></td>
             </tr>
             <tr>
-              <td><strong>Dash (Invincible)</strong></td>
+              <td><strong>Dash / Back</strong></td>
               <td><span class="key-badge">Shift</span> / <span class="key-badge">X</span> / <span class="key-badge">K</span></td>
               <td><span class="key-badge">X</span> / <span class="key-badge">B</span> / <span class="key-badge">RB</span></td>
-              <td><span class="key-badge">B</span> / <span class="key-badge">R</span></td>
+              <td><span class="key-badge">B</span></td>
             </tr>
             <tr>
-              <td><strong>Pause / Menu</strong></td>
+              <td><strong>Shop Tab Switch</strong></td>
+              <td><span class="key-badge">Q</span> / <span class="key-badge">E</span> / <span class="key-badge">Arrows</span></td>
+              <td><span class="key-badge">LB</span> / <span class="key-badge">RB</span></td>
+              <td><span class="key-badge">L</span> / <span class="key-badge">R</span></td>
+            </tr>
+            <tr>
+              <td><strong>Pause / Launch</strong></td>
               <td><span class="key-badge">Enter</span> / <span class="key-badge">P</span></td>
               <td><span class="key-badge">Start</span> / Menu</td>
               <td><span class="key-badge">START</span></td>
-            </tr>
-            <tr>
-              <td><strong>Menu Select / Back</strong></td>
-              <td><span class="key-badge">Space</span> / <span class="key-badge">Esc</span></td>
-              <td><span class="key-badge">A</span> / <span class="key-badge">B</span></td>
-              <td><span class="key-badge">A</span> / <span class="key-badge">B</span></td>
             </tr>
           </tbody>
         </table>
@@ -755,23 +755,23 @@
         <div class="feature-list">
           <div class="feature-item">
             <span class="feature-icon">✦</span>
-            <div><strong>Authentic GBA Mode 4 Renderer:</strong> 240×160 60 FPS double-buffered engine with 256-color palette and custom raster font.</div>
+            <div><strong>Expanded Upgrade Hangar & Tech Tree:</strong> Buy and equip 9 ship paints (including 1,000,000c animated Rainbow Prism!), 8 engine trails, 6 weapon rigs, 8 laser crystals, and 7 upgradable tech tree perks (up to Level 3 each!).</div>
           </div>
           <div class="feature-item">
             <span class="feature-icon">✦</span>
-            <div><strong>Coin Shop & Cosmetics:</strong> Earn coins (15/8/4c) and buy 5 paints, 4 trails, 3 rigs + 4 laser colours — saved to SRAM.</div>
+            <div><strong>Manual Purchasing & SRAM Save Persistence:</strong> Buy items manually with earned coins — all unlocks, ship upgrades, and coin balances save persistently to cartridge SRAM and localStorage.</div>
           </div>
           <div class="feature-item">
             <span class="feature-icon">✦</span>
-            <div><strong>16.384 kHz DirectSound Audio:</strong> Timer-driven signed PCM playback for restored menu & game music plus polyphonic sound FX.</div>
+            <div><strong>Deep Progression & Grind Loop:</strong> High-tier cosmetics and weapons range up to 150,000c with rewarding combo multipliers and wave clear bonuses.</div>
           </div>
           <div class="feature-item">
             <span class="feature-icon">✦</span>
-            <div><strong>SRAM Save Persistence:</strong> Coins, unlocks, high scores and settings persist to cartridge backup memory.</div>
+            <div><strong>Spacious Non-Cramped Shop UI:</strong> Clean 2-column layout with tab navigation, scrolling catalog, live ship preview chamber, and detailed stat cards.</div>
           </div>
           <div class="feature-item">
             <span class="feature-icon">✦</span>
-            <div><strong>Rare Powerups & Combos:</strong> Shield/Rapid/Repair drop only ~4% (asteroids)/7% (drones), plus x8 combos.</div>
+            <div><strong>Authentic 60 FPS DirectSound Engine:</strong> 240×160 Mode 4 renderer with polyphonic 18.157 kHz audio and responsive controller support.</div>
           </div>
         </div>
       </div>

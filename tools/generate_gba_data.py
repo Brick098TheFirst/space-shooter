@@ -19,28 +19,18 @@ def rgb15(r, g, b):
     return r5 | (g5 << 5) | (b5 << 10)
 
 def _build_filter_table(phases, taps, fc):
-    """Windowed-sinc low-pass polyphase filter.
-
-    fc is the cutoff as a fraction of the SOURCE sample rate (cycles per
-    source sample).  The returned table[phase][tap] rows are each normalized
-    to unity DC gain.  This is the anti-aliasing filter that the old linear
-    interpolation lacked: without it, every source component above the GBA's
-    8.192 kHz output Nyquist folded back into the audible band as harsh buzz
-    (menu.wav alone carries ~30x more energy up there than in its melody
-    band), which is why the converted music sounded nothing like the WAVs.
-    """
+    """Windowed-sinc low-pass polyphase filter."""
     half = taps // 2
     table = []
     for p in range(phases):
-        frac = p / phases  # sub-sample offset, 0..1
+        frac = p / phases
         row = []
         for k in range(taps):
-            x = (k - half) - frac  # distance in source samples
+            x = (k - half) - frac
             if x == 0.0:
                 s = 2.0 * fc
             else:
                 s = math.sin(2.0 * math.pi * fc * x) / (math.pi * x)
-            # Blackman window over [-half, half]
             w = 0.42 + 0.5 * math.cos(math.pi * x / half) + 0.08 * math.cos(2.0 * math.pi * x / half)
             row.append(s * w)
         ssum = sum(row)
@@ -48,10 +38,7 @@ def _build_filter_table(phases, taps, fc):
     return table
 
 def resample_wav(path, target_rate=16384):
-    """Band-limited resample of a WAV file to the GBA sample rate.
-
-    Returns a list of floats in -1..1 (DC removed, not yet normalized).
-    """
+    """Band-limited resample of a WAV file to the GBA sample rate."""
     with wave.open(path, 'rb') as w:
         nch = w.getnchannels()
         sw = w.getsampwidth()
@@ -70,13 +57,9 @@ def resample_wav(path, target_rate=16384):
         for i in range(0, len(raw), nch):
             samples.append((raw[i] - 128) / 128.0)
 
-    # Remove DC offset (menu.wav carries ~12% of full scale as DC, which
-    # wastes 8-bit headroom and adds a low thump to the loop).
     mean = sum(samples) / len(samples)
     samples = [s - mean for s in samples]
 
-    # Low-pass cutoff just below the output Nyquist (0.45 * min of the two
-    # rates), as a fraction of the source rate.
     ratio = target_rate / rate
     fc = 0.45 * min(1.0, ratio)
     taps = 64
@@ -84,13 +67,11 @@ def resample_wav(path, target_rate=16384):
     phases = 4096
     table = _build_filter_table(phases, taps, fc)
 
-    # Reflect the signal at both ends so the filter never reads outside it.
     padded = samples[half:0:-1] + samples + samples[-2:-half - 2:-1]
 
     out_len = int(len(samples) * ratio)
     out_samples = [0.0] * out_len
     src = padded
-    n_src = len(samples)
     for i in range(out_len):
         src_pos = i * rate / target_rate
         idx = int(src_pos)
@@ -105,12 +86,7 @@ def resample_wav(path, target_rate=16384):
     return out_samples
 
 def quantize_8bit(samples, gain):
-    """Scale to 8-bit signed with triangular dither + 1st-order noise shaping.
-
-    Plain rounding of 16-bit audio to 8 bits adds harsh, signal-correlated
-    distortion; TPDF dither decorrelates it into a benign noise floor, which
-    is the standard trick for the GBA's 8-bit DirectSound FIFOs.
-    """
+    """Scale to 8-bit signed with triangular dither + 1st-order noise shaping."""
     out = []
     error = 0.0
     for s in samples:
@@ -132,7 +108,7 @@ def quantize_8bit(samples, gain):
 os.makedirs('gba/include', exist_ok=True)
 os.makedirs('gba/src', exist_ok=True)
 
-# 1. Process Audio — prefer new Assets/ location, fall back to legacy Windows path
+# 1. Process Audio
 def _resolve_assets(sub):
     cand1 = os.path.join('Assets', sub)
     cand2 = os.path.join('SpaceUnlimited.Windows', 'Assets', sub)
@@ -147,9 +123,6 @@ laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 18157)
 explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 18157)
 pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 18157)
 
-# Normalize the tracks as a group: the loudest source (full-scale) maps to
-# 0.85 so the music keeps headroom when the mixer sums it with SFX, while the
-# quieter effects (laser, explosion) keep their original relative levels.
 peak = 0.0
 for track in (menu_snd, game_snd, laser_snd, explosion_snd, pickup_snd):
     peak = max(peak, max(abs(s) for s in track))
@@ -169,7 +142,6 @@ with open('gba/include/audio_data.h', 'w') as f:
 
 #include <tonc.h>
 
-/* DirectSound 18,157 Hz: exact match to 280,896 CPU cycles / 924 cycles = 304 samples/frame. */
 #define AUDIO_SAMPLE_RATE 18157
 #define AUDIO_SAMPLES_PER_FRAME 304
 
@@ -208,8 +180,6 @@ with open('gba/src/audio_data.c', 'w') as f:
     write_array("snd_laser", laser_snd)
     write_array("snd_explosion", explosion_snd)
     write_array("snd_pickup", pickup_snd)
-
-print("Audio data generated successfully!")
 
 def decode_png(path):
     with open(path, 'rb') as f:
@@ -366,16 +336,15 @@ palette[45] = (50, 55, 68)
 palette[46] = (75, 85, 105)
 palette[47] = (195, 210, 235)
 
-palette[48] = (140, 45, 15); palette[49] = (215, 80, 30); palette[50] = (255, 120, 56); palette[51] = (255, 185, 130)
-palette[52] = (15, 105, 140); palette[53] = (25, 165, 215); palette[54] = (42, 214, 255); palette[55] = (165, 240, 255)
-palette[56] = (95, 35, 150); palette[57] = (145, 65, 215); palette[58] = (188, 92, 255); palette[59] = (225, 175, 255)
-palette[60] = (20, 120, 75); palette[61] = (45, 185, 120); palette[62] = (102, 255, 184); palette[63] = (195, 255, 225)
-palette[64] = (140, 100, 15); palette[65] = (210, 155, 25); palette[66] = (255, 210, 74); palette[67] = (255, 240, 165)
-
-palette[68] = (180, 50, 10); palette[69] = (255, 120, 56); palette[70] = (255, 220, 140)
-palette[71] = (20, 130, 180); palette[72] = (42, 214, 255); palette[73] = (190, 245, 255)
-palette[74] = (120, 40, 180); palette[75] = (188, 92, 255); palette[76] = (235, 190, 255)
-palette[77] = (30, 140, 90); palette[78] = (102, 255, 184); palette[79] = (200, 255, 230)
+# Ship Paints (8 base variants x 4 shades each, indices 48..79)
+palette[48] = (140, 45, 15); palette[49] = (215, 80, 30); palette[50] = (255, 120, 56); palette[51] = (255, 185, 130) # Solar Orange
+palette[52] = (15, 105, 140); palette[53] = (25, 165, 215); palette[54] = (42, 214, 255); palette[55] = (165, 240, 255) # Ion Cyan
+palette[56] = (95, 35, 150); palette[57] = (145, 65, 215); palette[58] = (188, 92, 255); palette[59] = (225, 175, 255) # Nova Violet
+palette[60] = (20, 120, 75); palette[61] = (45, 185, 120); palette[62] = (102, 255, 184); palette[63] = (195, 255, 225) # Plasma Mint
+palette[64] = (140, 100, 15); palette[65] = (210, 155, 25); palette[66] = (255, 210, 74); palette[67] = (255, 240, 165) # Pulsar Gold
+palette[68] = (150, 20, 20);  palette[69] = (220, 35, 35);  palette[70] = (255, 70, 70);  palette[71] = (255, 160, 160) # Crimson Void
+palette[72] = (30, 35, 45);   palette[73] = (60, 70, 85);   palette[74] = (110, 125, 145); palette[75] = (180, 195, 215) # Stealth Obsidian
+palette[76] = (160, 20, 140); palette[77] = (230, 40, 200); palette[78] = (255, 90, 230); palette[79] = (255, 190, 250) # Quantum Neon
 
 for i in range(32):
     t = i / 31.0
@@ -414,13 +383,33 @@ palette[172] = (255, 240, 145); palette[173] = (255, 252, 220); palette[174] = (
 palette[176] = (15, 65, 35); palette[177] = (30, 125, 65); palette[178] = (55, 190, 105); palette[179] = (105, 245, 155)
 palette[180] = (175, 255, 205); palette[181] = (235, 255, 245); palette[182] = (12, 45, 25); palette[183] = (6, 25, 12)
 
+# Trails (8 variants x 3 shades each = 24 entries, 184..207)
+# Trail 0: Ember Fire
+palette[184] = (180, 50, 10); palette[185] = (255, 120, 56); palette[186] = (255, 220, 140)
+# Trail 1: Ion Cyan
+palette[187] = (20, 130, 180); palette[188] = (42, 214, 255); palette[189] = (190, 245, 255)
+# Trail 2: Nova Purple
+palette[190] = (120, 40, 180); palette[191] = (188, 92, 255); palette[192] = (235, 190, 255)
+# Trail 3: Aurora Mint
+palette[193] = (30, 140, 90); palette[194] = (102, 255, 184); palette[195] = (200, 255, 230)
+# Trail 4: Solar Flare Gold
+palette[196] = (180, 130, 15); palette[197] = (255, 210, 50); palette[198] = (255, 245, 170)
+# Trail 5: Crimson Flame
+palette[199] = (170, 20, 20); palette[200] = (255, 60, 60); palette[201] = (255, 170, 170)
+# Trail 6: Void Shadow
+palette[202] = (50, 40, 75); palette[203] = (130, 110, 170); palette[204] = (210, 200, 235)
+# Trail 7: Prismatic Rainbow
+palette[205] = (240, 40, 180); palette[206] = (40, 230, 255); palette[207] = (255, 240, 80)
+
+# Shield Bubble (8 shades, 208..215)
 for i in range(8):
     t = (i + 1) / 8.0
-    palette[184 + i] = (int(30 * t), int(160 * t + 80 * (1-t)), int(255 * t))
+    palette[208 + i] = (int(30 * t), int(160 * t + 80 * (1-t)), int(255 * t))
 
-for i in range(64):
-    t = i / 63.0
-    palette[192 + i] = (int(20 + 220 * t), int(30 + 215 * t), int(50 + 205 * t))
+# Extra UI / Effect colors (216..255)
+for i in range(40):
+    t = i / 39.0
+    palette[216 + i] = (int(20 + 220 * t), int(30 + 215 * t), int(50 + 205 * t))
 
 def find_closest_color(r, g, b, min_idx=1, max_idx=255):
     best_idx = min_idx
@@ -441,8 +430,9 @@ img_dir = _resolve_assets('Images')
 w_ship, h_ship, px_ship = decode_png(os.path.join(img_dir, 'classic-ship.png'))
 _, _, ship_scaled = scale_image(w_ship, h_ship, px_ship, 20, 16)
 
+# 9 Ship Variants (0..7 static paints, 8 = animated rainbow dynamic paint)
 ship_variants = []
-for accent in range(5):
+for accent in range(9):
     var_pixels = bytearray(20 * 16)
     for i, (r, g, b, a) in enumerate(ship_scaled):
         if a < 30:
@@ -457,7 +447,11 @@ for accent in range(5):
             elif bright < 170: shade = 1
             elif bright < 220: shade = 2
             else: shade = 3
-            var_pixels[i] = 48 + accent * 4 + shade
+            if accent < 8:
+                var_pixels[i] = 48 + accent * 4 + shade
+            else:
+                # Dynamic Rainbow marker: 240 + shade
+                var_pixels[i] = 240 + shade
         elif is_cockpit:
             bright = (r + g + b) / 3
             if bright < 80: var_pixels[i] = 39
@@ -554,7 +548,7 @@ for y in range(24):
         dist = math.sqrt(dx*dx + dy*dy)
         if dist >= 9.5 and dist <= 11.8:
             ring = int((1.0 - abs(dist - 10.65) / 1.15) * 7)
-            shield_bubble[y*24 + x] = 184 + max(0, min(7, ring))
+            shield_bubble[y*24 + x] = 208 + max(0, min(7, ring))
         else:
             shield_bubble[y*24 + x] = 0
 
@@ -645,7 +639,7 @@ with open('gba/include/gfx_data.h', 'w') as f:
 
 extern const u16 master_palette[256];
 
-extern const u8 spr_ship[5][20 * 16];
+extern const u8 spr_ship[9][20 * 16];
 extern const u8 spr_ast_large[24 * 24];
 extern const u8 spr_ast_med_a[16 * 16];
 extern const u8 spr_ast_med_b[16 * 16];
@@ -681,7 +675,7 @@ const u16 master_palette[256] = {
         f.write("    " + ", ".join(colors) + ",\n")
     f.write("};\n\n")
 
-    f.write("const u8 spr_ship[5][20 * 16] = {\n")
+    f.write("const u8 spr_ship[9][20 * 16] = {\n")
     for var in ship_variants:
         f.write("    {\n")
         for y in range(16):
@@ -729,4 +723,4 @@ const u16 master_palette[256] = {
         f.write("    {" + ", ".join(f"{r}" for r in rows) + f"}},\n")
     f.write("};\n\n")
 
-print("Graphics data regenerated with hex literals!")
+print("Graphics data regenerated with 9 ship paints (including Rainbow Chroma)!")
