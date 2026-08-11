@@ -323,7 +323,12 @@ void game_start(void) {
     audio_play_bgm(BGM_GAME);
 }
 
-void game_update(void) {
+#define GAME_SPEED_MULTIPLIER 2
+
+/* One simulation tick.  menu_update() polls the keypad once per displayed
+ * frame; keeping that poll outside this function means the two ticks below
+ * still see edge-triggered buttons such as dash and pause correctly. */
+static void game_update_tick(void) {
     starfield_update();
 
     if (g_game.shake_timer > 0) {
@@ -378,8 +383,7 @@ void game_update(void) {
     if (g_game.player.invulnerable_timer > 0) g_game.player.invulnerable_timer--;
     if (g_game.player.rapid_fire_timer > 0) g_game.player.rapid_fire_timer--;
 
-    // Input Handling
-    key_poll();
+    // Input Handling (the menu layer polls once before the simulation ticks)
     int mx = 0;
     int my = 0;
     if (key_is_down(KEY_LEFT))  mx -= 1;
@@ -620,6 +624,12 @@ void game_update(void) {
         }
     } else {
         g_game.intermission_timer = 60;
+    }
+}
+
+void game_update(void) {
+    for (int tick = 0; tick < GAME_SPEED_MULTIPLIER; tick++) {
+        game_update_tick();
     }
 }
 

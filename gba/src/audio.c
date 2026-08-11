@@ -2,8 +2,28 @@
 #include "types.h"
 #include <string.h>
 
-#define SAMPLES_PER_FRAME 272
+/*
+ * GBA DirectSound is an 8-bit signed PCM FIFO.  The old implementation used
+ * DMA with a source pointer that was changed once per frame, but FIFO DMA has
+ * no automatic end-of-buffer wrap.  Once that pointer ran off the end of the
+ * small mix buffer, the hardware read unrelated ROM/RAM and produced a short
+ * burst of static followed by silence.
+ *
+ * Instead, keep a small producer/consumer ring in EWRAM.  Timer 0 runs at the
+ * GBA's exact 16,384 Hz rate (0xffff with the /1024 timer prescaler).  Its IRQ
+ * writes one 32-bit word (four samples) to FIFO A every four samples.  The
+ * main loop fills the ring with mixed music and effects ahead of the
+ * interrupt, so changing music or triggering an effect never races a DMA
+ * transfer or leaves the FIFO pointing outside a buffer.
+ */
+#define AUDIO_RING_SAMPLES 2048u
+#define AUDIO_RING_MASK (AUDIO_RING_SAMPLES - 1u)
+#define AUDIO_TARGET_SAMPLES 512u
 #define MAX_ACTIVE_SFX 4
+
+#if (AUDIO_RING_SAMPLES & AUDIO_RING_MASK) != 0
+#error "AUDIO_RING_SAMPLES must be a power of two"
+#endif
 
 typedef struct {
     const s8* data;
@@ -12,8 +32,11 @@ typedef struct {
     bool active;
 } SfxChannel;
 
-EWRAM_BSS static s8 s_audio_buffers[2][SAMPLES_PER_FRAME] __attribute__((aligned(4)));
-static u32 s_active_buffer = 0;
+EWRAM_BSS static s8 s_audio_ring[AUDIO_RING_SAMPLES] __attribute__((aligned(4)));
+static volatile u32 s_read_pos = 0;
+static volatile u32 s_write_pos = 0;
+static volatile u32 s_fifo_phase = 0;
+static bool s_audio_started = false;
 
 static BgmTrack s_current_bgm = BGM_NONE;
 static const s8* s_bgm_data = NULL;
@@ -22,30 +45,125 @@ static u32 s_bgm_pos = 0;
 
 static SfxChannel s_sfx_channels[MAX_ACTIVE_SFX];
 
+static int audio_ring_level(u32 write_pos) {
+    return (int)((write_pos - s_read_pos) & AUDIO_RING_MASK);
+}
+
+/* Mix one signed 8-bit sample.  Playback cursors advance even when a volume
+ * slider is at zero, so muting does not pause or later replay an effect. */
+static s8 audio_mix_sample(void) {
+    int mixed = 0;
+    int music_vol = g_settings.music_volume;
+    int sfx_vol = g_settings.sfx_volume;
+
+    if (s_bgm_data && s_bgm_len > 0) {
+        int sample = s_bgm_data[s_bgm_pos];
+        mixed += (sample * music_vol) / 100;
+        s_bgm_pos++;
+        if (s_bgm_pos >= s_bgm_len) {
+            s_bgm_pos = 0;
+        }
+    }
+
+    for (int ch = 0; ch < MAX_ACTIVE_SFX; ch++) {
+        if (s_sfx_channels[ch].active) {
+            int sample = s_sfx_channels[ch].data[s_sfx_channels[ch].position];
+            mixed += (sample * sfx_vol) / 100;
+            s_sfx_channels[ch].position++;
+            if (s_sfx_channels[ch].position >= s_sfx_channels[ch].length) {
+                s_sfx_channels[ch].active = false;
+            }
+        }
+    }
+
+    if (mixed > 127) mixed = 127;
+    if (mixed < -128) mixed = -128;
+    return (s8)mixed;
+}
+
+/* This runs from the Timer 0 IRQ.  It is deliberately short: interrupts on
+ * the GBA should acknowledge their source and return quickly. */
+IWRAM_CODE static void audio_timer_isr(void) {
+    if ((s_fifo_phase & 3u) == 3u) {
+        u32 word = 0;
+        for (u32 i = 0; i < 4; i++) {
+            u32 read_pos = s_read_pos;
+            s8 sample = 0;
+            if (read_pos != s_write_pos) {
+                sample = s_audio_ring[read_pos];
+                s_read_pos = (read_pos + 1u) & AUDIO_RING_MASK;
+            }
+            word |= ((u32)(u8)sample) << (i * 8u);
+        }
+        REG_FIFO_A = word;
+    }
+    s_fifo_phase++;
+    REG_IF = IRQ_TIMER0;
+}
+
 void audio_init(void) {
     s_current_bgm = BGM_NONE;
     s_bgm_data = NULL;
     s_bgm_len = 0;
     s_bgm_pos = 0;
+    s_read_pos = 0;
+    s_write_pos = 0;
+    s_fifo_phase = 0;
+    s_audio_started = false;
+
     for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
+        s_sfx_channels[i].data = NULL;
+        s_sfx_channels[i].length = 0;
+        s_sfx_channels[i].position = 0;
         s_sfx_channels[i].active = false;
     }
-    memset(s_audio_buffers, 0, sizeof(s_audio_buffers));
+    memset(s_audio_ring, 0, sizeof(s_audio_ring));
 
+    /* Stop a previous timer, then enable the sound master before touching
+     * the remaining sound registers (required by the hardware). */
+    REG_TM0CNT = 0;
     REG_SOUNDCNT_X = SSTAT_ENABLE;
-    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL | SDS_ARESET | SDS_ATMR0;
+    REG_SOUNDCNT_L = 0;
 
-    REG_TM0CNT_L = 64488;
-    REG_TM0CNT_H = TM_ENABLE;
+    /* DirectSound A to both speakers, 100% ratio, FIFO reset pulse. */
+    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL | SDS_ARESET;
+    REG_SOUNDCNT_H = SDS_A100 | SDS_AR | SDS_AL;
+    for (int i = 0; i < 4; i++) {
+        REG_FIFO_A = 0;
+    }
 
-    REG_DMA[1].cnt = 0;
-    REG_DMA[1].src = (const void*)s_audio_buffers[0];
-    REG_DMA[1].dst = (void*)&REG_FIFO_A;
-    REG_DMA[1].cnt = DMA_DST_FIXED | DMA_SRC_INC | DMA_REPEAT | DMA_32 | DMA_AT_FIFO | DMA_ENABLE;
+    /* Timer 0 / 1024 with reload 0xffff gives exactly 16,384 Hz. */
+    REG_TM0CNT_L = 0xffff;
+    REG_IF = IRQ_TIMER0;
+    irq_add(II_TIMER0, audio_timer_isr);
+}
+
+void audio_start(void) {
+    if (s_audio_started) return;
+
+    /* Prime the hardware FIFO before the first timer overflow. */
+    s_fifo_phase = 0;
+    for (int i = 0; i < 4; i++) {
+        u32 word = 0;
+        for (u32 j = 0; j < 4; j++) {
+            u32 read_pos = s_read_pos;
+            s8 sample = 0;
+            if (read_pos != s_write_pos) {
+                sample = s_audio_ring[read_pos];
+                s_read_pos = (read_pos + 1u) & AUDIO_RING_MASK;
+            }
+            word |= ((u32)(u8)sample) << (j * 8u);
+        }
+        REG_FIFO_A = word;
+    }
+
+    s_audio_started = true;
+    REG_TM0CNT_H = TM_FREQ_1024 | TM_IRQ | TM_ENABLE;
 }
 
 void audio_play_bgm(BgmTrack track) {
     if (s_current_bgm == track) return;
+
     s_current_bgm = track;
     s_bgm_pos = 0;
     if (track == BGM_MENU) {
@@ -58,6 +176,9 @@ void audio_play_bgm(BgmTrack track) {
         s_bgm_data = NULL;
         s_bgm_len = 0;
     }
+
+    /* Do not let the tail of the previous track remain queued. */
+    s_read_pos = s_write_pos;
 }
 
 void audio_stop_bgm(void) {
@@ -65,6 +186,7 @@ void audio_stop_bgm(void) {
     s_bgm_data = NULL;
     s_bgm_len = 0;
     s_bgm_pos = 0;
+    s_read_pos = s_write_pos;
 }
 
 void audio_play_sfx(SfxId sfx) {
@@ -109,43 +231,11 @@ void audio_stop_all(void) {
 }
 
 void audio_update(void) {
-    u32 write_buf = 1 - s_active_buffer;
-    s8* dst = s_audio_buffers[write_buf];
-
-    int music_vol = g_settings.music_volume;
-    int sfx_vol = g_settings.sfx_volume;
-
-    for (int i = 0; i < SAMPLES_PER_FRAME; i++) {
-        int mixed = 0;
-
-        if (s_bgm_data && s_bgm_len > 0 && music_vol > 0) {
-            int sample = s_bgm_data[s_bgm_pos];
-            mixed += (sample * music_vol) / 100;
-            s_bgm_pos++;
-            if (s_bgm_pos >= s_bgm_len) {
-                s_bgm_pos = 0;
-            }
-        }
-
-        if (sfx_vol > 0) {
-            for (int ch = 0; ch < MAX_ACTIVE_SFX; ch++) {
-                if (s_sfx_channels[ch].active) {
-                    int sample = s_sfx_channels[ch].data[s_sfx_channels[ch].position];
-                    mixed += (sample * sfx_vol) / 100;
-                    s_sfx_channels[ch].position++;
-                    if (s_sfx_channels[ch].position >= s_sfx_channels[ch].length) {
-                        s_sfx_channels[ch].active = false;
-                    }
-                }
-            }
-        }
-
-        if (mixed > 127) mixed = 127;
-        else if (mixed < -128) mixed = -128;
-
-        dst[i] = (s8)mixed;
+    u32 write_pos = s_write_pos;
+    while (audio_ring_level(write_pos) < (int)AUDIO_TARGET_SAMPLES) {
+        s_audio_ring[write_pos] = audio_mix_sample();
+        write_pos = (write_pos + 1u) & AUDIO_RING_MASK;
     }
-
-    s_active_buffer = write_buf;
-    REG_DMA[1].src = (const void*)s_audio_buffers[s_active_buffer];
+    /* Publish only after each newly mixed sample is in the ring. */
+    s_write_pos = write_pos;
 }

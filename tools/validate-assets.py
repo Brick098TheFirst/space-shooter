@@ -9,6 +9,14 @@ ROOT = Path(__file__).resolve().parents[1] / "SpaceUnlimited.Windows" / "Assets"
 IMAGES = ROOT / "Images"
 AUDIO = ROOT / "Audio"
 
+EXPECTED_AUDIO = (
+    "menu.wav",
+    "game.wav",
+    "laser.wav",
+    "explosion.wav",
+    "pickup.wav",
+)
+
 EXPECTED_IMAGES = {
     "starfield.png": (956, 717),
     "classic-ship.png": (198, 150),
@@ -53,7 +61,11 @@ def main() -> None:
     if len(explosion_frames) != 9:
         errors.append(f"expected 9 explosion frames, found {len(explosion_frames)}")
 
-    for path in AUDIO.glob("*.wav"):
+    for name in EXPECTED_AUDIO:
+        path = AUDIO / name
+        if not path.exists():
+            errors.append(f"missing audio: {name}")
+            continue
         try:
             with wave.open(str(path), "rb") as wav:
                 if wav.getnchannels() not in (1, 2) or wav.getsampwidth() != 2:
@@ -69,7 +81,7 @@ def main() -> None:
         raise SystemExit("Asset validation failed:\n- " + "\n- ".join(errors))
 
     print(f"Validated {len(EXPECTED_IMAGES) + len(explosion_frames)} PNG files and "
-          f"{len(list(AUDIO.glob('*.wav')))} WAV files ({total / 1024 / 1024:.2f} MiB).")
+          f"{len(EXPECTED_AUDIO)} WAV files ({total / 1024 / 1024:.2f} MiB).")
     print("Runtime logical-size policy:")
     for role, size in LOGICAL_POLICY.items():
         print(f"  {role:14} {size}")

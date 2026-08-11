@@ -467,7 +467,7 @@ static void render_credits(void) {
     gfx_draw_text_centered(20, 54, 200, "Original Scratch Project", 17);
     gfx_draw_text_centered(20, 66, 200, "Game Boy Advance Port", PAL_TEXT_WHITE);
     gfx_draw_text_centered(20, 78, 200, "Native ARMv4T / Tonc", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(20, 90, 200, "DirectSound 16kHz Audio", PAL_TEXT_GOLD);
+    gfx_draw_text_centered(20, 90, 200, "DirectSound 16.384kHz", PAL_TEXT_GOLD);
     gfx_draw_text_centered(20, 102, 200, "Full Controller & SRAM", PAL_TEXT_GREEN);
 
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
