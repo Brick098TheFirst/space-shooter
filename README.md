@@ -15,12 +15,12 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 - **18.157 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
 - **2× Arcade Pace:** Gameplay advances two simulation ticks per displayed frame, while audio remains on its independent hardware timer so faster action does not pitch-shift or starve the soundtrack.
 - **Expanded Shop & Deep Progression Grind:**
-  Earn coins by destroying asteroids, enemy drones, completing waves, and racking up combo chains. Coins persist in SRAM and are spent in the **Upgrade Hangar** on permanent unlocks & upgrades:
+  Earn coins by destroying asteroids, enemy fighters, completing waves, and racking up combo chains. Coins persist in SRAM and are spent in the **Upgrade Hangar** on permanent unlocks & upgrades:
   - **9 Ship Paints** (Solar Orange 800c, Ion Cyan [Starter 0c], Nova Violet 2,500c, Plasma Mint 5,500c, Pulsar Gold 14,000c, Crimson Void 30,000c, Obsidian Shadow 65,000c, Quantum Neon 120,000c, and the ultimate animated **Rainbow Prism** 1,000,000c)
-  - **8 Engine Trails** (Ember Fire 1,000c, Ion Cyan [Starter 0c], Nova Purple 3,200c, Aurora Mint 7,000c, Solar Gold 16,000c, Crimson Flame 35,000c, Void Shadow 70,000c, Prismatic Arc 130,000c)
+  - **8 Engine Trails** (Ember Fire 1,000c, Ion Cyan [Starter 0c], Nova Purple 3,200c, Aurora Mint 7,000c, Solar Gold 16,000c, Crimson Flame 35,000c, Void Shadow 70,000c, animated **Rainbow Trail** 130,000c)
   - **6 Weapon Rigs** (Twin Cannons [Starter 0c], Spread Cannon 2,500c, Focused Beam 7,500c, Triple Blaster 20,000c, Plasma Wave 50,000c, Quantum Core 100,000c)
-  - **8 Laser Crystals** (Ion Cyan [0c], Solar Gold 1,800c, Nebula Violet 4,500c, Toxic Mint 9,500c, Crimson Fury 22,000c, Emerald Surge 48,000c, Void Shadow 85,000c, Prism Radiance 150,000c)
-  - **7 Multi-Tier Tech Tree Upgrades (3 Levels Each):**
+  - **8 Laser Crystals** (Ion Cyan [0c], Solar Gold 1,800c, Nebula Violet 4,500c, Toxic Mint 9,500c, Crimson Fury 22,000c, Emerald Surge 48,000c, Void Shadow 85,000c, animated **Rainbow Laser** 150,000c)
+  - **7 Multi-Tier Tech Tree Upgrades (3 Levels Each):** Level 1 tech costs 50,000–65,000c, Level 2 costs 115,000–160,000c, and Level 3 costs 265,000–375,000c.
     - **Shield Battery:** Increases starting and maximum shield capacity (up to 6 shields).
     - **Reinforced Hull:** Nanite plating grants extra starting lives (up to 6 lives).
     - **Hyper Thrusters:** Increases flight agility and cuts Dash cooldown in half.
@@ -35,7 +35,8 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   - Dedicated item detail card with full stats, descriptions, and manual `[A] BUY` / `[A] EQUIP` actions.
 - **SRAM Save Persistence:**
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player.
-- **Balanced Arcade Gameplay:** Asteroid splitting, sinusoidal enemy drones with aimed plasma shots, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
+- **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
+- **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
 - **Dash Mechanic:** High-speed evasion burst with invulnerability window, engine trail particle fountain, and recharge meter.
 
 ### GBA Controls

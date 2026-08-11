@@ -18,13 +18,19 @@ static u8 s_laser_std[NUM_LASERS][4*10];
 static u8 s_laser_heavy[NUM_LASERS][6*14];
 static bool s_laser_ready = false;
 
+/* Bright shades from the seven ship-paint ramps.  These shared spectrum
+ * colours keep rainbow lasers, trails and the animated paint visually
+ * consistent without changing the global Mode 4 palette at runtime. */
+static const u8 s_rainbow_colors[7] = { 70, 50, 66, 62, 54, 58, 78 };
+
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
     vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 
-    // Build laser colour variants (8 colours: Cyan, Gold, Violet, Mint, Red, Emerald, Void, Pink)
+    // Build the seven static laser variants. Index 7 is drawn as an animated
+    // multi-colour spectrum by gfx_draw_laser (the cached pink is a fallback).
     const u8 laser_cols[NUM_LASERS] = { 21, 24, 28, 27, 26, 62, 116, 120 };
 
     for (int l = 0; l < NUM_LASERS; l++) {
@@ -168,6 +174,59 @@ IWRAM_CODE void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame) {
     }
 }
 
+/* Enemy fighters use the exact player silhouette and Crimson paint, rotated
+ * 180 degrees so their cannons and flight direction face down-screen. */
+IWRAM_CODE void gfx_draw_enemy_ship(int x, int y) {
+    const u8* src = spr_ship[5];
+    for (int sy = 0; sy < 16; sy++) {
+        int py = y + sy;
+        if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        for (int sx = 0; sx < 20; sx++) {
+            int px = x + sx;
+            if ((unsigned)px >= SCREEN_WIDTH) continue;
+            u8 pix = src[(15 - sy) * 20 + (19 - sx)];
+            if (pix != 0) s_rt[py * SCREEN_WIDTH + px] = pix;
+        }
+    }
+}
+
+/* Draw a complete player-style laser.  Rainbow Laser is deliberately rendered
+ * here rather than cached: each coloured edge pixel gets a moving spectrum
+ * phase, making several colours visible in the same bolt. */
+IWRAM_CODE void gfx_draw_laser(int center_x, int center_y, bool heavy,
+                               int laser_idx, int anim_frame, bool downward) {
+    if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
+
+    int w = heavy ? 6 : 4;
+    int h = heavy ? 14 : 10;
+    int x = center_x - w / 2;
+    int y = center_y - h / 2;
+    const u8* src = heavy ? gfx_get_laser_heavy_sprite(laser_idx)
+                          : gfx_get_laser_standard_sprite(laser_idx);
+
+    if (laser_idx != 7 && !downward) {
+        gfx_draw_sprite(x, y, w, h, src);
+        return;
+    }
+
+    for (int draw_y = 0; draw_y < h; draw_y++) {
+        int py = y + draw_y;
+        if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        int sy = downward ? (h - 1 - draw_y) : draw_y;
+        for (int sx = 0; sx < w; sx++) {
+            int px = x + sx;
+            if ((unsigned)px >= SCREEN_WIDTH) continue;
+            u8 pix = src[sy * w + sx];
+            if (pix == 0) continue;
+            if (laser_idx == 7 && pix != PAL_TEXT_WHITE) {
+                int phase = (anim_frame >> 2) + sy * 2 + sx;
+                pix = s_rainbow_colors[phase % 7];
+            }
+            s_rt[py * SCREEN_WIDTH + px] = pix;
+        }
+    }
+}
+
 IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
     if (c < 32 || c > 127) c = '?';
     if ((unsigned)x <= SCREEN_WIDTH - 5 && (unsigned)y <= SCREEN_HEIGHT - 7) {
@@ -277,13 +336,21 @@ u8 gfx_get_accent_color(int accent_idx) {
     return 48 + accent_idx * 4 + 2;
 }
 
-u8 gfx_get_trail_color(int trail_idx) {
+u8 gfx_get_rainbow_color(int phase) {
+    if (phase < 0) phase = -phase;
+    return s_rainbow_colors[phase % 7];
+}
+
+u8 gfx_get_trail_color_animated(int trail_idx, int anim_frame) {
     if (trail_idx == 7) {
-        const u8 rainbow_cols[7] = { 70, 50, 66, 62, 54, 58, 78 };
-        return rainbow_cols[(REG_VCOUNT / 4) % 7];
+        return gfx_get_rainbow_color(anim_frame >> 2);
     }
     if (trail_idx < 0 || trail_idx >= NUM_TRAILS) trail_idx = 1;
     return 184 + trail_idx * 3 + 1;
+}
+
+u8 gfx_get_trail_color(int trail_idx) {
+    return gfx_get_trail_color_animated(trail_idx, 0);
 }
 
 u8 gfx_get_laser_color(int laser_idx) {
@@ -331,7 +398,7 @@ const char* gfx_get_trail_name(int trail_idx) {
         case 4: return "Solar Gold";
         case 5: return "Crimson Blaze";
         case 6: return "Void Shadow";
-        case 7: return "Prism Stream";
+        case 7: return "Rainbow Trail";
         default: return "Drive Wake";
     }
 }
@@ -345,7 +412,7 @@ const char* gfx_get_trail_desc(int trail_idx) {
         case 4: return "Photon flare thrust";
         case 5: return "Heavy afterburner";
         case 6: return "Tachyon dark plume";
-        case 7: return "Multispectral arc";
+        case 7: return "Animated spectrum wake";
         default: return "Engine exhaust";
     }
 }
@@ -383,7 +450,7 @@ const char* gfx_get_laser_name(int laser_idx) {
         case 4: return "Crimson Fury";
         case 5: return "Emerald Surge";
         case 6: return "Void Shadow";
-        case 7: return "Prism Radiance";
+        case 7: return "Rainbow Laser";
         default: return "Beam Crystal";
     }
 }
@@ -397,7 +464,7 @@ const char* gfx_get_laser_desc(int laser_idx) {
         case 4: return "Thermal overcharge pulse";
         case 5: return "Gamma radiation green";
         case 6: return "Dark matter particle";
-        case 7: return "Rainbow prismatic beam";
+        case 7: return "Animated spectrum beam";
         default: return "Laser wavelength";
     }
 }

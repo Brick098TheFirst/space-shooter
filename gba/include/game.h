@@ -4,10 +4,10 @@
 #include "types.h"
 
 #define MAX_ASTEROIDS 18
-#define MAX_BULLETS 24
+#define MAX_BULLETS 40
 #define MAX_DRONES 6
 #define MAX_POWERUPS 6
-#define MAX_PARTICLES 48
+#define MAX_PARTICLES 64
 #define MAX_EXPLOSIONS 8
 
 typedef struct {
@@ -63,6 +63,8 @@ typedef struct {
     int vx; // 8.8
     int vy; // 8.8
     int shoot_timer;
+    int burst_timer;
+    int burst_shots;
     int phase;
     int hp;
     bool active;

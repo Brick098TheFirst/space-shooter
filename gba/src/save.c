@@ -251,7 +251,7 @@ int shop_get_trail_price(int idx) {
         case 4: return 16000;   // Solar Gold
         case 5: return 35000;   // Crimson Flame
         case 6: return 70000;   // Void Shadow
-        case 7: return 130000;  // Prismatic Arc
+        case 7: return 130000;  // Rainbow Trail
         default: return 999999;
     }
 }
@@ -277,41 +277,42 @@ int shop_get_laser_price(int idx) {
         case 4: return 22000;   // Crimson Fury
         case 5: return 48000;   // Emerald Surge
         case 6: return 85000;   // Void Shadow
-        case 7: return 150000;  // Prism Radiance
+        case 7: return 150000;  // Rainbow Laser
         default: return 999999;
     }
 }
 
 int shop_get_upgrade_price(UpgradeType upg, int level) {
+    // Tech begins around 50,000 coins and scales steeply across all three tiers.
     // level: 0 = buying lv 1, 1 = buying lv 2, 2 = buying lv 3
     if (level < 0 || level >= 3) return 999999;
     switch (upg) {
         case UPG_SHIELD: {
-            const int p[3] = { 3500, 15000, 45000 };
+            const int p[3] = { 50000, 125000, 300000 };
             return p[level];
         }
         case UPG_HULL: {
-            const int p[3] = { 4500, 18000, 55000 };
+            const int p[3] = { 55000, 140000, 325000 };
             return p[level];
         }
         case UPG_THRUSTERS: {
-            const int p[3] = { 3000, 12000, 38000 };
+            const int p[3] = { 50000, 120000, 280000 };
             return p[level];
         }
         case UPG_SCAVENGER: {
-            const int p[3] = { 4000, 16000, 50000 };
+            const int p[3] = { 55000, 135000, 320000 };
             return p[level];
         }
         case UPG_DAMAGE: {
-            const int p[3] = { 6000, 24000, 75000 };
+            const int p[3] = { 65000, 160000, 375000 };
             return p[level];
         }
         case UPG_OVERDRIVE: {
-            const int p[3] = { 2800, 10500, 32000 };
+            const int p[3] = { 50000, 115000, 265000 };
             return p[level];
         }
         case UPG_COMBO: {
-            const int p[3] = { 5000, 20000, 65000 };
+            const int p[3] = { 60000, 150000, 350000 };
             return p[level];
         }
         default: return 999999;
