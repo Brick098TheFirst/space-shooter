@@ -1,4 +1,4 @@
-import { buildGbaC } from "/tmp/gba-test/node_modules/romdev-platform-gba/index.js";
+import { buildGbaC } from "romdev-platform-gba";
 import fs from "node:fs";
 import path from "node:path";
 
