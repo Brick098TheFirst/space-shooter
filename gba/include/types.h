@@ -6,6 +6,11 @@
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 160
 
+#define NUM_ACCENTS 5
+#define NUM_TRAILS 4
+#define NUM_RIGS 3
+#define NUM_LASERS 4
+
 typedef enum {
     DIFF_CADET = 0,
     DIFF_PILOT = 1,
@@ -37,7 +42,13 @@ typedef struct {
     int accent_index; // 0..4
     int trail_index;  // 0..3
     WeaponRig weapon_rig; // 0..2
+    int laser_index;  // 0..3
     u32 high_score;
+    u32 coins;
+    u8 owned_accents; // bitmask for 5 paints
+    u8 owned_trails;  // bitmask for 4 trails
+    u8 owned_rigs;    // bitmask for 3 rigs
+    u8 owned_lasers;  // bitmask for 4 laser colours
 } GameSettings;
 
 extern GameSettings g_settings;

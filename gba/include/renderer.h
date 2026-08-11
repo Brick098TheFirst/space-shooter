@@ -37,9 +37,15 @@ void gfx_draw_progress_bar(int x, int y, int w, int h, int current, int max_val,
 
 u8 gfx_get_accent_color(int accent_idx);
 u8 gfx_get_trail_color(int trail_idx);
+u8 gfx_get_laser_color(int laser_idx);
 const char* gfx_get_accent_name(int accent_idx);
 const char* gfx_get_trail_name(int trail_idx);
 const char* gfx_get_weapon_name(WeaponRig rig);
 const char* gfx_get_diff_name(Difficulty diff);
+const char* gfx_get_laser_name(int laser_idx);
+
+// Laser variant sprites (generated at init)
+const u8* gfx_get_laser_standard_sprite(int laser_idx);
+const u8* gfx_get_laser_heavy_sprite(int laser_idx);
 
 #endif

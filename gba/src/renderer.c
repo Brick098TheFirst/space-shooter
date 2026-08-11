@@ -14,11 +14,36 @@ void gfx_apply_static(void) {
     dma3_cpy(s_back_buffer, gfx_static_layer, sizeof(gfx_static_layer));
 }
 
+static u8 s_laser_std[NUM_LASERS][4*10];
+static u8 s_laser_heavy[NUM_LASERS][6*14];
+static bool s_laser_ready = false;
+
 void gfx_init(void) {
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
     vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
+
+    // Build laser colour variants (cyan/gold/violet/mint)
+    for (int l = 0; l < NUM_LASERS; l++) {
+        u8 col = 21;
+        if (l == 1) col = 24;
+        else if (l == 2) col = 28;
+        else if (l == 3) col = 27;
+        // standard: 21 outer, 16 core
+        for (int i = 0; i < 4*10; i++) {
+            u8 p = spr_laser_standard[i];
+            if (p == 21) s_laser_std[l][i] = col;
+            else s_laser_std[l][i] = p;
+        }
+        // heavy: 22,23 outer, 16 core, 22/23 map to same col variant
+        for (int i = 0; i < 6*14; i++) {
+            u8 p = spr_laser_heavy[i];
+            if (p == 22 || p == 23) s_laser_heavy[l][i] = col;
+            else s_laser_heavy[l][i] = p;
+        }
+    }
+    s_laser_ready = true;
 }
 
 void gfx_flip(void) {
@@ -253,4 +278,33 @@ const char* gfx_get_diff_name(Difficulty diff) {
         case DIFF_ACE:   return "Ace";
         default:         return "Pilot";
     }
+}
+
+u8 gfx_get_laser_color(int laser_idx) {
+    switch (laser_idx) {
+        case 1: return 24;
+        case 2: return 28;
+        case 3: return 27;
+        default: return 21;
+    }
+}
+
+const char* gfx_get_laser_name(int laser_idx) {
+    switch (laser_idx) {
+        case 1: return "Gold";
+        case 2: return "Violet";
+        case 3: return "Mint";
+        default: return "Cyan";
+    }
+}
+
+const u8* gfx_get_laser_standard_sprite(int laser_idx) {
+    if (!s_laser_ready) return spr_laser_standard;
+    if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
+    return s_laser_std[laser_idx];
+}
+const u8* gfx_get_laser_heavy_sprite(int laser_idx) {
+    if (!s_laser_ready) return spr_laser_heavy;
+    if (laser_idx < 0 || laser_idx >= NUM_LASERS) laser_idx = 0;
+    return s_laser_heavy[laser_idx];
 }

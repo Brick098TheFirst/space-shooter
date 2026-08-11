@@ -1,7 +1,7 @@
 # Space Unlimited: Recharged 🚀
 
-A native **Game Boy Advance (GBA)** and **C# / .NET 8 Windows** remake of the original Scratch space shooter.
-The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for both modern platforms and authentic retro Game Boy Advance hardware.
+A native **Game Boy Advance (GBA)** remake of the original Scratch space shooter.
+The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for authentic retro Game Boy Advance hardware.
 
 ---
 
@@ -14,15 +14,20 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 - **Native Mode 4 Graphics Engine:** 240×160 60 FPS double-buffered page-flipped renderer with zero screen tearing and a custom 256-color palette.
 - **16.384 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
 - **2× Arcade Pace:** Gameplay advances two simulation ticks per displayed frame, while audio remains on its independent hardware timer so faster action does not pitch-shift or starve the soundtrack.
+- **Coin Economy + Shop:** Earn coins by destroying asteroids and drones (Large 15c, Medium 8c, Small 4c, Tiny 3c, Drone 25c). Coins persist in SRAM and are spent in the **Shop** on permanent unlocks:
+  - **5 Ship Paints** (Solar Orange 400c, Ion Cyan free, Nova Violet 650c, Plasma Mint 850c, Pulsar Gold 1400c)
+  - **4 Engine Trails** (Ember 350c, Ion free, Nova 600c, Aurora 950c)
+  - **3 Weapon Rigs / Lasers** (Spread 500c, Twin free, Focused 1000c) — rig determines firing pattern
+  - **4 Laser Colours** (Cyan free, Gold 450c, Violet 600c, Mint 800c) — purely cosmetic bullet tint
 - **Complete Command Deck Interface:**
-  - **Main Menu:** Play, Hangar, Settings, Controls & Guide, Credits + Live Ship Preview card.
-  - **Hangar:** 5 Ship Paint Accents (Solar Orange, Ion Cyan, Nova Violet, Plasma Mint, Pulsar Gold), 4 Engine Trails (Ember, Ion, Nova, Aurora), and 3 Weapon Rigs (Spread Cannons, Twin Cannons, Focused Beam).
+  - **Main Menu:** Play, Shop, Settings, Controls & Guide, Credits + Live Ship Preview card with coin counter.
+  - **Shop:** Cycle paints/trails/rigs/lasers with LEFT/RIGHT, press **A** to buy (if locked) or equip (if owned). Price badges, owned indicators, and a temporary *BOUGHT! / NEED Xc / EQUIPPED* popup. Preview ship updates live with selected paint + trail.
   - **Settings:** Difficulty modes (Cadet, Pilot, Ace), Music Volume, SFX Volume, Screen Shake toggle, and High Score reset.
-  - **Controls & Guide Screen:** Full button diagram and pickup guide.
-  - **In-Game Pause:** Frosted glass overlay with Resume, Restart, and Main Menu options.
-  - **Game Over Screen:** Final score, best record indicator, waves cleared, and quick restart.
-- **SRAM Save Persistence:** Settings and high scores persist to cartridge backup memory (`0x0E000000`).
-- **Arcade Gameplay:** Asteroid splitting, sinusoidal enemy drones with aimed plasma shots, powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×8).
+  - **Controls & Guide Screen:** Full button diagram, rare pickup odds (4% on asteroids, 7% on drones) and combo guide.
+  - **In-Game HUD:** Score, wave, coin counter ($), lives, shields, combo meter, rapid-fire timer, and dash recharge bar.
+  - **Game Over Screen:** Final score, coins earned, best record indicator, waves cleared, and quick retry/shop.
+- **SRAM Save Persistence:** Settings, high score, coins, and all shop unlocks persist to cartridge backup memory (`0x0E000000`) with a versioned checksum and legacy-save migration.
+- **Balanced Arcade Gameplay:** Asteroid splitting, sinusoidal enemy drones with aimed plasma shots, **rare** powerup drops (Shield, Rapid Fire, Repair — only 4% from asteroids and 7% from drones), and a timed combo multiplier system (up to ×8).
 - **Dash Mechanic:** High-speed evasion burst with invulnerability window, engine trail particle fountain, and recharge meter.
 
 ### GBA Controls
@@ -33,8 +38,9 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 | Fire Weapon | **A** | `Space`, `Z`, or `J` | `A` or `Right Trigger` |
 | Dash (Invincible) | **B** / **R** / **L** | `Shift`, `X`, or `K` | `X`, `B`, or `Right Bumper` |
 | Pause / Menu | **START** | `Enter` or `P` | `Start` / Menu |
-| Menu Select | **A** | `Space` or `Enter` | `A` |
+| Menu Select / Buy | **A** | `Space` or `Enter` | `A` |
 | Menu Back / Cancel | **B** | `Escape` or `Backspace` | `B` |
+| Shop Cycle | **LEFT/RIGHT** | `LEFT/RIGHT` / `A/D` | `LEFT/RIGHT` / D-Pad |
 | Options / Reset | **SELECT** | `Backspace` or `Tab` | `Back` / View |
 
 ---
@@ -57,7 +63,7 @@ To regenerate the 8-bit 16.384 kHz signed-PCM audio and indexed graphics C array
 npm run generate-assets
 ```
 
-The WAV files under `SpaceUnlimited.Windows/Assets/Audio/` are the source assets and are included in the repository. The GBA cannot play WAV containers directly: the generator downsamples them to signed 8-bit PCM in `gba/src/audio_data.c`, which is linked into the ROM. `audio.c` mixes that data into an EWRAM ring and feeds DirectSound FIFO A from a Timer 0 interrupt.
+The WAV files under `Assets/Audio/` are the source assets and are included in the repository. The GBA cannot play WAV containers directly: the generator downsamples them to signed 8-bit PCM in `gba/src/audio_data.c`, which is linked into the ROM. `audio.c` mixes that data into an EWRAM ring and feeds DirectSound FIFO A from a Timer 0 interrupt.
 
 ### GBA audio implementation notes
 
@@ -80,33 +86,14 @@ Navigate to `http://localhost:3000` to play in browser or download the `.gba` RO
 
 ---
 
-## 🪟 Windows (.NET 8) Version
-
-### Run from Visual Studio
-
-1. Open `SpaceUnlimited.sln`.
-2. Select `SpaceUnlimited.Windows` as the startup project.
-3. Press **F5**.
-
-### Make a portable Windows publish
-
-```powershell
-.\build-windows.ps1
-```
-
-The output executable is written to `release\SpaceUnlimited-win-x64\SpaceUnlimited.exe`.
-
----
-
 ## 📁 Repository Layout
 
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
+| `Assets/` | Source images and WAV audio (extracted from `spaceshooter.sb3`) |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |
 | `web/` | Web emulator player UI, styling, and WebAssembly mGBA assets |
 | `server.js` | Web server for live interactive preview and ROM downloads |
-| `SpaceUnlimited.Windows/` | Windows C# / .NET 8 WinForms game |
-| `SpaceUnlimited.sln` | Visual Studio solution |
 | `spaceshooter.sb3` | Preserved original Scratch 3 project file |
