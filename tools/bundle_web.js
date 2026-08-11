@@ -5,6 +5,7 @@ import path from "node:path";
 // Copy wasm file to web/dist
 const wasmSrc = "node_modules/romdev-platform-gba/wasm/mgba_libretro.wasm";
 const wasmDst = "web/dist/mgba_libretro.wasm";
+fs.mkdirSync("web/dist", { recursive: true });
 fs.copyFileSync(wasmSrc, wasmDst);
 
 // Copy GBA ROM to web/dist
