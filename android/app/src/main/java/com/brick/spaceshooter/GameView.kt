@@ -28,8 +28,13 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var keys = 0
     private val saveFile = File(context.filesDir, "space_unlimited.sav")
 
-    private val audioBuf = ShortArray(304)
+    private val audioBuf = ShortArray(NativeGame.AUDIO_SAMPLES_PER_FRAME)
     private val audioTrack: AudioTrack
+
+    // 90 Hz Frame Timing
+    private var lastFrameTimeNanos = 0L
+    private var timeAccumulatorNanos = 0L
+    private val targetFrameNanos = 1_000_000_000L / NativeGame.TARGET_FPS.toLong() // ~11.11 ms per tick at 90Hz
 
     init {
         NativeGame.nativeInit()
@@ -56,7 +61,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .build()
             )
-            .setBufferSizeInBytes(minBuf.coerceAtLeast(304 * 4))
+            .setBufferSizeInBytes(minBuf.coerceAtLeast(NativeGame.AUDIO_SAMPLES_PER_FRAME * 4 * 2))
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
         audioTrack.play()
@@ -64,6 +69,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     fun resume() {
         running = true
+        lastFrameTimeNanos = 0L
+        timeAccumulatorNanos = 0L
         choreographer.postFrameCallback(this)
         try { audioTrack.play() } catch (_: Exception) {}
     }
@@ -88,12 +95,35 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     override fun doFrame(frameTimeNanos: Long) {
         if (!running) return
-        NativeGame.nativeSetKeys(keys)
-        NativeGame.nativeTick()
+
+        if (lastFrameTimeNanos == 0L) {
+            lastFrameTimeNanos = frameTimeNanos
+            NativeGame.nativeSetKeys(keys)
+            NativeGame.nativeTick()
+            val n = NativeGame.nativeMixAudio(audioBuf)
+            if (n > 0) audioTrack.write(audioBuf, 0, n)
+        } else {
+            val elapsed = frameTimeNanos - lastFrameTimeNanos
+            lastFrameTimeNanos = frameTimeNanos
+            val clampedElapsed = elapsed.coerceIn(0L, targetFrameNanos * 4)
+            timeAccumulatorNanos += clampedElapsed
+
+            var ticks = 0
+            while (timeAccumulatorNanos >= targetFrameNanos && ticks < 4) {
+                NativeGame.nativeSetKeys(keys)
+                NativeGame.nativeTick()
+                val n = NativeGame.nativeMixAudio(audioBuf)
+                if (n > 0) audioTrack.write(audioBuf, 0, n)
+                timeAccumulatorNanos -= targetFrameNanos
+                ticks++
+            }
+            if (ticks == 0) {
+                NativeGame.nativeSetKeys(keys)
+            }
+        }
+
         NativeGame.nativePresent(pixels)
         bitmap.setPixels(pixels, 0, NativeGame.SCREEN_W, 0, 0, NativeGame.SCREEN_W, NativeGame.SCREEN_H)
-        val n = NativeGame.nativeMixAudio(audioBuf)
-        if (n > 0) audioTrack.write(audioBuf, 0, n)
         invalidate()
         choreographer.postFrameCallback(this)
     }

@@ -54,7 +54,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 ## 📱 Android (same C game, NDK host)
 
-The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A thin Kotlin `GameView` presents the 240×160 software framebuffer and maps touch to GBA keys.
+The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer at 90 Hz high refresh rate and maps touch to GBA keys.
 
 `cd android && ./gradlew assembleDebug` — see `android/README.md`.
 
