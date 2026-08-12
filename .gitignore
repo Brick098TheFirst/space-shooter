@@ -5,8 +5,13 @@ release/
 node_modules/
 web/dist/
 
+# Python cache
+__pycache__/
+*.pyc
+
 # OS/editor files
 .DS_Store
 Thumbs.db
 *.swp
+
 
