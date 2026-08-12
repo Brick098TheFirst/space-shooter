@@ -54,7 +54,7 @@ jobs:
           test -f SpaceUnlimited.gba
           echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
 
-      # ── 2. ANDROID APK BUILD ──
+      # ── 2. NATIVE ANDROID APK BUILD ──
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -64,31 +64,12 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Initialize Capacitor Android Project
-        run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap init "Space Unlimited" "com.brick.spaceshooter" --web-dir=android
-          npx cap add android
-          npx cap copy android
-
-      - name: Configure Android Gradle & Permissions
-        run: |
-          chmod +x android/capacitor-cordova-android-plugins/gradlew || true
-          cd android && if [ -d "android" ]; then cd android; fi
-          chmod +x gradlew || true
-
       - name: Build Android APK via Gradle
         run: |
-          # Build APK with Gradle inside the Capacitor Android folder
-          if [ -d "android/app" ]; then
-            cd android
-            ./gradlew assembleDebug
-            cp app/build/outputs/apk/debug/app-debug.apk ../../spaceshooter.apk
-          elif [ -d "android" ]; then
-            cd android
-            ./gradlew assembleDebug
-            cp app/build/outputs/apk/debug/app-debug.apk ../spaceshooter.apk
-          fi
+          cd android
+          chmod +x gradlew || true
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../spaceshooter.apk
           cd $GITHUB_WORKSPACE
           test -f spaceshooter.apk
           echo "Android APK size: $(wc -c < spaceshooter.apk) bytes"
@@ -103,10 +84,7 @@ jobs:
           if [ -n "$CUSTOM_TAG" ]; then
             TAG_NAME="$CUSTOM_TAG"
           else
-            # Fetch all existing release tags
             RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' || true)
-            
-            # Find the highest existing version number matching spaceshooter-v<N> or game-v<N>
             HIGHEST_NUM=0
             for tag in $RELEASES; do
               if [[ $tag =~ (spaceshooter|game)-v([0-9]+) ]]; then
@@ -121,11 +99,9 @@ jobs:
                 fi
               fi
             done
-            
             NEXT_NUM=$((HIGHEST_NUM + 1))
             TAG_NAME="spaceshooter-v${NEXT_NUM}"
           fi
-          
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "release_title=Space Unlimited ${TAG_NAME}" >> $GITHUB_OUTPUT
           echo "Generated next release tag: $TAG_NAME"
@@ -143,8 +119,8 @@ jobs:
             --notes "🚀 **Space Unlimited: Recharged ($TAG_NAME)**
 
           ### 📦 Release Assets
-          - **\`spaceshooter.apk\`**: Standalone Android APK for mobile devices (widescreen, 120Hz/90Hz, virtual analog joystick, touch HUD).
-          - **\`SpaceUnlimited.gba\`**: Native Game Boy Advance ROM for emulators and flashcarts (EverDrive, EZ-Flash, Miyoo, Anbernic).
+          - **\`spaceshooter.apk\`**: Standalone Native Android APK for mobile devices (pure Kotlin, widescreen, 120Hz/90Hz, virtual analog joystick, touch HUD).
+          - **\`SpaceUnlimited.gba\`**: Native Game Boy Advance ROM for emulators and flashcarts.
 
           ### 🕹️ Features
           - 9 Ship Paints (including dynamic animated Rainbow Prism)
@@ -152,5 +128,5 @@ jobs:
           - 8 Weapon Rigs (Single -> Nova Annihilator)
           - 12 Laser Crystals (including Omega Prism & Rainbow Laser)
           - 8 Tech Tree Upgrades (5 levels each)
-          - Save persistence (SRAM & LocalStorage)
+          - Persistent saving via Android SharedPreferences & SRAM
           - Hunter enemy fighters with laser bursts and red exhaust trails"
