@@ -13,8 +13,14 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0.0"
-
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_shared"
+            }
+        }
     }
 
     buildTypes {
@@ -33,25 +39,15 @@ android {
     buildFeatures {
         viewBinding false
     }
-}
-
-// Package the same GBA ROM + web mGBA player the rest of the repo uses.
-def repoRoot = rootProject.projectDir.parentFile
-tasks.register('syncGbaPlayerAssets', Copy) {
-    from("${repoRoot}/android/www/index.html")
-    from("${repoRoot}/web/dist") {
-        include 'emulator-bundle.js'
-        include 'mgba_libretro.wasm'
-        include 'SpaceUnlimited.gba'
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
     }
-    from("${repoRoot}/SpaceUnlimited.gba")
-    into("${projectDir}/src/main/assets/www")
 }
-
-tasks.named('preBuild').configure { dependsOn('syncGbaPlayerAssets') }
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.webkit:webkit:1.11.0'
 }

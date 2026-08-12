@@ -1,7 +1,7 @@
 #ifndef AUDIO_H
 #define AUDIO_H
 
-#include <tonc.h>
+#include "platform.h"
 #include "audio_data.h"
 
 typedef enum {
@@ -23,5 +23,9 @@ void audio_play_bgm(BgmTrack track);
 void audio_stop_bgm(void);
 void audio_play_sfx(SfxId sfx);
 void audio_stop_all(void);
+
+#ifdef PLATFORM_HOST
+const s8* audio_host_mix_buffer(void);
+#endif
 
 #endif

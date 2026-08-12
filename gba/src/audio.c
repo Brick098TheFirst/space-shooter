@@ -42,6 +42,7 @@ static u32 s_bgm_pos = 0;
 
 static SfxChannel s_sfx_channels[MAX_ACTIVE_SFX];
 
+#ifndef PLATFORM_HOST
 IWRAM_CODE static void audio_vblank_isr(void) {
     if (!s_audio_started) return;
 
@@ -59,6 +60,7 @@ IWRAM_CODE static void audio_vblank_isr(void) {
         s_active_buf = 1;
     }
 }
+#endif
 
 void audio_init(void) {
     s_current_bgm = BGM_NONE;
@@ -77,6 +79,9 @@ void audio_init(void) {
     }
     memset(s_audio_buf, 0, sizeof(s_audio_buf));
 
+#ifdef PLATFORM_HOST
+    s_audio_started = true;
+#else
     // Turn off existing DMA and Timer
     REG_DMA1CNT = 0;
     REG_TM0CNT = 0;
@@ -94,6 +99,7 @@ void audio_init(void) {
 
     // Register VBlank audio buffer swap handler
     irq_add(II_VBLANK, audio_vblank_isr);
+#endif
 }
 
 void audio_start(void) {
@@ -186,6 +192,12 @@ void audio_stop_all(void) {
         s_sfx_channels[i].position = 0;
     }
 }
+
+#ifdef PLATFORM_HOST
+const s8* audio_host_mix_buffer(void) {
+    return s_mix_buf;
+}
+#endif
 
 IWRAM_CODE void audio_update(void) {
     if (!s_audio_started) return;

@@ -52,11 +52,11 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 ---
 
-## 📱 Android (same GBA game)
+## 📱 Android (same C game, NDK host)
 
-The Android app in `android/` is **not a separate remake**. It packages the same `SpaceUnlimited.gba` ROM and the same mGBA web player (`web/src/emulator-client.js`) inside a fullscreen WebView, with on-screen GBA buttons.
+The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A thin Kotlin `GameView` presents the 240×160 software framebuffer and maps touch to GBA keys.
 
-Build the ROM/web bundle first (`npm run build`), then `cd android && ./gradlew assembleDebug`. See `android/README.md`.
+`cd android && ./gradlew assembleDebug` — see `android/README.md`.
 
 ---
 
@@ -95,7 +95,7 @@ Navigate to `http://localhost:3000` to play in browser or download the `.gba` RO
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
-| `android/` | Thin Android WebView shell that runs the same GBA ROM + player |
+| `android/` | NDK host that compiles `gba/` C for Android (`PLATFORM_HOST`) |
 | `Assets/` | Source images and WAV audio (extracted from `spaceshooter.sb3`) |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |

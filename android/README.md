@@ -1,33 +1,16 @@
-# Space Unlimited: Recharged — Android
+# Space Unlimited: Recharged — Android (native host)
 
-The Android app is a thin native shell around the **same GBA game** used everywhere else in this repo (`gba/` C sources → `SpaceUnlimited.gba` + the shared mGBA web player).
+Android compiles the **same C game** in `gba/` with the NDK (`PLATFORM_HOST`). It is not a WebView, not an emulator, and not a second remake.
 
-There is **no separate Android remake**. Gameplay, shop, audio, and saves are the GBA ROM.
-
-## Layout
-
-| Path | Role |
-|---|---|
-| `android/www/index.html` | Mobile touch UI that loads the shared emulator |
-| `android/app/.../MainActivity.kt` | Fullscreen WebView that serves packaged assets |
-| `SpaceUnlimited.gba` (repo root) | The game ROM, copied into the APK at build time |
-| `web/dist/` | Bundled `emulator-bundle.js` + `mgba_libretro.wasm` |
-
-Gradle task `syncGbaPlayerAssets` copies those files into `app/src/main/assets/www` before each build.
+GBA-only hardware (Mode 4 VRAM, DirectSound DMA, SRAM at `0x0E000000`) is swapped in `platform.h` / `platform_host.c`. Gameplay, shop, renderer software blit, and mixer stay in the shared sources.
 
 ## Build
 
-From the repo root:
-
 ```bash
-npm install
-npm run build
 cd android
 ./gradlew assembleDebug
 ```
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-## Controls
-
-Same mapping as the GBA / web player: D-Pad move, **A** fire, **B** dash, **L/R** shop tabs, **START** pause.
+Requires Android SDK + NDK (CMake). The GBA ROM build (`npm run build`) is unchanged and still uses libtonc.

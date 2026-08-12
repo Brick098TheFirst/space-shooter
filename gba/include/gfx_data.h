@@ -1,7 +1,7 @@
 #ifndef GFX_DATA_H
 #define GFX_DATA_H
 
-#include <tonc.h>
+#include "platform.h"
 
 #define PAL_SPACE_BLACK 0
 #define PAL_TEXT_WHITE 16

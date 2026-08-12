@@ -1,7 +1,7 @@
 #ifndef AUDIO_DATA_H
 #define AUDIO_DATA_H
 
-#include <tonc.h>
+#include "platform.h"
 
 #define AUDIO_SAMPLE_RATE 18157
 #define AUDIO_SAMPLES_PER_FRAME 304

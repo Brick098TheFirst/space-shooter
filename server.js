@@ -42,18 +42,7 @@ const server = http.createServer((req, res) => {
     if (reqPath === "/") reqPath = "/index.html";
 
     let filePath;
-    if (reqPath === "/android" || reqPath === "/android/") {
-        filePath = path.join(__dirname, "android", "www", "index.html");
-    } else if (reqPath.startsWith("/android/")) {
-        const rest = reqPath.slice("/android/".length);
-        if (rest === "SpaceUnlimited.gba" || rest === "emulator-bundle.js" || rest === "mgba_libretro.wasm") {
-            const distFile = path.join(__dirname, "web", "dist", rest === "SpaceUnlimited.gba" ? "SpaceUnlimited.gba" : rest);
-            const rootRom = path.join(__dirname, "SpaceUnlimited.gba");
-            filePath = fs.existsSync(distFile) ? distFile : (rest === "SpaceUnlimited.gba" ? rootRom : path.join(__dirname, "android", "www", rest));
-        } else {
-            filePath = path.join(__dirname, "android", "www", rest);
-        }
-    } else if (reqPath === "/SpaceUnlimited.gba") {
+    if (reqPath === "/SpaceUnlimited.gba") {
         filePath = path.join(__dirname, "SpaceUnlimited.gba");
     } else if (reqPath.startsWith("/dist/")) {
         filePath = path.join(__dirname, "web", reqPath);
@@ -77,5 +66,5 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`Space Unlimited Web Server listening on http://0.0.0.0:${PORT}`);
     console.log(`- GBA Web Player: http://0.0.0.0:${PORT}/`);
-    console.log(`- Android Mobile Edition: http://0.0.0.0:${PORT}/android/`);
+    console.log(`- Android native host: build with android/gradlew (same gba/ C sources)`);
 });
