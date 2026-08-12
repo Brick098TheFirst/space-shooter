@@ -69,11 +69,13 @@ static int shop_get_category_count(int cat) {
 }
 
 static void format_price(char* dst, int price) {
-    if (price >= 1000000) siprintf(dst, "%dM", price / 1000000);
+    char tmp[12];
+    if (price >= 1000000) siprintf(tmp, "%dM", price / 1000000);
     else if (price >= 1000) {
-        if (price % 1000 == 0) siprintf(dst, "%dk", price / 1000);
-        else siprintf(dst, "%d.%dk", price / 1000, (price % 1000) / 100);
-    } else siprintf(dst, "%dc", price);
+        if (price % 1000 == 0) siprintf(tmp, "%dk", price / 1000);
+        else siprintf(tmp, "%d.%dk", price / 1000, (price % 1000) / 100);
+    } else siprintf(tmp, "%dc", price);
+    strcpy(dst, tmp);
 }
 
 static void update_main_menu(void) {

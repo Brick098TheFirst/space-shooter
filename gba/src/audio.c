@@ -111,6 +111,7 @@ void audio_start(void) {
     s_mix_buf = &s_audio_buf[AUDIO_SAMPLES_PER_FRAME];
     audio_update();
 
+#ifndef PLATFORM_HOST
     s_active_buf = 0;
     s_mix_buf = &s_audio_buf[AUDIO_SAMPLES_PER_FRAME];
 
@@ -121,6 +122,7 @@ void audio_start(void) {
 
     // Start Timer 0 (CPU frequency, no IRQ)
     REG_TM0CNT_H = TM_FREQ_1 | TM_ENABLE;
+#endif
 
     s_audio_started = true;
 }
