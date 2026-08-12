@@ -140,7 +140,7 @@ with open('gba/include/audio_data.h', 'w') as f:
     f.write("""#ifndef AUDIO_DATA_H
 #define AUDIO_DATA_H
 
-#include <tonc.h>
+#include "platform.h"
 
 #define AUDIO_SAMPLE_RATE 18157
 #define AUDIO_SAMPLES_PER_FRAME 304
@@ -624,7 +624,7 @@ with open('gba/include/gfx_data.h', 'w') as f:
     f.write("""#ifndef GFX_DATA_H
 #define GFX_DATA_H
 
-#include <tonc.h>
+#include "platform.h"
 
 #define PAL_SPACE_BLACK 0
 #define PAL_TEXT_WHITE 16

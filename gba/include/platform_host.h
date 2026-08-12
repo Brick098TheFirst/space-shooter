@@ -53,7 +53,9 @@ static inline s32 lu_cos(u32 theta) {
     return (s32)(cos(a) * 4096.0);
 }
 
-#define siprintf snprintf
+/* tonc's siprintf takes no size argument; on host platforms we map it to a
+ * bounds-checked snprintf using the destination array's compile-time size. */
+#define siprintf(dst, ...) snprintf((dst), sizeof(dst), __VA_ARGS__)
 
 void platform_host_init(void);
 const u8* gfx_get_framebuffer(void);
