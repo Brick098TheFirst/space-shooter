@@ -370,7 +370,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                         if (mapped != null) NativeGame.nativeQueueTap(mapped.first, mapped.second)
                     }
                 }
-                MotionEvent.ACTION_CANCEL -> menuPointerDown = false
+                MotionEvent.ACTION_CANCEL -> { /* nothing to release on cancel in menu */ }
             }
             return true
         }
