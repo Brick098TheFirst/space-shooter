@@ -54,7 +54,13 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 ## 📱 Android (same C game, NDK host)
 
-The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus, and shows a circular virtual stick only while playing.
+The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus (including shop tabs), and shows a circular virtual stick only while playing.
+
+Android Play opens a **mode select** (GBA stays on classic waves):
+
+- **Waves** — clear each wave of asteroids and hunters.
+- **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
+- **Overdrive** — 90-second score rush with denser random spawns.
 
 `cd android && ./gradlew assembleDebug` — see `android/README.md`.
 
