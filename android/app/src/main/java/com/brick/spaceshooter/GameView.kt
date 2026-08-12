@@ -1,169 +1,200 @@
 package com.brick.spaceshooter
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
-import android.os.Build
+import android.graphics.Paint
+import android.graphics.Rect
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.view.Choreographer
 import android.view.MotionEvent
-import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.View
+import java.io.File
 
-class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
+class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
-    val saveManager = SaveManager(context)
-    val audioManager = AudioManager(context, saveManager)
-    val spriteRenderer = SpriteRenderer()
-    val touchControls = TouchControls(saveManager)
-    val gameEngine: GameEngine
+    private val pixels = IntArray(NativeGame.SCREEN_W * NativeGame.SCREEN_H)
+    private val bitmap = Bitmap.createBitmap(NativeGame.SCREEN_W, NativeGame.SCREEN_H, Bitmap.Config.ARGB_8888)
+    private val paint = Paint().apply {
+        isFilterBitmap = false
+        isAntiAlias = false
+        isDither = false
+    }
+    private val dest = Rect()
+    private val choreographer = Choreographer.getInstance()
+    private var running = false
+    private var keys = 0
+    private val saveFile = File(context.filesDir, "space_unlimited.sav")
 
-    private var thread: GameThread? = null
-    private var isRunning = false
+    private val audioBuf = ShortArray(304)
+    private val audioTrack: AudioTrack
 
     init {
-        holder.addCallback(this)
-        isFocusable = true
-        isFocusableInTouchMode = true
-
-        GfxData.init(context)
-        gameEngine = GameEngine(saveManager, audioManager, spriteRenderer, touchControls)
-    }
-
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                holder.surface.setFrameRate(120f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+        NativeGame.nativeInit()
+        if (saveFile.exists()) {
+            NativeGame.nativeLoadSave(saveFile.readBytes())
         }
-        resume()
-    }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        // Handle screen resizing
-    }
-
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        pause()
+        val minBuf = AudioTrack.getMinBufferSize(
+            18157,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        audioTrack = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(18157)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(minBuf.coerceAtLeast(304 * 4))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+        audioTrack.play()
     }
 
     fun resume() {
-        if (!isRunning) {
-            isRunning = true
-            thread = GameThread(holder, this).apply {
-                start()
-            }
-            audioManager.resumeMusic()
-        }
+        running = true
+        choreographer.postFrameCallback(this)
+        try { audioTrack.play() } catch (_: Exception) {}
     }
 
     fun pause() {
-        if (isRunning) {
-            isRunning = false
-            try {
-                thread?.join()
-            } catch (e: InterruptedException) {
-                e.printStackTrace()
-            }
-            thread = null
-            audioManager.pauseMusic()
-            saveManager.save()
-        }
-    }
-
-    fun updateAndDraw(canvas: Canvas?) {
-        if (canvas == null) return
-
-        try {
-            val scaleX = canvas.width / VIRTUAL_WIDTH
-            val scaleY = canvas.height / VIRTUAL_HEIGHT
-
-            canvas.save()
-            canvas.scale(scaleX, scaleY)
-            canvas.drawColor(Color.rgb(4, 6, 12)) // Default dark GBA space background
-            gameEngine.draw(canvas)
-            canvas.restore()
-
-            touchControls.clearFrameTaps()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        val scaleX = width / VIRTUAL_WIDTH
-        val scaleY = height / VIRTUAL_HEIGHT
-
-        // First check menu button taps
-        if (gameEngine.handleMenuTouch(event, scaleX, scaleY)) {
-            return true
-        }
-
-        // Then handle in-game virtual joystick & buttons
-        if (gameEngine.currentScreen == Screen.PLAYING) {
-            return touchControls.handleTouchEvent(event, scaleX, scaleY)
-        }
-
-        return true
+        running = false
+        choreographer.removeFrameCallback(this)
+        persistSave()
+        try { audioTrack.pause() } catch (_: Exception) {}
     }
 
     fun release() {
         pause()
-        gameEngine.release()
+        audioTrack.release()
     }
 
-    inner class GameThread(
-        private val surfaceHolder: SurfaceHolder,
-        private val gameView: GameView
-    ) : Thread() {
+    private fun persistSave() {
+        try {
+            saveFile.writeBytes(NativeGame.nativeGetSave())
+        } catch (_: Exception) {}
+    }
 
-        private var lastTime = System.nanoTime()
-        private var accumulator = 0f
-        private var fpsTimer = System.currentTimeMillis()
-        private var frames = 0
+    override fun doFrame(frameTimeNanos: Long) {
+        if (!running) return
+        NativeGame.nativeSetKeys(keys)
+        NativeGame.nativeTick()
+        NativeGame.nativePresent(pixels)
+        bitmap.setPixels(pixels, 0, NativeGame.SCREEN_W, 0, 0, NativeGame.SCREEN_W, NativeGame.SCREEN_H)
+        val n = NativeGame.nativeMixAudio(audioBuf)
+        if (n > 0) audioTrack.write(audioBuf, 0, n)
+        invalidate()
+        choreographer.postFrameCallback(this)
+    }
 
-        override fun run() {
-            while (isRunning) {
-                val now = System.nanoTime()
-                val dtMs = ((now - lastTime) / 1_000_000.0).toFloat().coerceAtMost(100f)
-                lastTime = now
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        canvas.drawColor(0xFF050810.toInt())
+        val vw = width
+        val vh = height
+        val scale = minOf(vw / NativeGame.SCREEN_W.toFloat(), vh / NativeGame.SCREEN_H.toFloat())
+        val dw = (NativeGame.SCREEN_W * scale).toInt()
+        val dh = (NativeGame.SCREEN_H * scale).toInt()
+        val left = (vw - dw) / 2
+        val top = (vh - dh) / 2
+        dest.set(left, top, left + dw, top + dh)
+        canvas.drawBitmap(bitmap, null, dest, paint)
+        drawOverlay(canvas)
+    }
 
-                accumulator += dtMs
-                while (accumulator >= FIXED_TIMESTEP) {
-                    gameView.gameEngine.updatePhysics()
-                    accumulator -= FIXED_TIMESTEP
-                }
-
-                // Measure real-time FPS
-                frames++
-                val curMs = System.currentTimeMillis()
-                if (curMs - fpsTimer >= 1000) {
-                    gameView.gameEngine.displayFps = frames
-                    frames = 0
-                    fpsTimer = curMs
-                }
-
-                var canvas: Canvas? = null
-                try {
-                    canvas = surfaceHolder.lockCanvas()
-                    if (canvas != null) {
-                        synchronized(surfaceHolder) {
-                            gameView.updateAndDraw(canvas)
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    if (canvas != null) {
-                        try {
-                            surfaceHolder.unlockCanvasAndPost(canvas)
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
-                }
-            }
+    private fun drawOverlay(canvas: Canvas) {
+        val p = Paint().apply { isAntiAlias = true; textAlign = Paint.Align.CENTER; textSize = 22f }
+        fun btn(r: Rect, label: String, bit: Int) {
+            p.color = if (keys and bit != 0) 0xAA23D6FF.toInt() else 0x66282730.toInt()
+            canvas.drawRoundRect(r.left.toFloat(), r.top.toFloat(), r.right.toFloat(), r.bottom.toFloat(), 16f, 16f, p)
+            p.color = 0xE0FFFFFF.toInt()
+            canvas.drawText(label, r.exactCenterX(), r.exactCenterY() + 8f, p)
         }
+        btn(rectUp(), "▲", NativeGame.KEY_UP)
+        btn(rectDown(), "▼", NativeGame.KEY_DOWN)
+        btn(rectLeft(), "◀", NativeGame.KEY_LEFT)
+        btn(rectRight(), "▶", NativeGame.KEY_RIGHT)
+        btn(rectA(), "A", NativeGame.KEY_A)
+        btn(rectB(), "B", NativeGame.KEY_B)
+        btn(rectL(), "L", NativeGame.KEY_L)
+        btn(rectR(), "R", NativeGame.KEY_R)
+        btn(rectStart(), "ST", NativeGame.KEY_START)
+        btn(rectSelect(), "SE", NativeGame.KEY_SELECT)
+    }
+
+    private fun dpadSize() = (minOf(width, height) * 0.12f).toInt().coerceAtLeast(48)
+    private fun dpadCx() = (width * 0.16f).toInt()
+    private fun dpadCy() = (height * 0.72f).toInt()
+
+    private fun rectUp(): Rect {
+        val s = dpadSize(); val cx = dpadCx(); val cy = dpadCy()
+        return Rect(cx - s / 2, cy - s * 2, cx + s / 2, cy - s / 2)
+    }
+    private fun rectDown(): Rect {
+        val s = dpadSize(); val cx = dpadCx(); val cy = dpadCy()
+        return Rect(cx - s / 2, cy + s / 2, cx + s / 2, cy + s * 2)
+    }
+    private fun rectLeft(): Rect {
+        val s = dpadSize(); val cx = dpadCx(); val cy = dpadCy()
+        return Rect(cx - s * 2, cy - s / 2, cx - s / 2, cy + s / 2)
+    }
+    private fun rectRight(): Rect {
+        val s = dpadSize(); val cx = dpadCx(); val cy = dpadCy()
+        return Rect(cx + s / 2, cy - s / 2, cx + s * 2, cy + s / 2)
+    }
+    private fun rectA(): Rect {
+        val s = dpadSize(); return Rect(width - s * 3, height - s * 4, width - s, height - s * 2)
+    }
+    private fun rectB(): Rect {
+        val s = dpadSize(); return Rect(width - s * 5, height - s * 3, width - s * 3, height - s)
+    }
+    private fun rectL(): Rect {
+        val s = dpadSize(); return Rect(16, 16, 16 + s * 2, 16 + s)
+    }
+    private fun rectR(): Rect {
+        val s = dpadSize(); return Rect(width - 16 - s * 2, 16, width - 16, 16 + s)
+    }
+    private fun rectStart(): Rect {
+        val s = dpadSize(); return Rect(width / 2 + 8, height - s - 12, width / 2 + s + 8, height - 12)
+    }
+    private fun rectSelect(): Rect {
+        val s = dpadSize(); return Rect(width / 2 - s - 8, height - s - 12, width / 2 - 8, height - 12)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        var next = 0
+        val count = event.pointerCount
+        val action = event.actionMasked
+        for (i in 0 until count) {
+            if (action == MotionEvent.ACTION_UP ||
+                (action == MotionEvent.ACTION_POINTER_UP && i == event.actionIndex)
+            ) continue
+            val x = event.getX(i).toInt()
+            val y = event.getY(i).toInt()
+            if (rectUp().contains(x, y)) next = next or NativeGame.KEY_UP
+            if (rectDown().contains(x, y)) next = next or NativeGame.KEY_DOWN
+            if (rectLeft().contains(x, y)) next = next or NativeGame.KEY_LEFT
+            if (rectRight().contains(x, y)) next = next or NativeGame.KEY_RIGHT
+            if (rectA().contains(x, y)) next = next or NativeGame.KEY_A
+            if (rectB().contains(x, y)) next = next or NativeGame.KEY_B
+            if (rectL().contains(x, y)) next = next or NativeGame.KEY_L
+            if (rectR().contains(x, y)) next = next or NativeGame.KEY_R
+            if (rectStart().contains(x, y)) next = next or NativeGame.KEY_START
+            if (rectSelect().contains(x, y)) next = next or NativeGame.KEY_SELECT
+        }
+        keys = next
+        NativeGame.nativeSetKeys(keys)
+        return true
     }
 }

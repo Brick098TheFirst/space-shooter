@@ -1,12 +1,13 @@
 #ifndef RENDERER_H
 #define RENDERER_H
 
-#include <tonc.h>
+#include "platform.h"
 #include "types.h"
 #include "gfx_data.h"
 
 void gfx_init(void);
 void gfx_flip(void);
+const u8* gfx_get_framebuffer(void);
 void gfx_clear(u8 color);
 
 /* Static-layer caching: draw the unchanging screen parts into the cache with

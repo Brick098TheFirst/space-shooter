@@ -1,7 +1,7 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-#include <tonc.h>
+#include "platform.h"
 
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 160

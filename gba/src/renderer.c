@@ -39,10 +39,16 @@ static const u8 s_laser_palette[NUM_LASERS] = {
     78   //11 Omega Prism - final god laser
 };
 
+const u8* gfx_get_framebuffer(void) {
+    return s_back_buffer;
+}
+
 void gfx_init(void) {
+#ifndef PLATFORM_HOST
     REG_DISPCNT = DCNT_MODE4 | DCNT_BG2;
     vid_page = (COLOR*)MEM_VRAM_BACK;
     tonccpy(pal_bg_mem, master_palette, sizeof(master_palette));
+#endif
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 
     // Build laser variants. Rainbow (7) and Omega (11) are special animated.
@@ -67,6 +73,9 @@ void gfx_init(void) {
 }
 
 void gfx_flip(void) {
+#ifdef PLATFORM_HOST
+    REG_VCOUNT = (REG_VCOUNT + 1) % 228;
+#else
     VBlankIntrWait();
     u16* vram = (u16*)vid_page;
     const u16* src = (const u16*)s_back_buffer;
@@ -74,6 +83,7 @@ void gfx_flip(void) {
 
     REG_DISPCNT ^= DCNT_PAGE;
     vid_page = (COLOR*)((REG_DISPCNT & DCNT_PAGE) ? MEM_VRAM : MEM_VRAM_BACK);
+#endif
 }
 
 IWRAM_CODE void gfx_clear(u8 color) {

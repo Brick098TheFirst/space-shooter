@@ -4,7 +4,9 @@
 
 GameSettings g_settings;
 
+#ifndef PLATFORM_HOST
 #define SRAM_BASE ((volatile u8*)0x0E000000)
+#endif
 #define SAVE_MAGIC_V1 0x53554742 // 'SUGB' legacy
 #define SAVE_MAGIC_V2 0x53554743 // 'SUGC' legacy
 #define SAVE_MAGIC_V3 0x53554744 // 'SUGD' expanded shop & tech upgrades
