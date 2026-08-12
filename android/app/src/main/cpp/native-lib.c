@@ -10,6 +10,10 @@
 #include "menu.h"
 #include "audio_data.h"
 
+#ifndef HOST_OUT_RATE
+#define HOST_OUT_RATE 44100
+#endif
+
 JNIEXPORT void JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeInit(JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
@@ -53,14 +57,51 @@ Java_com_brick_spaceshooter_NativeGame_nativeMixAudio(JNIEnv* env, jclass clazz,
     const s8* src = audio_host_mix_buffer();
     if (!src) return 0;
     jsize n = (*env)->GetArrayLength(env, out);
-    if (n > AUDIO_SAMPLES_PER_FRAME) n = AUDIO_SAMPLES_PER_FRAME;
+    if (n <= 0) return 0;
     jshort* dst = (*env)->GetShortArrayElements(env, out, NULL);
     if (!dst) return 0;
+
+    /* Linear-resample the 18.157 kHz mix buffer up to the host output rate
+     * (44100). Playing the unusual GBA rate directly makes many devices
+     * pitch-shift and boom the menu track. */
+    const int in_n = AUDIO_SAMPLES_PER_FRAME;
     for (jsize i = 0; i < n; i++) {
-        dst[i] = (jshort)(src[i] << 8);
+        int pos = (int)(((long)i * (in_n - 1) * 256) / (n > 1 ? (n - 1) : 1));
+        int idx = pos >> 8;
+        int frac = pos & 255;
+        if (idx >= in_n - 1) {
+            idx = in_n - 1;
+            frac = 0;
+        }
+        int s0 = (int)src[idx];
+        int s1 = (int)src[(idx + 1 < in_n) ? idx + 1 : idx];
+        int mixed = s0 + (((s1 - s0) * frac) >> 8);
+        int sample = mixed * 200; /* ~78% of <<8, leaves headroom */
+        if (sample > 32767) sample = 32767;
+        else if (sample < -32768) sample = -32768;
+        dst[i] = (jshort)sample;
     }
+
     (*env)->ReleaseShortArrayElements(env, out, dst, 0);
     return n;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeGetScreen(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)menu_current_screen();
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeQueueTap(JNIEnv* env, jclass clazz, jint x, jint y) {
+    (void)env; (void)clazz;
+    menu_queue_tap((int)x, (int)y);
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeGoBack(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    menu_go_back();
 }
 
 JNIEXPORT void JNICALL

@@ -7,7 +7,9 @@ object NativeGame {
 
     const val SCREEN_W = 284
     const val SCREEN_H = 160
-    const val AUDIO_SAMPLES_PER_FRAME = 202
+    const val MIX_SAMPLES = 202
+    const val AUDIO_SAMPLE_RATE = 44100
+    const val AUDIO_SAMPLES_PER_FRAME = 490
     const val TARGET_FPS = 90
 
     const val KEY_A = 0x0001
@@ -21,11 +23,23 @@ object NativeGame {
     const val KEY_R = 0x0100
     const val KEY_L = 0x0200
 
+    const val SCREEN_MAIN_MENU = 0
+    const val SCREEN_HANGAR = 1
+    const val SCREEN_SETTINGS = 2
+    const val SCREEN_CONTROLS = 3
+    const val SCREEN_PLAYING = 4
+    const val SCREEN_PAUSED = 5
+    const val SCREEN_GAME_OVER = 6
+    const val SCREEN_CREDITS = 7
+
     external fun nativeInit()
     external fun nativeSetKeys(keys: Int)
     external fun nativeTick()
     external fun nativePresent(pixels: IntArray)
     external fun nativeMixAudio(out: ShortArray): Int
+    external fun nativeGetScreen(): Int
+    external fun nativeQueueTap(x: Int, y: Int)
+    external fun nativeGoBack()
     external fun nativeLoadSave(data: ByteArray)
     external fun nativeGetSave(): ByteArray
 }

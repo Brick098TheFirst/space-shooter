@@ -230,6 +230,16 @@ IWRAM_CODE void audio_update(void) {
     // Convert 0..100 volume scale to 0..256 fixed-point multiplier (0 division)
     int music_scale = (g_settings.music_volume * 655) >> 8;
     int sfx_scale = (g_settings.sfx_volume * 655) >> 8;
+#ifdef PLATFORM_HOST
+    /* Menu WAV is much louder/bassier than the in-game track after the shared
+     * peak-normalize. Duck it and shave a little off gameplay BGM so the host
+     * mixer is not a wall of boom. */
+    if (s_current_bgm == BGM_MENU) {
+        music_scale = (music_scale * 150) >> 8;
+    } else {
+        music_scale = (music_scale * 210) >> 8;
+    }
+#endif
 
     for (int i = 0; i < AUDIO_SAMPLES_PER_FRAME; i++) {
         int mixed = 0;
