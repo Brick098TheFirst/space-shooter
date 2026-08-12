@@ -9,6 +9,12 @@ web/dist/
 __pycache__/
 *.pyc
 
+# Android / Gradle build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+
 # OS/editor files
 .DS_Store
 Thumbs.db
