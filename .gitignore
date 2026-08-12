@@ -4,6 +4,9 @@ release/
 # Node / Web build output
 node_modules/
 web/dist/
+www/
+capacitor.config.json
+capacitor.config.ts
 
 # Python cache
 __pycache__/

@@ -85,10 +85,10 @@ To build a standalone `.apk` for Google Play or sideloading:
 npx @bubblewrap/cli init --manifest=http://localhost:3000/android/manifest.json
 npx @bubblewrap/cli build
 
-# Or using Capacitor:
-npm install @capacitor/core @capacitor/cli @capacitor/android
-npx cap init "Space Unlimited" "com.brick.spaceshooter" --web-dir=android
-npx cap add android
+# Or using Capacitor (this folder is the web game, not the native project).
+# Capacitor always creates ./android for the native project, so stage the
+# game into www/ first — tools/setup_capacitor_android.sh does that:
+bash tools/setup_capacitor_android.sh
 npx cap open android
 ```
 
