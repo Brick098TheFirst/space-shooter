@@ -5,8 +5,11 @@ object NativeGame {
         System.loadLibrary("spacegame")
     }
 
-    const val SCREEN_W = 240
+    const val SCREEN_W = 284
     const val SCREEN_H = 160
+    const val AUDIO_SAMPLES_PER_FRAME = 202
+    const val TARGET_FPS = 90
+
     const val KEY_A = 0x0001
     const val KEY_B = 0x0002
     const val KEY_SELECT = 0x0004

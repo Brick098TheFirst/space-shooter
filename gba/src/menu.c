@@ -306,16 +306,20 @@ static void render_main_menu_static(void) {
     int start_y = 44; int step_y = 19;
     for (int i = 0; i < 5; i++) gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], false);
 
-    draw_ship_preview_static(108, 10, 126, 116);
-    gfx_draw_glass_card(108, 128, 126, 24, PAL_BTN_BORDER, 14);
-    gfx_draw_text_centered(108, 132, 126, "D-PAD Navigate", PAL_TEXT_WHITE);
-    gfx_draw_text_centered(108, 140, 126, "A Select", PAL_TEXT_CYAN);
+    int card_w = 126;
+    int card_x = SCREEN_WIDTH - card_w - 6;
+    draw_ship_preview_static(card_x, 10, card_w, 116);
+    gfx_draw_glass_card(card_x, 128, card_w, 24, PAL_BTN_BORDER, 14);
+    gfx_draw_text_centered(card_x, 132, card_w, "D-PAD Navigate", PAL_TEXT_WHITE);
+    gfx_draw_text_centered(card_x, 140, card_w, "A Select", PAL_TEXT_CYAN);
 }
 static void render_main_menu_dynamic(void) {
     menu_draw_base();
     gfx_draw_button(10, 44 + s_menu_selected * 19, 90, 16,
         (const char*[]){"Play","Shop","Upgrades","Controls","Credits"}[s_menu_selected], true);
-    draw_ship_preview_dynamic(108, 10, 126);
+    int card_w = 126;
+    int card_x = SCREEN_WIDTH - card_w - 6;
+    draw_ship_preview_dynamic(card_x, 10, card_w);
 }
 
 static void render_hangar_static(void) {
@@ -327,18 +331,23 @@ static void render_hangar_static(void) {
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
     const char* tab_names[4] = { "PAINTS", "TRAILS", "WEAPONS", "LASERS" };
-    const int tab_x[4] = { 6, 62, 118, 174 };
-    const int tab_w = 56;
+    int tab_w = 56;
+    int tab_gap = (SCREEN_WIDTH - 8 - 4 * tab_w) / 3;
+    if (tab_gap < 0) tab_gap = 0;
     for (int t = 0; t < 4; t++) {
+        int tx = (t == 3) ? (SCREEN_WIDTH - 4 - tab_w) : (4 + t * (tab_w + tab_gap));
         bool is_active = (t == s_shop_category);
         u8 border = is_active ? PAL_TEXT_CYAN : 20;
         u8 bg = is_active ? PAL_BTN_HOVER : PAL_BTN_BG;
         u8 txt = is_active ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
-        gfx_draw_glass_card(tab_x[t], 17, tab_w, 12, border, bg);
-        gfx_draw_text_centered(tab_x[t], 19, tab_w, tab_names[t], txt);
+        gfx_draw_glass_card(tx, 17, tab_w, 12, border, bg);
+        gfx_draw_text_centered(tx, 19, tab_w, tab_names[t], txt);
     }
-    gfx_draw_glass_card(4, 31, 116, 112, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(122, 31, 114, 112, PAL_BTN_BORDER, 14);
+    int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
+    int right_x = 4 + list_w + 2;
+    int right_w = SCREEN_WIDTH - 4 - right_x;
+    gfx_draw_glass_card(4, 31, list_w, 112, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(right_x, 31, right_w, 112, PAL_BTN_BORDER, 14);
 }
 
 static void render_hangar_dynamic(void) {
@@ -348,6 +357,10 @@ static void render_hangar_dynamic(void) {
     int selected = s_shop_selected[cat];
     int scroll = s_shop_scroll[cat];
 
+    int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
+    int right_x = 4 + list_w + 2;
+    int right_w = SCREEN_WIDTH - 4 - right_x;
+
     for (int i = 0; i < 5; i++) {
         int item_idx = scroll + i;
         if (item_idx >= count) break;
@@ -355,7 +368,7 @@ static void render_hangar_dynamic(void) {
         bool is_sel = (item_idx == selected);
         u8 border = is_sel ? PAL_TEXT_CYAN : 20;
         u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
-        gfx_draw_glass_card(6, row_y, 112, 19, border, bg);
+        gfx_draw_glass_card(6, row_y, list_w - 4, 19, border, bg);
         char name_buf[16] = {0}; char badge_buf[12] = {0}; u8 badge_col = PAL_TEXT_GOLD;
         switch (cat) {
             case 0: {
@@ -397,19 +410,19 @@ static void render_hangar_dynamic(void) {
         }
         if (is_sel) { gfx_draw_char(9, row_y + 6, '>', PAL_TEXT_CYAN); gfx_draw_text(16, row_y + 6, name_buf, PAL_TEXT_WHITE); }
         else gfx_draw_text(10, row_y + 6, name_buf, PAL_TEXT_CYAN);
-        int b_x = 114 - (int)strlen(badge_buf) * 6;
+        int b_x = 4 + list_w - 6 - (int)strlen(badge_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, badge_buf, badge_col);
     }
-    if (scroll > 0) gfx_draw_char(110, 32, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(110, 134, 'v', PAL_TEXT_CYAN);
+    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 32, '^', PAL_TEXT_CYAN);
+    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 134, 'v', PAL_TEXT_CYAN);
 
     // Right panel preview
-    gfx_draw_glass_card(124, 33, 110, 35, 20, PAL_SPACE_BLACK);
+    gfx_draw_glass_card(right_x + 2, 33, right_w - 4, 35, 20, PAL_SPACE_BLACK);
     int preview_accent = (cat == 0) ? selected : g_settings.accent_index;
     int preview_trail  = (cat == 1) ? selected : g_settings.trail_index;
     int preview_laser  = (cat == 3) ? selected : g_settings.laser_index;
     if (preview_accent < 0 || preview_accent >= NUM_ACCENTS) preview_accent = 1;
-    int ship_x = 124 + (110 - 20) / 2;
+    int ship_x = right_x + (right_w - 20) / 2;
     int ship_y = 47;
     gfx_draw_ship(ship_x, ship_y, preview_accent, s_anim_frame);
     draw_preview_engine_trail(ship_x, ship_y, preview_trail);
@@ -421,7 +434,7 @@ static void render_hangar_dynamic(void) {
             gfx_draw_laser(ship_x + 14, laser_center_y, false, preview_laser, s_anim_frame, false);
         }
     }
-    gfx_fill_rect(126, 70, 106, 1, 20);
+    gfx_fill_rect(right_x + 4, 70, right_w - 8, 1, 20);
 
     const char* full_name = "";
     const char* desc1 = "";
@@ -436,25 +449,27 @@ static void render_hangar_dynamic(void) {
         case 3: full_name = gfx_get_laser_name(selected); desc1 = gfx_get_laser_desc(selected); desc2 = "Laser crystal core"; is_owned = shop_is_laser_owned(selected); is_equipped = (g_settings.laser_index == selected); item_price = shop_get_laser_price(selected); break;
     }
 
-    gfx_draw_text_centered(122, 73, 114, full_name, PAL_TEXT_WHITE);
+    gfx_draw_text_centered(right_x, 73, right_w, full_name, PAL_TEXT_WHITE);
     if (is_equipped) { siprintf(status_buf, "[EQUIPPED]"); status_col = PAL_TEXT_GREEN; }
     else if (is_owned) { siprintf(status_buf, "[OWNED]"); status_col = PAL_TEXT_CYAN; }
     else { char pbuf[16]; format_price(pbuf, item_price); siprintf(status_buf, "COST: %s", pbuf); status_col = PAL_TEXT_GOLD; }
-    gfx_draw_text_centered(122, 83, 114, status_buf, status_col);
-    gfx_draw_text_centered(122, 94, 114, desc1, PAL_TEXT_CYAN);
-    gfx_draw_text_centered(122, 104, 114, desc2, 17);
+    gfx_draw_text_centered(right_x, 83, right_w, status_buf, status_col);
+    gfx_draw_text_centered(right_x, 94, right_w, desc1, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(right_x, 104, right_w, desc2, 17);
 
+    int btn_w = right_w - 8;
+    int btn_x = right_x + 4;
     if (is_equipped) {
-        gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GREEN, PAL_BTN_HOVER);
-        gfx_draw_text_centered(126, 125, 106, "EQUIPPED", PAL_TEXT_GREEN);
+        gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_GREEN, PAL_BTN_HOVER);
+        gfx_draw_text_centered(btn_x, 125, btn_w, "EQUIPPED", PAL_TEXT_GREEN);
     } else if (is_owned) {
-        gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_CYAN, PAL_BTN_HOVER);
-        gfx_draw_text_centered(126, 125, 106, "[A] EQUIP", PAL_TEXT_WHITE);
+        gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_CYAN, PAL_BTN_HOVER);
+        gfx_draw_text_centered(btn_x, 125, btn_w, "[A] EQUIP", PAL_TEXT_WHITE);
     } else {
         bool can_afford = (g_settings.coins >= (u32)item_price);
         char pbuf[16]; format_price(pbuf, item_price); char btn_text[28];
-        if (can_afford) { siprintf(btn_text, "[A] BUY %s", pbuf); gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER); gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_GOLD); }
-        else { siprintf(btn_text, "NEED %s", pbuf); gfx_draw_glass_card(126, 118, 106, 21, PAL_TEXT_RED, PAL_BTN_BG); gfx_draw_text_centered(126, 125, 106, btn_text, PAL_TEXT_RED); }
+        if (can_afford) { siprintf(btn_text, "[A] BUY %s", pbuf); gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER); gfx_draw_text_centered(btn_x, 125, btn_w, btn_text, PAL_TEXT_GOLD); }
+        else { siprintf(btn_text, "NEED %s", pbuf); gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_RED, PAL_BTN_BG); gfx_draw_text_centered(btn_x, 125, btn_w, btn_text, PAL_TEXT_RED); }
     }
 
     if (s_shop_msg_timer > 0) {
@@ -476,9 +491,13 @@ static void render_upgrades_static(void) {
     gfx_draw_text(coin_x, 4, coin_buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
-    gfx_draw_glass_card(4, 18, 116, 122, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(122, 18, 114, 122, PAL_BTN_BORDER, 14);
-    gfx_draw_text(126, 22, "DETAILS", PAL_TEXT_CYAN);
+    int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
+    int right_x = 4 + list_w + 2;
+    int right_w = SCREEN_WIDTH - 4 - right_x;
+
+    gfx_draw_glass_card(4, 18, list_w, 122, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(right_x, 18, right_w, 122, PAL_BTN_BORDER, 14);
+    gfx_draw_text(right_x + 4, 22, "DETAILS", PAL_TEXT_CYAN);
 }
 
 static void render_upgrades_dynamic(void) {
@@ -486,6 +505,10 @@ static void render_upgrades_dynamic(void) {
     int count = NUM_UPGRADES;
     int selected = s_upg_selected;
     int scroll = s_upg_scroll;
+
+    int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
+    int right_x = 4 + list_w + 2;
+    int right_w = SCREEN_WIDTH - 4 - right_x;
 
     // Left list 5 visible
     for (int i = 0; i < 5; i++) {
@@ -495,7 +518,7 @@ static void render_upgrades_dynamic(void) {
         bool is_sel = (idx == selected);
         u8 border = is_sel ? PAL_TEXT_CYAN : 20;
         u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
-        gfx_draw_glass_card(6, row_y, 112, 19, border, bg);
+        gfx_draw_glass_card(6, row_y, list_w - 4, 19, border, bg);
 
         const char* name = shop_get_upgrade_name((UpgradeType)idx);
         char name_buf[12]; strncpy(name_buf, name, 11); name_buf[11]='\0';
@@ -510,11 +533,11 @@ static void render_upgrades_dynamic(void) {
         if (is_sel) { gfx_draw_char(9, row_y + 6, '>', PAL_TEXT_CYAN); gfx_draw_text(16, row_y + 6, name_buf, PAL_TEXT_WHITE); }
         else gfx_draw_text(10, row_y + 6, name_buf, PAL_TEXT_CYAN);
 
-        int b_x = 114 - (int)strlen(lvl_buf) * 6;
+        int b_x = 4 + list_w - 6 - (int)strlen(lvl_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, lvl_buf, lvl_col);
     }
-    if (scroll > 0) gfx_draw_char(110, 19, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(110, 132, 'v', PAL_TEXT_CYAN);
+    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 19, '^', PAL_TEXT_CYAN);
+    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 132, 'v', PAL_TEXT_CYAN);
 
     // Right details panel
     UpgradeType upg = (UpgradeType)selected;
@@ -523,14 +546,14 @@ static void render_upgrades_dynamic(void) {
     const char* line1 = shop_get_upgrade_desc_line1(upg);
     const char* line2 = shop_get_upgrade_desc_line2(upg, cur_lv);
 
-    gfx_draw_text_centered(122, 33, 114, full, PAL_TEXT_WHITE);
-    gfx_draw_text_centered(122, 43, 114, line1, PAL_TEXT_CYAN);
-    gfx_draw_text_centered(122, 53, 114, line2, 17);
+    gfx_draw_text_centered(right_x, 33, right_w, full, PAL_TEXT_WHITE);
+    gfx_draw_text_centered(right_x, 43, right_w, line1, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(right_x, 53, right_w, line2, 17);
 
     // Progress bar for level
-    gfx_draw_progress_bar(126, 65, 106, 6, cur_lv, UPG_MAX_LEVEL, PAL_TEXT_GREEN, 20);
+    gfx_draw_progress_bar(right_x + 4, 65, right_w - 8, 6, cur_lv, UPG_MAX_LEVEL, PAL_TEXT_GREEN, 20);
     char prog_txt[16]; siprintf(prog_txt, "%d / %d", cur_lv, UPG_MAX_LEVEL);
-    gfx_draw_text_centered(122, 73, 114, prog_txt, PAL_TEXT_WHITE);
+    gfx_draw_text_centered(right_x, 73, right_w, prog_txt, PAL_TEXT_WHITE);
 
     // Limits info
     const char* limit_info = "";
@@ -545,12 +568,14 @@ static void render_upgrades_dynamic(void) {
         case UPG_OVERDRIVE: limit_info = "8s -> 26s rapid"; break;
         default: break;
     }
-    gfx_draw_text_centered(122, 84, 114, limit_info, PAL_TEXT_GOLD);
+    gfx_draw_text_centered(right_x, 84, right_w, limit_info, PAL_TEXT_GOLD);
 
     // Buy button
+    int btn_w = right_w - 8;
+    int btn_x = right_x + 4;
     if (cur_lv >= UPG_MAX_LEVEL) {
-        gfx_draw_glass_card(126, 96, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
-        gfx_draw_text_centered(126, 103, 106, "MAX LEVEL", PAL_TEXT_GOLD);
+        gfx_draw_glass_card(btn_x, 96, btn_w, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+        gfx_draw_text_centered(btn_x, 103, btn_w, "MAX LEVEL", PAL_TEXT_GOLD);
     } else {
         int price = shop_get_upgrade_price(upg, cur_lv);
         bool can = g_settings.coins >= (u32)price;
@@ -558,17 +583,17 @@ static void render_upgrades_dynamic(void) {
         char btn[28];
         if (can) {
             siprintf(btn, "[A] UP %s", pbuf);
-            gfx_draw_glass_card(126, 96, 106, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
-            gfx_draw_text_centered(126, 103, 106, btn, PAL_TEXT_GOLD);
+            gfx_draw_glass_card(btn_x, 96, btn_w, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+            gfx_draw_text_centered(btn_x, 103, btn_w, btn, PAL_TEXT_GOLD);
         } else {
             siprintf(btn, "NEED %s", pbuf);
-            gfx_draw_glass_card(126, 96, 106, 21, PAL_TEXT_RED, PAL_BTN_BG);
-            gfx_draw_text_centered(126, 103, 106, btn, PAL_TEXT_RED);
+            gfx_draw_glass_card(btn_x, 96, btn_w, 21, PAL_TEXT_RED, PAL_BTN_BG);
+            gfx_draw_text_centered(btn_x, 103, btn_w, btn, PAL_TEXT_RED);
         }
     }
 
     // Mini preview of ship with current speed?
-    int ship_x = 122 + (114 - 20)/2;
+    int ship_x = right_x + (right_w - 20) / 2;
     int ship_y = 118;
     gfx_draw_ship(ship_x, ship_y, g_settings.accent_index, s_anim_frame);
     draw_preview_engine_trail(ship_x, ship_y, g_settings.trail_index);
@@ -587,7 +612,10 @@ static void render_controls_static(void) {
     starfield_draw_base(0, 0);
     gfx_draw_text(10, 6, "Controls & Guide", PAL_TEXT_WHITE);
     gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
-    gfx_draw_glass_card(8, 20, 108, 120, PAL_BTN_BORDER, 14);
+    int half_w = 108 + (SCREEN_WIDTH - 240) / 2;
+    int right_x = 8 + half_w + 6;
+    int right_w = SCREEN_WIDTH - 8 - right_x;
+    gfx_draw_glass_card(8, 20, half_w, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(12, 24, "GBA CONTROLS", PAL_TEXT_CYAN);
     gfx_draw_text(12, 36, "D-PAD: Move ship", PAL_TEXT_WHITE);
     gfx_draw_text(12, 48, "A: Fire lasers", PAL_TEXT_WHITE);
@@ -596,30 +624,32 @@ static void render_controls_static(void) {
     gfx_draw_text(12, 84, "SELECT: Reset", PAL_TEXT_WHITE);
     gfx_draw_text(12, 100, "Starter: Slow 0.7x", 17);
     gfx_draw_text(12, 110, "2 bullets/sec only!", 17);
-    gfx_draw_glass_card(122, 20, 110, 120, PAL_BTN_BORDER, 14);
-    gfx_draw_text(126, 24, "UPGRADE GUIDE", PAL_TEXT_CYAN);
-    gfx_draw_text(126, 36, "Engine: 0.7x->2x", PAL_TEXT_WHITE);
-    gfx_draw_text(126, 48, "Fire: 2/s->10/s", PAL_TEXT_GOLD);
-    gfx_draw_text(126, 60, "Start Single weak", PAL_TEXT_GREEN);
-    gfx_draw_text(126, 72, "Final Nova = GOD!", PAL_TEXT_GOLD);
-    gfx_draw_text(126, 86, "Wave4 = HARD!", PAL_TEXT_RED);
-    gfx_draw_text(126, 98, "Omega Prism ultimate", PAL_TEXT_CYAN);
-    gfx_draw_text(126, 110, "Shop+Rigs 8 total", PAL_TEXT_WHITE);
+    gfx_draw_glass_card(right_x, 20, right_w, 120, PAL_BTN_BORDER, 14);
+    gfx_draw_text(right_x + 4, 24, "UPGRADE GUIDE", PAL_TEXT_CYAN);
+    gfx_draw_text(right_x + 4, 36, "Engine: 0.7x->2x", PAL_TEXT_WHITE);
+    gfx_draw_text(right_x + 4, 48, "Fire: 2/s->10/s", PAL_TEXT_GOLD);
+    gfx_draw_text(right_x + 4, 60, "Start Single weak", PAL_TEXT_GREEN);
+    gfx_draw_text(right_x + 4, 72, "Final Nova = GOD!", PAL_TEXT_GOLD);
+    gfx_draw_text(right_x + 4, 86, "Wave4 = HARD!", PAL_TEXT_RED);
+    gfx_draw_text(right_x + 4, 98, "Omega Prism ultimate", PAL_TEXT_CYAN);
+    gfx_draw_text(right_x + 4, 110, "Shop+Rigs 8 total", PAL_TEXT_WHITE);
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 static void render_controls_dynamic(void) { menu_draw_base(); }
 
 static void render_credits_static(void) {
     starfield_draw_base(0, 0);
-    gfx_draw_glass_card(20, 16, 200, 124, PAL_BTN_BORDER, 14);
-    gfx_draw_text_centered(20, 22, 200, "SPACE UNLIMITED", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(20, 34, 200, "Recharged: GBA Edition", PAL_TEXT_WHITE);
-    gfx_fill_rect(30, 46, 180, 1, 20);
-    gfx_draw_text_centered(20, 54, 200, "Upgrades Overhaul v4", 17);
-    gfx_draw_text_centered(20, 66, 200, "8 Rigs 12 Lasers", PAL_TEXT_WHITE);
-    gfx_draw_text_centered(20, 78, 200, "5 Level Caps 2x Speed", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(20, 90, 200, "Nova Annihilator Final", PAL_TEXT_GOLD);
-    gfx_draw_text_centered(20, 102, 200, "W4 Hard Core", PAL_TEXT_GREEN);
+    int cw = 200 + (SCREEN_WIDTH - 240);
+    int cx = (SCREEN_WIDTH - cw) / 2;
+    gfx_draw_glass_card(cx, 16, cw, 124, PAL_BTN_BORDER, 14);
+    gfx_draw_text_centered(cx, 22, cw, "SPACE UNLIMITED", PAL_TEXT_CYAN);
+    gfx_draw_text_centered(cx, 34, cw, "Recharged: GBA Edition", PAL_TEXT_WHITE);
+    gfx_fill_rect(cx + 10, 46, cw - 20, 1, 20);
+    gfx_draw_text_centered(cx, 54, cw, "Upgrades Overhaul v4", 17);
+    gfx_draw_text_centered(cx, 66, cw, "8 Rigs 12 Lasers", PAL_TEXT_WHITE);
+    gfx_draw_text_centered(cx, 78, cw, "5 Level Caps 2x Speed", PAL_TEXT_CYAN);
+    gfx_draw_text_centered(cx, 90, cw, "Nova Annihilator Final", PAL_TEXT_GOLD);
+    gfx_draw_text_centered(cx, 102, cw, "W4 Hard Core", PAL_TEXT_GREEN);
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 static void render_credits_dynamic(void) { menu_draw_base(); }

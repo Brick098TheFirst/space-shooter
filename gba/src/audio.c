@@ -19,7 +19,9 @@
  * Real-time software mixing runs with zero software division for high performance.
  */
 
+#ifndef AUDIO_SAMPLES_PER_FRAME
 #define AUDIO_SAMPLES_PER_FRAME 304
+#endif
 #define AUDIO_DOUBLE_BUF_SIZE (AUDIO_SAMPLES_PER_FRAME * 2)
 #define MAX_ACTIVE_SFX 4
 

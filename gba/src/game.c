@@ -537,7 +537,13 @@ void game_start(void) {
     audio_play_bgm(BGM_GAME);
 }
 
+#ifndef GAME_SPEED_MULTIPLIER
+#ifdef PLATFORM_HOST
+#define GAME_SPEED_MULTIPLIER 1
+#else
 #define GAME_SPEED_MULTIPLIER 2
+#endif
+#endif
 
 static void game_update_tick(void) {
     s_game_frame++;
@@ -874,10 +880,12 @@ void game_update(void) {
 
 static void game_draw_static(void) {
     starfield_draw_base(0, 0);
+    int wave_x = (SCREEN_WIDTH - 52) / 2;
+    int right_card_x = SCREEN_WIDTH - 75;
     gfx_draw_glass_card(3, 2, 72, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(94, 2, 52, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_glass_card(165, 2, 72, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_text(158, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
+    gfx_draw_glass_card(wave_x, 2, 52, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(right_card_x, 2, 72, 16, PAL_BTN_BORDER, 14);
+    gfx_draw_text(SCREEN_WIDTH - 82, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
 }
 
 void game_draw(void) {
@@ -983,17 +991,19 @@ void game_draw(void) {
     siprintf(buf, "%06u", (unsigned int)g_game.score);
     gfx_draw_text(6, 4, buf, PAL_TEXT_WHITE);
 
+    int wave_x = (SCREEN_WIDTH - 52) / 2;
     siprintf(buf, "W%02d", g_game.wave);
-    gfx_draw_text_centered(94, 4, 52, buf, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(wave_x, 4, 52, buf, PAL_TEXT_CYAN);
 
+    int right_card_x = SCREEN_WIDTH - 75;
     siprintf(buf, "$%u", (unsigned int)g_settings.coins);
-    gfx_draw_text(172, 4, buf, PAL_TEXT_GOLD);
+    gfx_draw_text(right_card_x + 7, 4, buf, PAL_TEXT_GOLD);
 
     for (int i = 0; i < g_game.player.lives && i < 7; i++) {
-        gfx_draw_char(168 + i * 6, 11, '^', PAL_TEXT_GREEN);
+        gfx_draw_char(right_card_x + 3 + i * 6, 11, '^', PAL_TEXT_GREEN);
     }
     for (int i = 0; i < g_game.player.shield_charges && i < 6; i++) {
-        gfx_draw_char(204 + i * 6, 11, '*', PAL_TEXT_CYAN);
+        gfx_draw_char(right_card_x + 39 + i * 6, 11, '*', PAL_TEXT_CYAN);
     }
 
     if (g_game.combo > 1) {
@@ -1006,13 +1016,13 @@ void game_draw(void) {
 
     if (g_game.player.rapid_fire_timer > 0) {
         siprintf(buf, "RAPID %d", (g_game.player.rapid_fire_timer + 59) / 60);
-        gfx_draw_text_centered(80, 20, 80, buf, PAL_TEXT_GOLD);
+        gfx_draw_text_centered((SCREEN_WIDTH - 80) / 2, 20, 80, buf, PAL_TEXT_GOLD);
     }
 
     int max_dash_cd = get_max_dash_cooldown();
     int dash_ready = max_dash_cd - g_game.player.dash_cooldown;
     u8 dash_col = (g_game.player.dash_cooldown == 0) ? PAL_TEXT_GREEN : gfx_get_accent_color(g_settings.accent_index);
-    gfx_draw_progress_bar(186, SCREEN_HEIGHT - 9, 50, 5, dash_ready, max_dash_cd, dash_col, 18);
+    gfx_draw_progress_bar(SCREEN_WIDTH - 54, SCREEN_HEIGHT - 9, 50, 5, dash_ready, max_dash_cd, dash_col, 18);
 
     if (g_game.wave_banner_timer > 0) {
         int banner_w = 120;

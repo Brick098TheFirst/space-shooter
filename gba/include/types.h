@@ -3,8 +3,17 @@
 
 #include "platform.h"
 
+#ifndef SCREEN_WIDTH
+#ifdef PLATFORM_HOST
+#define SCREEN_WIDTH 284
+#else
 #define SCREEN_WIDTH 240
+#endif
+#endif
+
+#ifndef SCREEN_HEIGHT
 #define SCREEN_HEIGHT 160
+#endif
 
 #define NUM_ACCENTS 9
 #define NUM_TRAILS 8

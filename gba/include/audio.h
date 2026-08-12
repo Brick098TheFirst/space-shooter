@@ -4,6 +4,14 @@
 #include "platform.h"
 #include "audio_data.h"
 
+#ifndef AUDIO_SAMPLES_PER_FRAME
+#ifdef PLATFORM_HOST
+#define AUDIO_SAMPLES_PER_FRAME 202
+#else
+#define AUDIO_SAMPLES_PER_FRAME 304
+#endif
+#endif
+
 typedef enum {
     BGM_NONE,
     BGM_MENU,
