@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#050811">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Space Unlimited: Recharged - Android Mobile Edition with Widescreen, Virtual Joystick, and 90/120Hz support.">
+  <title>Space Unlimited: Recharged — Android Edition</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="assets/images/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="app-container">
+  <!-- Widescreen 384x216 Pixel Canvas -->
+  <canvas id="game-canvas" width="384" height="216"></canvas>
+
+  <!-- ── 1. MAIN MENU SCREEN ── -->
+  <div id="screen-menu" class="ui-screen active">
+    <div class="screen-header">
+      <div class="screen-title">
+        <span>🚀 Space Unlimited</span>
+      </div>
+      <div class="header-pills">
+        <div id="menu-highscore-display" class="stat-pill cyan">BEST: 000000</div>
+        <div id="menu-coins-display" class="stat-pill">$0</div>
+        <a href="/" class="stat-pill" style="cursor:pointer; border-color:var(--border-cyan); color:var(--text-dim); text-decoration:none;">🕹 GBA Player</a>
+        <button id="btn-fullscreen-toggle" class="stat-pill cyan" style="cursor:pointer; border-color:var(--accent-cyan);">⛶ Fullscreen</button>
+      </div>
+    </div>
+
+    <div class="menu-content">
+      <div class="menu-left">
+        <div class="game-logo">
+          <div class="sub">Android Edition • 120Hz/90Hz Ready</div>
+          <h1>SPACE UNLIMITED</h1>
+        </div>
+        <div class="menu-buttons">
+          <button id="btn-play" class="menu-btn btn-primary">▶ Launch Mission</button>
+          <button id="btn-hangar" class="menu-btn">⚙ Upgrade Hangar</button>
+          <button id="btn-settings" class="menu-btn">🛠 Settings</button>
+          <button id="btn-controls" class="menu-btn">🕹 Touch Controls</button>
+          <button id="btn-credits" class="menu-btn">★ Credits</button>
+        </div>
+      </div>
+
+      <div class="menu-right">
+        <div class="ship-preview-card">
+          <div class="screen-title" style="font-size:12px; margin-bottom:4px;">SHIP PROFILE</div>
+          <canvas id="shop-preview-canvas" width="100" height="70"></canvas>
+          <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Cyber Mk I • Combat Fitted</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 2. UPGRADE HANGAR / SHOP SCREEN ── -->
+  <div id="screen-hangar" class="ui-screen">
+    <div class="screen-header">
+      <div class="screen-title">
+        <span>⚙ UPGRADE HANGAR</span>
+      </div>
+      <div class="header-pills">
+        <div id="hangar-coins-display" class="stat-pill">$0</div>
+        <button class="btn-back-menu stat-pill cyan" style="cursor:pointer;">◀ Back</button>
+      </div>
+    </div>
+
+    <div class="shop-layout">
+      <!-- 5 Shop Categories -->
+      <div class="shop-tabs-bar">
+        <button class="shop-tab-btn active" data-category="0">Paints</button>
+        <button class="shop-tab-btn" data-category="1">Trails</button>
+        <button class="shop-tab-btn" data-category="2">Weapons</button>
+        <button class="shop-tab-btn" data-category="3">Lasers</button>
+        <button class="shop-tab-btn" data-category="4">Tech Upgrades</button>
+      </div>
+
+      <!-- Main Panels -->
+      <div class="shop-main-panels">
+        <!-- Catalog List -->
+        <div id="shop-items-container" class="shop-items-panel"></div>
+
+        <!-- Detail & Actions Card -->
+        <div class="shop-detail-panel">
+          <div class="shop-detail-header">
+            <h3 id="shop-detail-name">Ion Cyan</h3>
+            <div id="shop-detail-badge" class="shop-detail-badge">STATUS: EQUIPPED</div>
+            <div id="shop-detail-desc" class="shop-detail-desc">Cadet issue cobalt armor</div>
+            <div id="shop-detail-stats" class="shop-detail-stats">Hull nano-coat plating</div>
+          </div>
+
+          <div style="width:100%; display:flex; flex-direction:column; gap:4px;">
+            <div id="shop-status-message" class="shop-status-msg" style="display:none;"></div>
+            <button id="shop-btn-action" class="action-btn btn-equip">EQUIP</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 3. SETTINGS SCREEN ── -->
+  <div id="screen-settings" class="ui-screen">
+    <div class="screen-header">
+      <div class="screen-title">
+        <span>🛠 SETTINGS</span>
+      </div>
+      <div class="header-pills">
+        <button class="btn-back-menu stat-pill cyan" style="cursor:pointer;">◀ Back</button>
+      </div>
+    </div>
+
+    <div class="settings-grid">
+      <!-- Difficulty -->
+      <div class="setting-card">
+        <div class="setting-label">Flight Difficulty</div>
+        <div class="diff-buttons">
+          <button id="setting-diff-cadet" class="diff-btn">Cadet</button>
+          <button id="setting-diff-pilot" class="diff-btn active">Pilot</button>
+          <button id="setting-diff-ace" class="diff-btn">Ace</button>
+        </div>
+      </div>
+
+      <!-- Virtual Joystick Style -->
+      <div class="setting-card">
+        <div class="setting-label">Virtual Joystick Mode</div>
+        <select id="setting-select-joy">
+          <option value="dynamic">Dynamic (Touch Anywhere Left)</option>
+          <option value="fixed">Fixed (Bottom Left Corner)</option>
+        </select>
+      </div>
+
+      <!-- Music Volume -->
+      <div class="setting-card">
+        <div class="setting-label">Music Soundtrack Volume</div>
+        <input type="range" id="setting-slider-music" min="0" max="100" value="80">
+      </div>
+
+      <!-- SFX Volume -->
+      <div class="setting-card">
+        <div class="setting-label">Sound Effects Volume</div>
+        <input type="range" id="setting-slider-sfx" min="0" max="100" value="80">
+      </div>
+
+      <!-- Screen Shake & Haptics -->
+      <div class="setting-card">
+        <div class="toggle-row">
+          <span class="setting-label">Screen Shake FX</span>
+          <input type="checkbox" id="setting-toggle-shake" checked>
+        </div>
+        <div class="toggle-row" style="margin-top:6px;">
+          <span class="setting-label">Haptic Vibration</span>
+          <input type="checkbox" id="setting-toggle-haptics" checked>
+        </div>
+      </div>
+
+      <!-- High Refresh FPS Display & Save Reset -->
+      <div class="setting-card">
+        <div class="toggle-row">
+          <span class="setting-label">FPS & 90/120Hz Display</span>
+          <input type="checkbox" id="setting-toggle-fps" checked>
+        </div>
+        <button id="btn-reset-save" class="modal-btn" style="margin-top:6px; color:var(--accent-red); border-color:var(--accent-red);">Reset Save Data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4. TOUCH CONTROLS SCREEN ── -->
+  <div id="screen-controls" class="ui-screen">
+    <div class="screen-header">
+      <div class="screen-title">
+        <span>🕹 TOUCH CONTROLS GUIDE</span>
+      </div>
+      <div class="header-pills">
+        <button class="btn-back-menu stat-pill cyan" style="cursor:pointer;">◀ Back</button>
+      </div>
+    </div>
+
+    <div class="settings-grid" style="grid-template-columns: 1fr 1fr; align-items:center;">
+      <div class="setting-card">
+        <div class="setting-label" style="color:var(--accent-cyan);">Left Thumb • Virtual Joystick</div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+          Touch anywhere on the left half of your screen to steer in 360° smoothly.
+          Steering agility and responsiveness scale directly with your <strong>Ion Engine</strong> upgrades!
+        </div>
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-label" style="color:var(--accent-cyan);">Right Thumb • Action Buttons</div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+          <strong>FIRE:</strong> Tap or hold to blast asteroids and enemy hunter fighters with autofire.<br>
+          <strong>DASH:</strong> High-speed evasion burst with invulnerability and cooldown gauge.
+        </div>
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-label" style="color:var(--accent-gold);">Touch Navigation in Shop</div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+          Tap any tab (Paints, Trails, Weapons, Lasers, Tech) or swipe left/right. Tap any item to inspect stats and test-fire weapons in the live chamber!
+        </div>
+      </div>
+
+      <div class="setting-card">
+        <div class="setting-label" style="color:var(--accent-green);">Keyboard / Gamepad Fallback</div>
+        <div style="font-size:11px; color:var(--text-dim); line-height:1.4;">
+          WASD / Arrow keys = Move<br>
+          Space / Z / J = Fire / Buy<br>
+          Shift / X / K = Dash / Back<br>
+          P / Escape = Pause Menu
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 5. CREDITS SCREEN ── -->
+  <div id="screen-credits" class="ui-screen">
+    <div class="screen-header">
+      <div class="screen-title">
+        <span>★ CREDITS & TECH</span>
+      </div>
+      <div class="header-pills">
+        <button class="btn-back-menu stat-pill cyan" style="cursor:pointer;">◀ Back</button>
+      </div>
+    </div>
+
+    <div class="setting-card" style="margin:auto; max-width:480px; text-align:center; padding:16px;">
+      <h3 style="color:var(--accent-cyan); font-size:16px; margin-bottom:4px;">Space Unlimited: Recharged</h3>
+      <div style="font-size:12px; color:var(--accent-gold); margin-bottom:10px;">Android Mobile & GBA Architecture</div>
+      <div style="font-size:11px; color:var(--text-dim); line-height:1.5;">
+        Authentic 256-color pixel art engine rendered crisp on modern OLED displays.<br>
+        High-refresh-rate fixed timestep accumulator supporting 60Hz, 90Hz, 120Hz, and 144Hz screen refresh rates.<br>
+        Full 8-bit signed PCM audio soundtrack with polyphonic sound effects and Web Audio mixer.<br>
+        Original game by Brick098TheFirst.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 6. TOUCH CONTROLS OVERLAY (GAMEPLAY) ── -->
+  <div id="touch-controls-layer">
+    <!-- Left Joystick Zone -->
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
+      </div>
+    </div>
+
+    <!-- Right Action Buttons Zone -->
+    <div id="action-buttons-zone">
+      <!-- Dash Evade Button -->
+      <div id="btn-dash" class="touch-action-btn ready">
+        <svg class="cooldown-ring" viewBox="0 0 60 60">
+          <circle id="dash-cooldown-circle" cx="30" cy="30" r="26"></circle>
+        </svg>
+        <span style="font-size:16px;">⚡</span>
+        <span>DASH</span>
+      </div>
+
+      <!-- Fire Cannon Button -->
+      <div id="btn-fire" class="touch-action-btn">
+        <span style="font-size:18px;">🎯</span>
+        <span>FIRE</span>
+      </div>
+    </div>
+
+    <!-- Floating In-Game Pause Trigger -->
+    <div id="btn-ingame-pause">⏸</div>
+  </div>
+
+  <!-- ── 7. PAUSE MODAL ── -->
+  <div id="modal-paused" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-title">MISSION PAUSED</div>
+      <div class="modal-buttons" style="flex-direction:column;">
+        <button id="btn-pause-resume" class="modal-btn primary">Resume Mission</button>
+        <button id="btn-pause-restart" class="modal-btn">Restart Wave 1</button>
+        <button id="btn-pause-hangar" class="modal-btn">Upgrade Hangar</button>
+        <button id="btn-pause-menu" class="modal-btn">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 8. GAME OVER MODAL ── -->
+  <div id="modal-gameover" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-title" style="color:var(--accent-red);">MISSION TERMINATED</div>
+      <div id="gameover-new-badge" class="stat-pill" style="color:var(--accent-gold); display:none;">★ NEW HIGH SCORE! ★</div>
+      
+      <div class="modal-stats">
+        <div class="stat-row">
+          <span>FINAL SCORE</span>
+          <span id="gameover-score" class="val">000000</span>
+        </div>
+        <div class="stat-row">
+          <span>HIGH SCORE</span>
+          <span id="gameover-highscore" class="val">000000</span>
+        </div>
+        <div class="stat-row">
+          <span>WAVE REACHED</span>
+          <span id="gameover-wave" class="val">Wave 1</span>
+        </div>
+        <div class="stat-row">
+          <span>TOTAL COINS</span>
+          <span id="gameover-coins" class="val gold">$0</span>
+        </div>
+      </div>
+
+      <div class="modal-buttons">
+        <button id="btn-gameover-retry" class="modal-btn primary">Deploy Again</button>
+        <button id="btn-gameover-hangar" class="modal-btn">Hangar</button>
+        <button id="btn-gameover-menu" class="modal-btn">Menu</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

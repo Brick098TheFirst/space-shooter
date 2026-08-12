@@ -26,9 +26,11 @@ const MIME_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".svg": "image/svg+xml",
-    ".json": "application/json"
+    ".json": "application/json",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg"
 };
-
 
 const server = http.createServer((req, res) => {
     // Cross-origin headers for WebAssembly & SharedArrayBuffer if needed
@@ -40,7 +42,11 @@ const server = http.createServer((req, res) => {
     if (reqPath === "/") reqPath = "/index.html";
 
     let filePath;
-    if (reqPath === "/SpaceUnlimited.gba") {
+    if (reqPath === "/android" || reqPath === "/android/") {
+        filePath = path.join(__dirname, "android", "index.html");
+    } else if (reqPath.startsWith("/android/")) {
+        filePath = path.join(__dirname, reqPath);
+    } else if (reqPath === "/SpaceUnlimited.gba") {
         filePath = path.join(__dirname, "SpaceUnlimited.gba");
     } else if (reqPath.startsWith("/dist/")) {
         filePath = path.join(__dirname, "web", reqPath);
@@ -62,5 +68,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Space Unlimited GBA Web Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Space Unlimited Web Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`- GBA Web Player: http://0.0.0.0:${PORT}/`);
+    console.log(`- Android Mobile Edition: http://0.0.0.0:${PORT}/android/`);
 });
