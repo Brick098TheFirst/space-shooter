@@ -15,9 +15,16 @@
 #endif
 
 JNIEXPORT void JNICALL
-Java_com_brick_spaceshooter_NativeGame_nativeInit(JNIEnv* env, jclass clazz) {
-    (void)env; (void)clazz;
+Java_com_brick_spaceshooter_NativeGame_nativeInit(JNIEnv* env, jclass clazz, jstring saveDir) {
+    (void)clazz;
     platform_host_init();
+    if (saveDir) {
+        const char* dir = (*env)->GetStringUTFChars(env, saveDir, NULL);
+        if (dir) {
+            platform_set_save_dir(dir);
+            (*env)->ReleaseStringUTFChars(env, saveDir, dir);
+        }
+    }
     gfx_init();
     audio_init();
     save_load();
@@ -124,4 +131,10 @@ Java_com_brick_spaceshooter_NativeGame_nativeGetSave(JNIEnv* env, jclass clazz) 
     if (!arr) return NULL;
     (*env)->SetByteArrayRegion(env, arr, 0, PLATFORM_SRAM_SIZE, (const jbyte*)platform_sram);
     return arr;
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeFlushSave(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    save_write();
 }

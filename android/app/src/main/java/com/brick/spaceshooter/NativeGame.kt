@@ -33,7 +33,7 @@ object NativeGame {
     const val SCREEN_CREDITS = 7
     const val SCREEN_MODE_SELECT = 8
 
-    external fun nativeInit()
+    external fun nativeInit(saveDir: String)
     external fun nativeSetKeys(keys: Int)
     external fun nativeTick()
     external fun nativePresent(pixels: IntArray)
@@ -43,4 +43,5 @@ object NativeGame {
     external fun nativeGoBack()
     external fun nativeLoadSave(data: ByteArray)
     external fun nativeGetSave(): ByteArray
+    external fun nativeFlushSave()
 }

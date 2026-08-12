@@ -155,6 +155,11 @@ void save_init_defaults(void) {
 void save_load(void) {
     save_init_defaults();
 
+#ifdef PLATFORM_HOST
+    /* Pull coins/loot/settings from filesDir/saves/save.sav if present. */
+    platform_restore_save();
+#endif
+
     // Try V4
     SaveDataV4 d4;
     u8* dest4 = (u8*)&d4;
@@ -311,6 +316,10 @@ void save_write(void) {
     for (u32 i = 0; i < sizeof(SaveDataV4); i++) {
         SRAM_BASE[i] = src[i];
     }
+
+#ifdef PLATFORM_HOST
+    platform_persist_save();
+#endif
 }
 
 // ── Shop Pricing ────────────────────────────────────────────────────────
