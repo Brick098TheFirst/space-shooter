@@ -1,32 +1,38 @@
-name: Build Game Boy Advance (GBA) ROM
+name: Build & Release Game (Android APK & GBA ROM)
 
 on:
   push:
-    branches: [main, "arena/**"]
-    tags: ["v*"]
-  pull_request:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
+    inputs:
+      custom_tag:
+        description: 'Optional custom release tag (leave empty for auto-increment spaceshooter-vX)'
+        required: false
+        default: ''
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-gba:
-    name: GBA ROM & Web Player
+  build-and-release:
+    name: Build APK & GBA ROM and Publish Release
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
-      - name: Check out source
+      - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Node.js
+      # ── 1. GBA ROM BUILD ──
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -34,39 +40,117 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
-      - name: Validate source assets
+      - name: Validate GBA source assets
         run: python3 tools/validate-assets.py
 
       - name: Generate GBA audio and graphics data
         run: npm run generate-assets
 
-      - name: Build GBA ROM (SpaceUnlimited.gba)
-        run: npm run build:gba
+      - name: Compile GBA ROM (SpaceUnlimited.gba)
+        run: node tools/build_gba.js
 
       - name: Verify GBA ROM artifact
         run: |
           test -f SpaceUnlimited.gba
           echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
 
-      - name: Bundle Web Player distribution
-        run: node tools/bundle_web.js
-
-      - name: Upload GBA ROM Artifact
-        uses: actions/upload-artifact@v4
+      # ── 2. ANDROID APK BUILD ──
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
         with:
-          name: SpaceUnlimited-GBA-ROM
-          path: SpaceUnlimited.gba
-          if-no-files-found: error
-          retention-days: 30
+          distribution: 'zulu'
+          java-version: '17'
 
-      - name: Upload Web Player Distribution
-        uses: actions/upload-artifact@v4
-        with:
-          name: SpaceUnlimited-GBA-WebPlayer
-          path: |
-            web/
-            server.js
-            package.json
-            SpaceUnlimited.gba
-          if-no-files-found: error
-          retention-days: 30
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Initialize Capacitor Android Project
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+          npx cap init "Space Unlimited" "com.brick.spaceshooter" --web-dir=android
+          npx cap add android
+          npx cap copy android
+
+      - name: Configure Android Gradle & Permissions
+        run: |
+          chmod +x android/capacitor-cordova-android-plugins/gradlew || true
+          cd android && if [ -d "android" ]; then cd android; fi
+          chmod +x gradlew || true
+
+      - name: Build Android APK via Gradle
+        run: |
+          # Build APK with Gradle inside the Capacitor Android folder
+          if [ -d "android/app" ]; then
+            cd android
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../../spaceshooter.apk
+          elif [ -d "android" ]; then
+            cd android
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../spaceshooter.apk
+          fi
+          cd $GITHUB_WORKSPACE
+          test -f spaceshooter.apk
+          echo "Android APK size: $(wc -c < spaceshooter.apk) bytes"
+
+      # ── 3. AUTO-INCREMENT VERSION & PUBLISH GITHUB RELEASE ──
+      - name: Determine Next Release Version Tag
+        id: versioning
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
+          if [ -n "$CUSTOM_TAG" ]; then
+            TAG_NAME="$CUSTOM_TAG"
+          else
+            # Fetch all existing release tags
+            RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' || true)
+            
+            # Find the highest existing version number matching spaceshooter-v<N> or game-v<N>
+            HIGHEST_NUM=0
+            for tag in $RELEASES; do
+              if [[ $tag =~ (spaceshooter|game)-v([0-9]+) ]]; then
+                NUM="${BASH_REMATCH[2]}"
+                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
+                  HIGHEST_NUM=$NUM
+                fi
+              elif [[ $tag =~ v([0-9]+) ]]; then
+                NUM="${BASH_REMATCH[1]}"
+                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
+                  HIGHEST_NUM=$NUM
+                fi
+              fi
+            done
+            
+            NEXT_NUM=$((HIGHEST_NUM + 1))
+            TAG_NAME="spaceshooter-v${NEXT_NUM}"
+          fi
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_title=Space Unlimited ${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "Generated next release tag: $TAG_NAME"
+
+      - name: Publish GitHub Release with APK and GBA ROM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.versioning.outputs.tag_name }}
+          TITLE: ${{ steps.versioning.outputs.release_title }}
+        run: |
+          gh release create "$TAG_NAME" \
+            SpaceUnlimited.gba \
+            spaceshooter.apk \
+            --title "$TITLE" \
+            --notes "🚀 **Space Unlimited: Recharged ($TAG_NAME)**
+
+          ### 📦 Release Assets
+          - **\`spaceshooter.apk\`**: Standalone Android APK for mobile devices (widescreen, 120Hz/90Hz, virtual analog joystick, touch HUD).
+          - **\`SpaceUnlimited.gba\`**: Native Game Boy Advance ROM for emulators and flashcarts (EverDrive, EZ-Flash, Miyoo, Anbernic).
+
+          ### 🕹️ Features
+          - 9 Ship Paints (including dynamic animated Rainbow Prism)
+          - 8 Engine Trails (including animated Rainbow Trail)
+          - 8 Weapon Rigs (Single -> Nova Annihilator)
+          - 12 Laser Crystals (including Omega Prism & Rainbow Laser)
+          - 8 Tech Tree Upgrades (5 levels each)
+          - Save persistence (SRAM & LocalStorage)
+          - Hunter enemy fighters with laser bursts and red exhaust trails"
