@@ -3,7 +3,9 @@ package com.brick.spaceshooter
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.os.Build
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 
@@ -28,6 +30,13 @@ class GameView(context: Context) : SurfaceView(context), SurfaceHolder.Callback 
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                holder.surface.setFrameRate(120f, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         resume()
     }
 

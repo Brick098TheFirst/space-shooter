@@ -100,11 +100,11 @@ object GfxData {
             bmpAstMedB = createBitmapFromIndexed(16, 16, sprAstMedB)
             bmpAstSmall = createBitmapFromIndexed(10, 10, sprAstSmall)
             bmpAstTiny = createBitmapFromIndexed(6, 6, sprAstTiny)
-            bmpDrone = createBitmapFromIndexed(20, 16, sprDrone)
+            bmpDrone = createBitmapFromIndexed(18, 14, sprDrone)
             bmpShieldBubble = createBitmapFromIndexed(24, 24, sprShieldBubble)
-            bmpPwrShield = createBitmapFromIndexed(12, 12, sprPwrShield)
-            bmpPwrRapid = createBitmapFromIndexed(12, 12, sprPwrRapid)
-            bmpPwrRepair = createBitmapFromIndexed(12, 12, sprPwrRepair)
+            bmpPwrShield = createBitmapFromIndexed(10, 10, sprPwrShield)
+            bmpPwrRapid = createBitmapFromIndexed(10, 10, sprPwrRapid)
+            bmpPwrRepair = createBitmapFromIndexed(10, 10, sprPwrRepair)
             bmpExplosion = Array(9) { i -> createBitmapFromIndexed(24, 24, sprExplosion[i]) }
 
             loaded = true
@@ -128,7 +128,8 @@ object GfxData {
 
     fun createBitmapFromIndexed(w: Int, h: Int, indices: IntArray): Bitmap {
         val colors = IntArray(w * h)
-        for (i in indices.indices) {
+        val limit = minOf(indices.size, colors.size)
+        for (i in 0 until limit) {
             val idx = indices[i]
             if (idx == 0) {
                 colors[i] = Color.TRANSPARENT

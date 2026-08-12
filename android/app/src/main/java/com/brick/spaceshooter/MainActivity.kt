@@ -1,9 +1,9 @@
 package com.brick.spaceshooter
 
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
-import android.view.Window
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -41,18 +41,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestHighRefreshRate() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val params = window.attributes
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val display = display
-                    display?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
-                        params.preferredDisplayModeId = mode.modeId
-                    }
-                }
-                window.attributes = params
-            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.setFrameRate(120f, Window.FRAME_RATE_COMPATIBILITY_DEFAULT)
+                val display = display
+                val params = window.attributes
+                display?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
+                    params.preferredDisplayModeId = mode.modeId
+                }
+                params.preferredRefreshRate = 120f
+                window.attributes = params
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val params = window.attributes
+                @Suppress("DEPRECATION")
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                @Suppress("DEPRECATION")
+                wm.defaultDisplay?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
+                    params.preferredDisplayModeId = mode.modeId
+                }
+                params.preferredRefreshRate = 120f
+                window.attributes = params
             }
         } catch (e: Exception) {
             e.printStackTrace()

@@ -189,8 +189,8 @@ class SpriteRenderer {
     }
 
     fun drawDrone(canvas: Canvas, x: Float, y: Float) {
-        val w = 20f
-        val h = 16f
+        val w = 18f
+        val h = 14f
         val startX = x - w / 2f
         val startY = y - h / 2f
         dstRect.set(startX, startY, startX + w, startY + h)
@@ -207,8 +207,8 @@ class SpriteRenderer {
     }
 
     fun drawPowerup(canvas: Canvas, x: Float, y: Float, type: PowerupType) {
-        val w = 12f
-        val h = 12f
+        val w = 10f
+        val h = 10f
         val startX = x - w / 2f
         val startY = y - h / 2f
         val bmp = when (type) {
