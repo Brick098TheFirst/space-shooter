@@ -59,6 +59,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var stickNy = 0f
     private var menuDownX = 0f
     private var menuDownY = 0f
+    private var menuScrollAccumY = 0f
+    private var menuScrollAccumX = 0f
 
     init {
         NativeGame.nativeInit()
@@ -353,18 +355,41 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                     menuDownX = x
                     menuDownY = y
+                    menuScrollAccumY = 0f
+                    menuScrollAccumX = 0f
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    // Accumulate scroll distance for swipe-to-scroll in shop
+                    val dy = y - menuDownY
+                    val dx = x - menuDownX
+                    menuScrollAccumY += dy
+                    menuScrollAccumX += dx
+                    menuDownY = y
+                    menuDownX = x
+
+                    // Trigger scroll every ~24dp of vertical swipe in hangar/upgrades
+                    val threshold = dp(24f)
+                    if (uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS) {
+                        if (menuScrollAccumY < -threshold) {
+                            pulseKeys = pulseKeys or NativeGame.KEY_DOWN
+                            menuScrollAccumY = 0f
+                        } else if (menuScrollAccumY > threshold) {
+                            pulseKeys = pulseKeys or NativeGame.KEY_UP
+                            menuScrollAccumY = 0f
+                        }
+                    }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                     val dx = x - menuDownX
                     val dy = y - menuDownY
                     if (needsBackChip() && backRect().contains(x, y)) {
                         NativeGame.nativeGoBack()
-                    } else if (uiScreen == NativeGame.SCREEN_HANGAR &&
-                        kotlin.math.abs(dx) > dp(36f) &&
-                        kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.3f
+                    } else if ((uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS) &&
+                        kotlin.math.abs(menuScrollAccumX) > dp(36f) &&
+                        kotlin.math.abs(menuScrollAccumX) > kotlin.math.abs(menuScrollAccumY) * 1.3f
                     ) {
-                        // Native swipe across the hangar tab strip / catalog.
-                        pulseKeys = pulseKeys or if (dx < 0) NativeGame.KEY_R else NativeGame.KEY_L
+                        // Horizontal swipe across the hangar tab strip / catalog.
+                        pulseKeys = pulseKeys or if (menuScrollAccumX < 0) NativeGame.KEY_R else NativeGame.KEY_L
                     } else {
                         val mapped = mapToGame(x, y)
                         if (mapped != null) NativeGame.nativeQueueTap(mapped.first, mapped.second)
