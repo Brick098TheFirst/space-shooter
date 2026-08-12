@@ -256,12 +256,13 @@ static void update_hangar(void) {
                 return;
             }
         }
-        if (in_rect(tx, ty, 4, 31, list_w, 12) && s_shop_scroll[cat] > 0) {
+        // Scroll buttons - bigger touch targets for mobile (20px tall instead of 12)
+        if (in_rect(tx, ty, 4, 31, list_w, 20) && s_shop_scroll[cat] > 0) {
             s_shop_scroll[cat]--;
             menu_static_invalidate();
             return;
         }
-        if (in_rect(tx, ty, 4, 132, list_w, 12) && s_shop_scroll[cat] + 5 < count) {
+        if (in_rect(tx, ty, 4, 124, list_w, 20) && s_shop_scroll[cat] + 5 < count) {
             s_shop_scroll[cat]++;
             menu_static_invalidate();
             return;
@@ -360,12 +361,13 @@ static void update_upgrades(void) {
                 return;
             }
         }
-        if (in_rect(tx, ty, 4, 18, list_w, 14) && s_upg_scroll > 0) {
+        // Scroll buttons - bigger touch targets for mobile (20px tall instead of 14)
+        if (in_rect(tx, ty, 4, 18, list_w, 20) && s_upg_scroll > 0) {
             s_upg_scroll--;
             menu_static_invalidate();
             return;
         }
-        if (in_rect(tx, ty, 4, 126, list_w, 14) && s_upg_scroll + 5 < count) {
+        if (in_rect(tx, ty, 4, 120, list_w, 20) && s_upg_scroll + 5 < count) {
             s_upg_scroll++;
             menu_static_invalidate();
             return;
@@ -682,8 +684,8 @@ static void render_hangar_dynamic(void) {
         int b_x = 4 + list_w - 6 - (int)strlen(badge_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, badge_buf, badge_col);
     }
-    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 32, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 134, 'v', PAL_TEXT_CYAN);
+    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 36, '^', PAL_TEXT_CYAN);
+    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 130, 'v', PAL_TEXT_CYAN);
 
     // Right panel preview
     gfx_draw_glass_card(right_x + 2, 33, right_w - 4, 35, 20, PAL_SPACE_BLACK);
@@ -813,8 +815,8 @@ static void render_upgrades_dynamic(void) {
         int b_x = 4 + list_w - 6 - (int)strlen(lvl_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, lvl_buf, lvl_col);
     }
-    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 19, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 132, 'v', PAL_TEXT_CYAN);
+    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 23, '^', PAL_TEXT_CYAN);
+    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 126, 'v', PAL_TEXT_CYAN);
 
     // Right details panel
     UpgradeType upg = (UpgradeType)selected;
