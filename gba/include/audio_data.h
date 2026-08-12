@@ -4,7 +4,9 @@
 #include "platform.h"
 
 #define AUDIO_SAMPLE_RATE 18157
+#ifndef AUDIO_SAMPLES_PER_FRAME
 #define AUDIO_SAMPLES_PER_FRAME 304
+#endif
 
 extern const s8 snd_menu_pcm[];
 extern const u32 snd_menu_len;

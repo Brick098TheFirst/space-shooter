@@ -2,14 +2,17 @@
 #define AUDIO_H
 
 #include "platform.h"
+
+#ifdef PLATFORM_HOST
+#ifndef AUDIO_SAMPLES_PER_FRAME
+#define AUDIO_SAMPLES_PER_FRAME 202
+#endif
+#endif
+
 #include "audio_data.h"
 
 #ifndef AUDIO_SAMPLES_PER_FRAME
-#ifdef PLATFORM_HOST
-#define AUDIO_SAMPLES_PER_FRAME 202
-#else
 #define AUDIO_SAMPLES_PER_FRAME 304
-#endif
 #endif
 
 typedef enum {
