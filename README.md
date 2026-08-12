@@ -52,6 +52,18 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 ---
 
+## 📱 Android Native Kotlin Edition
+
+The Android edition (`android/`) is a 100% native **Kotlin** mobile remake of the GBA version, built with zero HTML, zero WebView, and zero web player overhead.
+
+- **Direct SurfaceView & Canvas Engine:** Renders the game at a widescreen `384 × 216` resolution with bitmap filtering and anti-aliasing disabled for crisp, retro square pixels that match the GBA sizes exactly 1-1.
+- **High-Refresh 90Hz / 120Hz Support:** Configures display refresh modes to run at native high frame rates (90 FPS on 90Hz phones, 120 FPS on 120Hz phones) with a deterministic 120Hz physics accumulator.
+- **Touchscreen Virtual Analog Joystick & HUD:** Features a 360-degree virtual analog joystick on the left screen, right-thumb action buttons (FIRE, DASH, PAUSE), direct touch navigation across all menus and shop tabs, and tactile haptic feedback.
+- **Full Shop & Tech Upgrades:** 9 Ship Paints (including animated Rainbow Prism), 8 Engine Trails (including animated Rainbow Trail), 8 Weapon Rigs, 12 Laser Crystals, and 8 Tech Tree Upgrades (5 levels each).
+- **Immersive Fullscreen Mode:** Hides top status bars and bottom navigation bars for an edge-to-edge widescreen arcade experience that boots directly to the Main Menu.
+
+---
+
 ## 🛠️ Building & Running the GBA Version
 
 ### 1. Build the GBA ROM (`SpaceUnlimited.gba`)
@@ -87,6 +99,7 @@ Navigate to `http://localhost:3000` to play in browser or download the `.gba` RO
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
+| `android/` | Pure Kotlin Native Android Gradle project (`app/src/main/java/com/brick/spaceshooter/`) |
 | `Assets/` | Source images and WAV audio (extracted from `spaceshooter.sb3`) |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |

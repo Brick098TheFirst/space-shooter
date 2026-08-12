@@ -1,28 +1,34 @@
-# Space Unlimited: Recharged — Android Edition 🚀📱
+# Space Unlimited: Recharged — Android Native Kotlin Edition 🚀📱
 
-An authentic widescreen retro space shooter built specifically for **Android** mobile devices, featuring high-refresh-rate 90Hz/120Hz gameplay, virtual analog joystick, touch navigation, full shop upgrades, and true fullscreen immersive mode with zero top or bottom system bars.
+An authentic widescreen retro space shooter built natively in **Kotlin** for **Android** mobile devices, featuring high-refresh-rate 90Hz/120Hz gameplay, virtual analog joystick, touch navigation, full shop upgrades, and true fullscreen immersive mode with zero top or bottom system bars.
 
 ---
 
 ## 🌟 Highlights & Features
 
+- **📱 True Native Android Architecture (Pure Kotlin):**
+  - **Zero Web Player / Zero HTML / Zero WebView:** Compiled natively to ART / JVM bytecode using modern Kotlin (`com.brick.spaceshooter`).
+  - **Direct Android SurfaceView & Canvas Renderer:** Pixel-perfect low-res rendering (`384 × 216` 16:9 widescreen canvas with bitmap filtering and anti-aliasing disabled for crisp, retro square pixels identical to the GBA screen).
+  - **No GBA Files in Folder:** Entirely self-contained Android app module with native Android resources (`assets/images`, `res/raw`, `res/values`).
+
 - **🎮 Mobile Touchscreen Controls & Virtual Analog Joystick:**
-  - **Virtual Analog Joystick:** Touch anywhere on the left half of the screen to steer in 360 degrees smoothly with dynamic deadzone and tactile knob feedback (or select Fixed Joystick mode in Settings).
+  - **Virtual Analog Joystick:** Touch anywhere on the left half of the screen to steer in 360 degrees smoothly with dynamic deadzone and tactile knob feedback (or select Fixed Joystick mode in Controls).
   - **Tactile Action Buttons:**
     - **FIRE Button:** Ergonomic right-thumb button supporting tap-to-fire and hold-for-autofire.
-    - **DASH Button:** Afterburner evasion burst with invulnerability window, engine trail fountain, and real-time circular recharge cooldown gauge.
-  - **Direct Touch Navigation:** Tap tabs (`PAINTS`, `TRAILS`, `WEAPONS`, `LASERS`, `TECH`), swipe between categories, and tap item cards directly.
-  - **Haptic Feedback:** Tactile vibration on firing, dashing, explosions, getting hit, and shop purchases.
+    - **DASH Button:** Afterburner evasion burst with invulnerability window, engine trail fountain, and recharge cooldown gauge.
+    - **PAUSE Button:** Top-right instant pause button.
+  - **Direct Touch Navigation:** Tap menu buttons, hangar tabs (`PAINTS`, `TRAILS`, `WEAPONS`, `LASERS`), upgrade cards, and item cards directly on the touchscreen.
+  - **Haptic Feedback:** Tactile vibration on firing, dashing, explosions, getting hit, and shop purchases using Android `Vibrator` / `VibratorManager`.
 
 - **⚡ 120Hz & 90Hz High-Refresh-Rate Variable Loop:**
-  - Uses a deterministic **120Hz fixed-timestep physics accumulator** with frame interpolation.
-  - Runs at full native frame rates (60 FPS, 90 FPS on 90Hz displays, 120 FPS on 120Hz displays, or 144 FPS) without speeding up or slowing down game physics!
+  - Configures window display attributes and frame rates to request the display's highest available refresh rate (e.g. 90Hz on 90Hz screens, 120Hz on 120Hz screens).
+  - Uses a deterministic **120Hz fixed-timestep physics accumulator** (`8.333 ms` per physics tick) so game speed is 100% consistent across 60 FPS, 90 FPS, 120 FPS, or 144 FPS displays.
   - Real-time in-game FPS and refresh rate counter on the HUD.
 
 - **📺 Widescreen Retro Pixel Art:**
-  - Pixel-perfect low-res rendering (`384 × 216` 16:9 widescreen canvas with `image-rendering: pixelated`).
-  - **All entity sizes match the GBA version:** Ship (20×16), Hunter Drones (20×16), Large Asteroids (24×24), Medium Asteroids (16×16), Small Asteroids (10×10), Tiny Asteroids (6×6), Lasers (4×10 / 6×14), Shield (24×24), Explosions (24×24).
-  - Widescreen aspect ratio extends tactical peripheral radar for asteroids and hostiles while leaving outer zones clear for thumbs.
+  - All entity sizes match the GBA version 1-1: Ship (20×16), Hunter Drones (20×16), Large Asteroids (24×24), Medium Asteroids (16×16), Small Asteroids (10×10), Tiny Asteroids (6×6), Lasers (4×10 / 6×14), Shield (24×24), Explosions (24×24).
+  - Immersive Fullscreen Mode: Configures `WindowCompat.setDecorFitsSystemWindows(window, false)` and hides system status bars and bottom navigation bars.
+  - Boots directly into the Main Menu (`Screen.MAIN_MENU`) with background music playing immediately upon launch.
 
 - **🛡️ Full Upgrade Hangar & Shop:**
   - **9 Ship Paints:** Solar Orange, Ion Cyan (Starter), Nova Violet, Plasma Mint, Pulsar Gold, Crimson Void, Obsidian Dark, Quantum Neon, and the animated **Rainbow Prism** with dynamic chromatic wave across wings and fuselage!
@@ -38,68 +44,25 @@ An authentic widescreen retro space shooter built specifically for **Android** m
     - **Afterburner:** Cuts Dash cooldown down to 0.40s with extended invulnerability.
     - **Graviton Magnet:** Boosts coin drops (+175% at max) with magnetic pull on pickups.
     - **Overdrive Unit:** Extends Rapid Fire powerup duration up to 26 seconds.
-  - **Live Animated Ship Preview Chamber:** Displays active ship paint, animated engine exhaust plume, and live test-firing weapon bolts.
+  - **Live Ship Preview Chamber:** Displays active ship paint, animated engine exhaust plume, and live test-firing weapon bolts.
 
 - **🎵 Authentic Audio Engine:**
-  - Exact source WAV audio (`menu.wav`, `game.wav`, `laser.wav`, `explosion.wav`, `pickup.wav`).
-  - Web Audio API polyphonic mixer with volume controls and mobile audio unlock.
-
-- **💾 Save Persistence:**
-  - Automatically saves coins, high score, owned items bitmask, equipped loadout, tech upgrade levels, and settings to `localStorage`.
-
-- **📱 Tuff Android Fullscreen Immersive Mode:**
-  - Hides both the top status bar and bottom Android navigation bar / gesture pill (`requestFullscreen({ navigationUI: "hide" })`).
-  - Screen Orientation lock (`landscape`) and Screen Wake Lock to prevent screen dimming during gameplay.
-  - Safe-area insets (`env(safe-area-inset-*)`) protect against camera punch-holes and notches.
+  - Uses the exact same source WAV audio files (`menu.wav`, `game.wav`, `laser.wav`, `explosion.wav`, `pickup.wav`) stored in `res/raw`.
+  - Android `SoundPool` for zero-latency polyphonic sound effects and `MediaPlayer` for seamless background music loops.
+  - Save Persistence: All settings, coins, high score, unlocked items, and upgrade levels persist automatically via Android `SharedPreferences`.
 
 ---
 
-## 🚀 Running the Android Edition
+## 🛠️ Building & Running the Android App
 
-### 1. Web Preview & Local Play
+### Build Debug APK via Gradle
 
-Start the included Node.js web server:
-
-```bash
-npm start
-```
-
-Open your mobile browser (or Chrome / Brave / Firefox with mobile devtools) and navigate to:
-```
-http://localhost:3000/android/
-```
-
-### 2. Install as PWA on Android Phone
-
-1. Open `http://<your-ip>:3000/android/` in **Google Chrome** on your Android phone.
-2. Tap the three dots menu (**⋮**) in Chrome.
-3. Select **"Install app"** or **"Add to Home screen"**.
-4. Launch from your home screen for full standalone immersive mode with zero browser address bar or system navigation bar!
-
-### 3. Packaging as Native APK (Capacitor / Cordova / Bubblewrap)
-
-To build a standalone `.apk` for Google Play or sideloading:
+From the `android/` directory:
 
 ```bash
-# Using Bubblewrap (Google TWA CLI):
-npx @bubblewrap/cli init --manifest=http://localhost:3000/android/manifest.json
-npx @bubblewrap/cli build
-
-# Or using Capacitor:
-npm install @capacitor/core @capacitor/cli @capacitor/android
-npx cap init "Space Unlimited" "com.brick.spaceshooter" --web-dir=android
-npx cap add android
-npx cap open android
+chmod +x gradlew
+./gradlew assembleDebug
 ```
 
----
-
-## 🕹️ Controls Summary
-
-| Action | Touchscreen (Android) | Keyboard Fallback | Gamepad |
-|---|---|---|---|
-| **Steer Ship / Move** | Left Thumb Virtual Joystick | `WASD` or Arrow Keys | Left Stick / D-Pad |
-| **Fire Blaster / Buy** | Right Thumb `FIRE` Button (tap or hold) | `Space`, `Z`, or `J` | `A` or `Right Trigger` |
-| **Dash Evade / Back** | Right Thumb `DASH` Button | `Shift`, `X`, or `K` | `X`, `B`, or `Right Bumper` |
-| **Pause Mission** | Top-Right `⏸` Button | `P` or `Escape` | `Start` / Menu |
-| **Shop Tabs** | Tap tabs directly or swipe | `Q` / `E` or `Left/Right` | `LB` / `RB` |
+The compiled APK will be output to:
+`android/app/build/outputs/apk/debug/app-debug.apk`
