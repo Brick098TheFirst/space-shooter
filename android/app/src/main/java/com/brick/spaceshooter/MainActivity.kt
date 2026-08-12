@@ -1,34 +1,67 @@
 package com.brick.spaceshooter
 
-import android.content.Context
+import android.annotation.SuppressLint
 import android.content.pm.ActivityInfo
-import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewClientCompat
 
+/**
+ * Thin Android shell. The game itself is the same GBA ROM + mGBA web
+ * player used by the rest of the repo — no separate Kotlin remake.
+ */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var gameView: GameView
+    private lateinit var webView: WebView
 
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Force sensor landscape orientation
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
-        // Setup true immersive fullscreen mode with zero top or bottom system bars
         hideSystemBars()
 
-        // Configure High Refresh Rate (90Hz / 120Hz)
-        requestHighRefreshRate()
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
 
-        gameView = GameView(this)
-        setContentView(gameView)
+        webView = WebView(this).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.allowFileAccess = true
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            isFocusable = true
+            isFocusableInTouchMode = true
+            overScrollMode = View.OVER_SCROLL_NEVER
+
+            webChromeClient = WebChromeClient()
+            webViewClient = object : WebViewClientCompat() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): WebResourceResponse? {
+                    return assetLoader.shouldInterceptRequest(request.url)
+                }
+            }
+        }
+
+        setContentView(webView)
+        // Same player + ROM packaged under assets/www (synced from web/ + SpaceUnlimited.gba)
+        webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
     }
 
     private fun hideSystemBars() {
@@ -39,58 +72,35 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
 
-    private fun requestHighRefreshRate() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val display = display
-                val params = window.attributes
-                display?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
-                    params.preferredDisplayModeId = mode.modeId
-                }
-                params.preferredRefreshRate = 120f
-                window.attributes = params
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val params = window.attributes
-                @Suppress("DEPRECATION")
-                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                @Suppress("DEPRECATION")
-                wm.defaultDisplay?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
-                    params.preferredDisplayModeId = mode.modeId
-                }
-                params.preferredRefreshRate = 120f
-                window.attributes = params
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
     override fun onResume() {
         super.onResume()
         hideSystemBars()
-        if (::gameView.isInitialized) {
-            gameView.resume()
-        }
+        if (::webView.isInitialized) webView.onResume()
     }
 
     override fun onPause() {
+        if (::webView.isInitialized) webView.onPause()
         super.onPause()
-        if (::gameView.isInitialized) {
-            gameView.pause()
-        }
     }
 
     override fun onDestroy() {
-        super.onDestroy()
-        if (::gameView.isInitialized) {
-            gameView.release()
+        if (::webView.isInitialized) {
+            webView.destroy()
         }
+        super.onDestroy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            hideSystemBars()
+        if (hasFocus) hideSystemBars()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (::webView.isInitialized && webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
         }
     }
 }

@@ -35,7 +35,23 @@ android {
     }
 }
 
+// Package the same GBA ROM + web mGBA player the rest of the repo uses.
+def repoRoot = rootProject.projectDir.parentFile
+tasks.register('syncGbaPlayerAssets', Copy) {
+    from("${repoRoot}/android/www/index.html")
+    from("${repoRoot}/web/dist") {
+        include 'emulator-bundle.js'
+        include 'mgba_libretro.wasm'
+        include 'SpaceUnlimited.gba'
+    }
+    from("${repoRoot}/SpaceUnlimited.gba")
+    into("${projectDir}/src/main/assets/www")
+}
+
+tasks.named('preBuild').configure { dependsOn('syncGbaPlayerAssets') }
+
 dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.webkit:webkit:1.11.0'
 }

@@ -43,9 +43,16 @@ const server = http.createServer((req, res) => {
 
     let filePath;
     if (reqPath === "/android" || reqPath === "/android/") {
-        filePath = path.join(__dirname, "android", "index.html");
+        filePath = path.join(__dirname, "android", "www", "index.html");
     } else if (reqPath.startsWith("/android/")) {
-        filePath = path.join(__dirname, reqPath);
+        const rest = reqPath.slice("/android/".length);
+        if (rest === "SpaceUnlimited.gba" || rest === "emulator-bundle.js" || rest === "mgba_libretro.wasm") {
+            const distFile = path.join(__dirname, "web", "dist", rest === "SpaceUnlimited.gba" ? "SpaceUnlimited.gba" : rest);
+            const rootRom = path.join(__dirname, "SpaceUnlimited.gba");
+            filePath = fs.existsSync(distFile) ? distFile : (rest === "SpaceUnlimited.gba" ? rootRom : path.join(__dirname, "android", "www", rest));
+        } else {
+            filePath = path.join(__dirname, "android", "www", rest);
+        }
     } else if (reqPath === "/SpaceUnlimited.gba") {
         filePath = path.join(__dirname, "SpaceUnlimited.gba");
     } else if (reqPath.startsWith("/dist/")) {

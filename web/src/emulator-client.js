@@ -232,7 +232,7 @@ class GbaPlayer {
         this.onStatusChange("Initializing mGBA emulator engine...");
 
         this.m = await create_mgba({
-            locateFile: (file) => "/dist/" + file
+            locateFile: (file) => new URL(file, import.meta.url).href
         });
 
         const m = this.m;
