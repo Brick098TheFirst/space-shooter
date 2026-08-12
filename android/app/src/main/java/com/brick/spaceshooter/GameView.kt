@@ -57,6 +57,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var stickKnobY = 0f
     private var stickNx = 0f
     private var stickNy = 0f
+    private var menuDownX = 0f
+    private var menuDownY = 0f
 
     init {
         NativeGame.nativeInit()
@@ -240,7 +242,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
             NativeGame.SCREEN_CONTROLS,
-            NativeGame.SCREEN_CREDITS -> drawBackChip(canvas)
+            NativeGame.SCREEN_CREDITS,
+            NativeGame.SCREEN_MODE_SELECT -> drawBackChip(canvas)
         }
     }
 
@@ -346,13 +349,28 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val y = event.getY(index)
 
         if (uiScreen != NativeGame.SCREEN_PLAYING) {
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
-                if (needsBackChip() && backRect().contains(x, y)) {
-                    NativeGame.nativeGoBack()
-                } else {
-                    val mapped = mapToGame(x, y)
-                    if (mapped != null) NativeGame.nativeQueueTap(mapped.first, mapped.second)
+            when (action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    menuDownX = x
+                    menuDownY = y
                 }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    val dx = x - menuDownX
+                    val dy = y - menuDownY
+                    if (needsBackChip() && backRect().contains(x, y)) {
+                        NativeGame.nativeGoBack()
+                    } else if (uiScreen == NativeGame.SCREEN_HANGAR &&
+                        kotlin.math.abs(dx) > dp(36f) &&
+                        kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.3f
+                    ) {
+                        // Native swipe across the hangar tab strip / catalog.
+                        pulseKeys = pulseKeys or if (dx < 0) NativeGame.KEY_R else NativeGame.KEY_L
+                    } else {
+                        val mapped = mapToGame(x, y)
+                        if (mapped != null) NativeGame.nativeQueueTap(mapped.first, mapped.second)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> menuPointerDown = false
             }
             return true
         }

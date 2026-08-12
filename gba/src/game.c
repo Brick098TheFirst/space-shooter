@@ -10,6 +10,29 @@ EWRAM_BSS GameState g_game;
 
 static bool s_game_static_valid = false;
 static int s_game_frame = 0;
+static GameMode s_game_mode = GAME_MODE_WAVES;
+
+#ifdef PLATFORM_HOST
+#define OVERDRIVE_TICK_RATE 90
+#define ENDLESS_THREAT_INTERVAL 360
+#define OVERDRIVE_THREAT_INTERVAL 180
+#else
+#define OVERDRIVE_TICK_RATE 60
+#define ENDLESS_THREAT_INTERVAL 240
+#define OVERDRIVE_THREAT_INTERVAL 120
+#endif
+#define OVERDRIVE_DURATION (90 * OVERDRIVE_TICK_RATE)
+
+void game_set_mode(GameMode mode) {
+    if (mode < GAME_MODE_WAVES || mode > GAME_MODE_OVERDRIVE) mode = GAME_MODE_WAVES;
+    s_game_mode = mode;
+}
+
+GameMode game_get_mode(void) {
+    return s_game_mode;
+}
+
+static void finish_run(bool time_up);
 
 #define FIXED_ONE 256
 #define TO_FIXED(n) ((n) * 256)
@@ -237,12 +260,7 @@ static void damage_player(void) {
         g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 20);
         trigger_explosion(px, py);
         if (g_game.player.lives <= 0) {
-            g_game.is_game_over = true;
-            if (g_game.score > g_settings.high_score) {
-                g_settings.high_score = g_game.score;
-                g_game.is_new_high_score = true;
-            }
-            save_write();
+            finish_run(false);
         }
     }
     g_game.combo = 1;
@@ -314,6 +332,129 @@ static void destroy_drone(int idx, bool award) {
         award_score(120);
         award_coins(45);
         try_spawn_powerup(dx, dy, 10);
+    }
+}
+
+static int count_active_asteroids(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) n++;
+    return n;
+}
+
+static int count_active_drones(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_DRONES; i++) if (g_game.drones[i].active) n++;
+    return n;
+}
+
+static int current_threat(void) {
+    int threat = g_game.wave;
+    if (threat < 1) threat = 1;
+    return threat;
+}
+
+static void spawn_random_asteroid(void) {
+    int threat = current_threat();
+    int mult = get_diff_speed_mult() + threat * 18;
+    int x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+    int y = -TO_FIXED((rand() % 56) + 8);
+    int vx = ((rand() % 160) - 80) * mult >> 8;
+    int vy = ((rand() % 90) + 80 + threat * 6) * mult >> 8;
+    bool is_large = (rand() % 100) < (15 + threat * 7);
+    AsteroidType type = is_large ? AST_LARGE : ((rand() & 1) ? AST_MED_A : AST_MED_B);
+    spawn_asteroid(type, x, y, vx, vy);
+}
+
+static bool spawn_random_drone(void) {
+    int threat = current_threat();
+    int mult = get_diff_speed_mult() + threat * 18;
+    for (int i = 0; i < MAX_DRONES; i++) {
+        if (g_game.drones[i].active) continue;
+        g_game.drones[i].x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+        g_game.drones[i].y = -TO_FIXED((rand() % 44) + 14);
+        g_game.drones[i].vx = 0;
+        g_game.drones[i].vy = (70 + threat * 5) * mult >> 8;
+        int base_cd = 70 - threat * 4;
+        if (base_cd < 22) base_cd = 22;
+        g_game.drones[i].shoot_timer = (rand() % 40) + base_cd;
+        g_game.drones[i].burst_timer = 0;
+        g_game.drones[i].burst_shots = 0;
+        g_game.drones[i].phase = rand() % 256;
+        g_game.drones[i].hp = 2 + (threat / 3) + (rand() % 3);
+        if (g_settings.difficulty == DIFF_ACE) g_game.drones[i].hp++;
+        if (g_game.drones[i].hp > 6) g_game.drones[i].hp = 6;
+        g_game.drones[i].active = true;
+        return true;
+    }
+    return false;
+}
+
+static void spawn_continuous_threat(void) {
+    int threat = current_threat();
+    int ast_n = count_active_asteroids();
+    int dr_n = count_active_drones();
+    int ast_cap = 6 + threat / 2;
+    if (g_game.mode == GAME_MODE_OVERDRIVE) ast_cap += 3;
+    if (ast_cap > 20) ast_cap = 20;
+    int dr_cap = 1 + threat / 3;
+    if (g_game.mode == GAME_MODE_OVERDRIVE) dr_cap++;
+    if (dr_cap > MAX_DRONES) dr_cap = MAX_DRONES;
+
+    int drone_chance = (g_game.mode == GAME_MODE_OVERDRIVE) ? 42 : 30;
+    bool want_drone = ((rand() % 100) < drone_chance) && (dr_n < dr_cap);
+    if (want_drone) {
+        spawn_random_drone();
+    } else if (ast_n < ast_cap) {
+        spawn_random_asteroid();
+    } else if (dr_n < dr_cap) {
+        spawn_random_drone();
+    }
+
+    if (g_game.mode == GAME_MODE_OVERDRIVE && (rand() % 100) < 35) {
+        if (count_active_asteroids() < ast_cap) spawn_random_asteroid();
+        else spawn_random_drone();
+    }
+}
+
+static void finish_run(bool time_up) {
+    g_game.is_game_over = true;
+    g_game.time_up = time_up;
+    if (g_game.score > g_settings.high_score) {
+        g_settings.high_score = g_game.score;
+        g_game.is_new_high_score = true;
+    }
+    save_write();
+}
+
+static void update_continuous_modes(void) {
+    int threat_every = (g_game.mode == GAME_MODE_OVERDRIVE)
+        ? OVERDRIVE_THREAT_INTERVAL : ENDLESS_THREAT_INTERVAL;
+    g_game.spawn_timer--;
+    if ((s_game_frame % threat_every) == 0) {
+        g_game.wave++;
+        if (g_game.wave > 99) g_game.wave = 99;
+    }
+
+    if (g_game.mode == GAME_MODE_OVERDRIVE) {
+        if (g_game.overdrive_timer > 0) {
+            g_game.overdrive_timer--;
+        } else {
+            finish_run(true);
+            return;
+        }
+    }
+
+    int ast_n = count_active_asteroids();
+    int dr_n = count_active_drones();
+    if (ast_n + dr_n == 0 && g_game.spawn_timer > 8) g_game.spawn_timer = 8;
+
+    if (g_game.spawn_timer <= 0) {
+        spawn_continuous_threat();
+        int threat = current_threat();
+        int cd = 52 - threat * 2;
+        if (g_game.mode == GAME_MODE_OVERDRIVE) cd -= 14;
+        if (cd < 12) cd = 12;
+        g_game.spawn_timer = cd;
     }
 }
 
@@ -508,6 +649,7 @@ void game_init(void) {
 
 void game_start(void) {
     memset(&g_game, 0, sizeof(GameState));
+    g_game.mode = s_game_mode;
 
     g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
     g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 24);
@@ -530,9 +672,22 @@ void game_start(void) {
 
     g_game.player.invulnerable_timer = 90;
     g_game.combo = 1;
-    g_game.intermission_timer = 30;
     s_game_frame = 0;
     s_game_static_valid = false;
+
+    if (g_game.mode == GAME_MODE_WAVES) {
+        g_game.intermission_timer = 30;
+    } else {
+        g_game.wave = 1;
+        g_game.wave_banner_timer = 110;
+        g_game.spawn_timer = 12;
+        g_game.intermission_timer = 9999;
+        if (g_game.mode == GAME_MODE_OVERDRIVE) {
+            g_game.overdrive_timer = OVERDRIVE_DURATION;
+        }
+        for (int i = 0; i < 4; i++) spawn_random_asteroid();
+        if (g_game.mode == GAME_MODE_OVERDRIVE) spawn_random_drone();
+    }
 
     audio_play_bgm(BGM_GAME);
 }
@@ -857,18 +1012,22 @@ static void game_update_tick(void) {
         }
     }
 
-    int active_enemies = 0;
-    for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) active_enemies++;
-    for (int i = 0; i < MAX_DRONES; i++) if (g_game.drones[i].active) active_enemies++;
-
-    if (active_enemies == 0) {
-        g_game.intermission_timer--;
-        if (g_game.intermission_timer <= 0) {
-            begin_wave();
-            g_game.intermission_timer = 50; // shorter intermission for harder feel
-        }
+    if (g_game.mode == GAME_MODE_ENDLESS || g_game.mode == GAME_MODE_OVERDRIVE) {
+        update_continuous_modes();
     } else {
-        g_game.intermission_timer = 50;
+        int active_enemies = 0;
+        for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) active_enemies++;
+        for (int i = 0; i < MAX_DRONES; i++) if (g_game.drones[i].active) active_enemies++;
+
+        if (active_enemies == 0) {
+            g_game.intermission_timer--;
+            if (g_game.intermission_timer <= 0) {
+                begin_wave();
+                g_game.intermission_timer = 50; // shorter intermission for harder feel
+            }
+        } else {
+            g_game.intermission_timer = 50;
+        }
     }
 }
 
@@ -1030,8 +1189,16 @@ void game_draw(void) {
         int bx = (SCREEN_WIDTH - banner_w) / 2;
         int by = 68;
         gfx_draw_glass_card(bx, by, banner_w, banner_h, PAL_TEXT_WHITE, 15);
-        siprintf(buf, "WAVE %02d", g_game.wave);
-        gfx_draw_text_centered(bx, by + 4, banner_w, buf, PAL_TEXT_WHITE);
-        gfx_draw_text_centered(bx, by + 13, banner_w, "GET READY!", PAL_TEXT_CYAN);
+        if (g_game.mode == GAME_MODE_ENDLESS) {
+            gfx_draw_text_centered(bx, by + 4, banner_w, "ENDLESS", PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, by + 13, banner_w, "SURVIVE!", PAL_TEXT_CYAN);
+        } else if (g_game.mode == GAME_MODE_OVERDRIVE) {
+            gfx_draw_text_centered(bx, by + 4, banner_w, "OVERDRIVE", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, by + 13, banner_w, "90 SECONDS", PAL_TEXT_CYAN);
+        } else {
+            siprintf(buf, "WAVE %02d", g_game.wave);
+            gfx_draw_text_centered(bx, by + 4, banner_w, buf, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, by + 13, banner_w, "GET READY!", PAL_TEXT_CYAN);
+        }
     }
 }

@@ -123,11 +123,17 @@ typedef struct {
     int intermission_timer;
     bool is_game_over;
     bool is_new_high_score;
+    GameMode mode;
+    int spawn_timer;
+    int overdrive_timer;
+    bool time_up;
 } GameState;
 
 extern GameState g_game;
 
 void game_init(void);
+void game_set_mode(GameMode mode);
+GameMode game_get_mode(void);
 void game_start(void);
 void game_update(void);
 void game_draw(void);

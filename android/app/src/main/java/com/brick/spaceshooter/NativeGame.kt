@@ -31,6 +31,7 @@ object NativeGame {
     const val SCREEN_PAUSED = 5
     const val SCREEN_GAME_OVER = 6
     const val SCREEN_CREDITS = 7
+    const val SCREEN_MODE_SELECT = 8
 
     external fun nativeInit()
     external fun nativeSetKeys(keys: Int)

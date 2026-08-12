@@ -51,7 +51,8 @@ void menu_open(GameScreen screen) {
     s_upg_scroll = 0;
     s_tap_pending = false;
     menu_static_invalidate();
-    if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS || screen == SCREEN_CONTROLS || screen == SCREEN_CREDITS) {
+    if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS ||
+        screen == SCREEN_CONTROLS || screen == SCREEN_CREDITS || screen == SCREEN_MODE_SELECT) {
         audio_play_bgm(BGM_MENU);
     }
 }
@@ -75,6 +76,7 @@ void menu_go_back(void) {
             break;
         case SCREEN_CONTROLS:
         case SCREEN_CREDITS:
+        case SCREEN_MODE_SELECT:
             menu_open(SCREEN_MAIN_MENU);
             break;
         case SCREEN_PAUSED:
@@ -118,6 +120,68 @@ static int shop_get_category_count(int cat) {
     }
 }
 
+static void request_play(void) {
+#ifdef PLATFORM_HOST
+    menu_open(SCREEN_MODE_SELECT);
+#else
+    game_set_mode(GAME_MODE_WAVES);
+    game_start();
+    s_current_screen = SCREEN_PLAYING;
+#endif
+}
+
+static void launch_mode(GameMode mode) {
+    game_set_mode(mode);
+    game_start();
+    s_current_screen = SCREEN_PLAYING;
+}
+
+#define SHOP_TAB_W 56
+
+static int shop_tab_x(int t) {
+    int tab_gap = (SCREEN_WIDTH - 8 - 4 * SHOP_TAB_W) / 3;
+    if (tab_gap < 0) tab_gap = 0;
+    if (t == 3) return SCREEN_WIDTH - 4 - SHOP_TAB_W;
+    return 4 + t * (SHOP_TAB_W + tab_gap);
+}
+
+static void hangar_activate(void) {
+    int cat = s_shop_category;
+    int sel = s_shop_selected[cat];
+    bool ok = false;
+    switch (cat) {
+        case 0:
+            if (shop_is_accent_owned(sel)) { shop_equip_accent(sel); shop_set_msg("EQUIPPED PAINT!", PAL_TEXT_GREEN); }
+            else { ok = shop_try_purchase_accent(sel); shop_set_msg(ok ? "PURCHASED PAINT!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
+            break;
+        case 1:
+            if (shop_is_trail_owned(sel)) { shop_equip_trail(sel); shop_set_msg("EQUIPPED TRAIL!", PAL_TEXT_GREEN); }
+            else { ok = shop_try_purchase_trail(sel); shop_set_msg(ok ? "PURCHASED TRAIL!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
+            break;
+        case 2: {
+            WeaponRig rig = (WeaponRig)sel;
+            if (shop_is_rig_owned(rig)) { shop_equip_rig(rig); shop_set_msg("EQUIPPED WEAPON!", PAL_TEXT_GREEN); }
+            else { ok = shop_try_purchase_rig(rig); shop_set_msg(ok ? "PURCHASED WEAPON!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
+            break;
+        }
+        case 3:
+            if (shop_is_laser_owned(sel)) { shop_equip_laser(sel); shop_set_msg("EQUIPPED LASER!", PAL_TEXT_GREEN); }
+            else { ok = shop_try_purchase_laser(sel); shop_set_msg(ok ? "PURCHASED LASER!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
+            break;
+    }
+    menu_static_invalidate();
+}
+
+static void hangar_select_item(int idx) {
+    int cat = s_shop_category;
+    int count = shop_get_category_count(cat);
+    if (idx < 0 || idx >= count) return;
+    s_shop_selected[cat] = idx;
+    if (idx < s_shop_scroll[cat]) s_shop_scroll[cat] = idx;
+    else if (idx >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = idx - 4;
+    menu_static_invalidate();
+}
+
 static void format_price(char* dst, int price) {
     char tmp[12];
     if (price >= 1000000) siprintf(tmp, "%dM", price / 1000000);
@@ -130,7 +194,7 @@ static void format_price(char* dst, int price) {
 
 static void main_menu_activate(int index) {
     switch (index) {
-        case 0: game_start(); s_current_screen = SCREEN_PLAYING; break;
+        case 0: request_play(); break;
         case 1: menu_open(SCREEN_HANGAR); break;
         case 2: menu_open(SCREEN_SETTINGS); break; // now UPGRADES
         case 3: menu_open(SCREEN_CONTROLS); break;
@@ -163,6 +227,55 @@ static void update_hangar(void) {
     if (s_shop_msg_timer > 0) s_shop_msg_timer--;
     int cat = s_shop_category;
     int count = shop_get_category_count(cat);
+    int list_w = shop_list_width();
+    int right_x = 4 + list_w + 2;
+    int right_w = SCREEN_WIDTH - 4 - right_x;
+
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) {
+        // Full-width tab strip: four equal touch zones so native taps never miss.
+        if (ty >= 14 && ty < 33) {
+            int zone = (SCREEN_WIDTH - 8) / SHOP_CAT_COUNT;
+            if (zone < 1) zone = 1;
+            int tapped = (tx - 4) / zone;
+            if (tx < 4) tapped = 0;
+            if (tapped < 0) tapped = 0;
+            if (tapped >= SHOP_CAT_COUNT) tapped = SHOP_CAT_COUNT - 1;
+            if (tapped != s_shop_category) {
+                s_shop_category = tapped;
+                menu_static_invalidate();
+            }
+            return;
+        }
+        for (int i = 0; i < 5; i++) {
+            int idx = s_shop_scroll[cat] + i;
+            if (idx >= count) break;
+            if (in_rect(tx, ty, 6, 34 + i * 21, list_w - 4, 19)) {
+                if (s_shop_selected[cat] == idx) hangar_activate();
+                else hangar_select_item(idx);
+                return;
+            }
+        }
+        if (in_rect(tx, ty, 4, 31, list_w, 12) && s_shop_scroll[cat] > 0) {
+            s_shop_scroll[cat]--;
+            menu_static_invalidate();
+            return;
+        }
+        if (in_rect(tx, ty, 4, 132, list_w, 12) && s_shop_scroll[cat] + 5 < count) {
+            s_shop_scroll[cat]++;
+            menu_static_invalidate();
+            return;
+        }
+        if (in_rect(tx, ty, right_x + 4, 116, right_w - 8, 24)) {
+            hangar_activate();
+            return;
+        }
+        if (ty >= 144) {
+            save_write();
+            menu_open(SCREEN_MAIN_MENU);
+            return;
+        }
+    }
 
     if (key_hit(KEY_L)) {
         s_shop_category = (s_shop_category + SHOP_CAT_COUNT - 1) % SHOP_CAT_COUNT;
@@ -196,33 +309,9 @@ static void update_hangar(void) {
         menu_static_invalidate();
     }
 
-    if (key_hit(KEY_A)) {
-        int sel = s_shop_selected[cat];
-        bool ok = false;
-        switch (cat) {
-            case 0:
-                if (shop_is_accent_owned(sel)) { shop_equip_accent(sel); shop_set_msg("EQUIPPED PAINT!", PAL_TEXT_GREEN); }
-                else { ok = shop_try_purchase_accent(sel); shop_set_msg(ok ? "PURCHASED PAINT!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
-                break;
-            case 1:
-                if (shop_is_trail_owned(sel)) { shop_equip_trail(sel); shop_set_msg("EQUIPPED TRAIL!", PAL_TEXT_GREEN); }
-                else { ok = shop_try_purchase_trail(sel); shop_set_msg(ok ? "PURCHASED TRAIL!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
-                break;
-            case 2: {
-                WeaponRig rig = (WeaponRig)sel;
-                if (shop_is_rig_owned(rig)) { shop_equip_rig(rig); shop_set_msg("EQUIPPED WEAPON!", PAL_TEXT_GREEN); }
-                else { ok = shop_try_purchase_rig(rig); shop_set_msg(ok ? "PURCHASED WEAPON!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
-                break;
-            }
-            case 3:
-                if (shop_is_laser_owned(sel)) { shop_equip_laser(sel); shop_set_msg("EQUIPPED LASER!", PAL_TEXT_GREEN); }
-                else { ok = shop_try_purchase_laser(sel); shop_set_msg(ok ? "PURCHASED LASER!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
-                break;
-        }
-        menu_static_invalidate();
-    }
+    if (key_hit(KEY_A)) hangar_activate();
 
-    if (key_hit(KEY_START)) { save_write(); game_start(); s_current_screen = SCREEN_PLAYING; }
+    if (key_hit(KEY_START)) { save_write(); request_play(); }
     if (key_hit(KEY_B)) { save_write(); menu_open(SCREEN_MAIN_MENU); }
 }
 
@@ -304,7 +393,7 @@ static void update_upgrades(void) {
     }
 
     if (key_hit(KEY_A)) upgrades_activate();
-    if (key_hit(KEY_START)) { save_write(); game_start(); s_current_screen = SCREEN_PLAYING; }
+    if (key_hit(KEY_START)) { save_write(); request_play(); }
     if (key_hit(KEY_B)) { save_write(); menu_open(SCREEN_MAIN_MENU); }
 }
 
@@ -318,6 +407,41 @@ static void update_credits(void) {
     if (consume_tap(&tx, &ty)) { menu_open(SCREEN_MAIN_MENU); return; }
     if (key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START)) menu_open(SCREEN_MAIN_MENU);
 }
+
+#ifdef PLATFORM_HOST
+static const char* s_mode_titles[3] = { "WAVES", "ENDLESS", "OVERDRIVE" };
+static const char* s_mode_lines[3] = {
+    "Clear waves. Classic run.",
+    "No waves. Random hunters.",
+    "90s score rush. Max chaos."
+};
+
+static int mode_card_y(int i) { return 28 + i * 36; }
+
+static void update_mode_select(void) {
+    const int count = 3;
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) {
+        int card_w = 220;
+        int card_x = (SCREEN_WIDTH - card_w) / 2;
+        for (int i = 0; i < count; i++) {
+            if (in_rect(tx, ty, card_x, mode_card_y(i), card_w, 32)) {
+                s_menu_selected = i;
+                launch_mode((GameMode)i);
+                return;
+            }
+        }
+        if (ty >= 144) {
+            menu_open(SCREEN_MAIN_MENU);
+            return;
+        }
+    }
+    if (key_hit(KEY_UP)) s_menu_selected = (s_menu_selected + count - 1) % count;
+    if (key_hit(KEY_DOWN)) s_menu_selected = (s_menu_selected + 1) % count;
+    if (key_hit(KEY_A) || key_hit(KEY_START)) launch_mode((GameMode)s_menu_selected);
+    if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
+}
+#endif
 
 static void pause_activate(int index) {
     switch (index) {
@@ -387,6 +511,9 @@ void menu_update(void) {
         case SCREEN_SETTINGS:  starfield_update(); update_upgrades(); break; // upgrades
         case SCREEN_CONTROLS:  starfield_update(); update_controls(); break;
         case SCREEN_CREDITS:   starfield_update(); update_credits(); break;
+#ifdef PLATFORM_HOST
+        case SCREEN_MODE_SELECT: starfield_update(); update_mode_select(); break;
+#endif
         case SCREEN_PLAYING:
             s_tap_pending = false;
             if (key_hit(KEY_START)) { s_current_screen = SCREEN_PAUSED; s_menu_selected = 0; }
@@ -476,17 +603,14 @@ static void render_hangar_static(void) {
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
     const char* tab_names[4] = { "PAINTS", "TRAILS", "WEAPONS", "LASERS" };
-    int tab_w = 56;
-    int tab_gap = (SCREEN_WIDTH - 8 - 4 * tab_w) / 3;
-    if (tab_gap < 0) tab_gap = 0;
     for (int t = 0; t < 4; t++) {
-        int tx = (t == 3) ? (SCREEN_WIDTH - 4 - tab_w) : (4 + t * (tab_w + tab_gap));
+        int tx = shop_tab_x(t);
         bool is_active = (t == s_shop_category);
         u8 border = is_active ? PAL_TEXT_CYAN : 20;
         u8 bg = is_active ? PAL_BTN_HOVER : PAL_BTN_BG;
         u8 txt = is_active ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
-        gfx_draw_glass_card(tx, 17, tab_w, 12, border, bg);
-        gfx_draw_text_centered(tx, 19, tab_w, tab_names[t], txt);
+        gfx_draw_glass_card(tx, 17, SHOP_TAB_W, 13, border, bg);
+        gfx_draw_text_centered(tx, 19, SHOP_TAB_W, tab_names[t], txt);
     }
     int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
     int right_x = 4 + list_w + 2;
@@ -609,7 +733,11 @@ static void render_hangar_dynamic(void) {
         gfx_draw_text_centered(btn_x, 125, btn_w, "EQUIPPED", PAL_TEXT_GREEN);
     } else if (is_owned) {
         gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_CYAN, PAL_BTN_HOVER);
+#ifdef PLATFORM_HOST
+        gfx_draw_text_centered(btn_x, 125, btn_w, "TAP EQUIP", PAL_TEXT_WHITE);
+#else
         gfx_draw_text_centered(btn_x, 125, btn_w, "[A] EQUIP", PAL_TEXT_WHITE);
+#endif
     } else {
         bool can_afford = (g_settings.coins >= (u32)item_price);
         char pbuf[16]; format_price(pbuf, item_price); char btn_text[28];
@@ -623,7 +751,11 @@ static void render_hangar_dynamic(void) {
         gfx_draw_glass_card(x, 146, w, 12, s_shop_msg_col, 15);
         gfx_draw_text_centered(x, 148, w, s_shop_msg, s_shop_msg_col);
     } else {
+#ifdef PLATFORM_HOST
+        gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "Tap tabs / items / BUY    BACK to exit", PAL_TEXT_WHITE);
+#else
         gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "L/R: Tab  D-PAD: Pick  A: Buy/Equip  B: Exit", PAL_TEXT_WHITE);
+#endif
     }
 }
 
@@ -799,6 +931,30 @@ static void render_credits_static(void) {
 }
 static void render_credits_dynamic(void) { menu_draw_base(); }
 
+#ifdef PLATFORM_HOST
+static void render_mode_select_static(void) {
+    starfield_draw_base(0, 0);
+    gfx_draw_text(10, 6, "SELECT MODE", PAL_TEXT_CYAN);
+    gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
+    gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "Tap a mode    BACK to cancel", PAL_TEXT_WHITE);
+}
+
+static void render_mode_select_dynamic(void) {
+    menu_draw_base();
+    int card_w = 220;
+    int card_x = (SCREEN_WIDTH - card_w) / 2;
+    for (int i = 0; i < 3; i++) {
+        bool sel = (s_menu_selected == i);
+        u8 border = sel ? PAL_TEXT_CYAN : PAL_BTN_BORDER;
+        u8 bg = sel ? PAL_BTN_HOVER : PAL_BTN_BG;
+        int y = mode_card_y(i);
+        gfx_draw_glass_card(card_x, y, card_w, 32, border, bg);
+        gfx_draw_text_centered(card_x, y + 6, card_w, s_mode_titles[i], sel ? PAL_TEXT_WHITE : PAL_TEXT_CYAN);
+        gfx_draw_text_centered(card_x, y + 18, card_w, s_mode_lines[i], sel ? PAL_TEXT_GOLD : 17);
+    }
+}
+#endif
+
 static void render_paused(void) {
     game_draw();
     int w = 110; int h = 88;
@@ -814,8 +970,9 @@ static void render_game_over(void) {
     int w = 130; int h = 122;
     int x = (SCREEN_WIDTH - w) / 2;
     int y = (SCREEN_HEIGHT - h) / 2;
-    gfx_draw_glass_card(x, y, w, h, PAL_TEXT_RED, 15);
-    gfx_draw_text_centered(x, y + 6, w, "GAME OVER", PAL_TEXT_RED);
+    gfx_draw_glass_card(x, y, w, h, g_game.time_up ? PAL_TEXT_GOLD : PAL_TEXT_RED, 15);
+    if (g_game.time_up) gfx_draw_text_centered(x, y + 6, w, "TIME UP!", PAL_TEXT_GOLD);
+    else gfx_draw_text_centered(x, y + 6, w, "GAME OVER", PAL_TEXT_RED);
     char buf[32];
     siprintf(buf, "Score: %06u", (unsigned int)g_game.score);
     gfx_draw_text_centered(x, y + 18, w, buf, PAL_TEXT_WHITE);
@@ -844,6 +1001,11 @@ void menu_draw(void) {
         case SCREEN_CREDITS:
             if (!s_static_valid) { menu_static_begin(); render_credits_static(); menu_static_end(); }
             render_credits_dynamic(); break;
+#ifdef PLATFORM_HOST
+        case SCREEN_MODE_SELECT:
+            if (!s_static_valid) { menu_static_begin(); render_mode_select_static(); menu_static_end(); }
+            render_mode_select_dynamic(); break;
+#endif
         case SCREEN_PLAYING: game_draw(); break;
         case SCREEN_PAUSED: render_paused(); break;
         case SCREEN_GAME_OVER: render_game_over(); break;

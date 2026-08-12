@@ -58,8 +58,15 @@ typedef enum {
     SCREEN_PLAYING,
     SCREEN_PAUSED,
     SCREEN_GAME_OVER,
-    SCREEN_CREDITS
+    SCREEN_CREDITS,
+    SCREEN_MODE_SELECT
 } GameScreen;
+
+typedef enum {
+    GAME_MODE_WAVES = 0,
+    GAME_MODE_ENDLESS = 1,
+    GAME_MODE_OVERDRIVE = 2
+} GameMode;
 
 typedef struct {
     Difficulty difficulty;
