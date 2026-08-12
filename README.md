@@ -34,7 +34,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   - Live animated Ship Preview Chamber with active engine flare and weapon laser test-fire.
   - Dedicated item detail card with full stats, descriptions, and manual `[A] BUY` / `[A] EQUIP` actions.
 - **SRAM Save Persistence:**
-  Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player.
+  Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
 - **Dash Mechanic:** High-speed evasion burst with invulnerability window, engine trail particle fountain, and recharge meter.

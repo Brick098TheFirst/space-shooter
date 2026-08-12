@@ -32,7 +32,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var keys = 0
     private var pulseKeys = 0
     private var uiScreen = NativeGame.SCREEN_MAIN_MENU
-    private val saveFile = File(context.filesDir, "space_unlimited.sav")
+    private val saveDir = File(context.filesDir, "saves").apply { mkdirs() }
+    private val saveFile = File(saveDir, "save.sav")
+    private var persistCounter = 0
 
     private val audioBuf = ShortArray(NativeGame.AUDIO_SAMPLES_PER_FRAME)
     private val audioTrack: AudioTrack
@@ -63,10 +65,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var menuScrollAccumX = 0f
 
     init {
-        NativeGame.nativeInit()
-        if (saveFile.exists()) {
-            NativeGame.nativeLoadSave(saveFile.readBytes())
-        }
+        migrateLegacySave()
+        NativeGame.nativeInit(saveDir.absolutePath)
 
         val minBuf = AudioTrack.getMinBufferSize(
             NativeGame.AUDIO_SAMPLE_RATE,
@@ -113,8 +113,26 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         audioTrack.release()
     }
 
+    private fun migrateLegacySave() {
+        if (saveFile.exists() && saveFile.length() > 0L) return
+        val candidates = listOf(
+            File(context.filesDir, "space_unlimited.sav"),
+            File(context.filesDir, "save.sav"),
+            File(context.getExternalFilesDir(null), "save.sav"),
+            File(context.getExternalFilesDir(null), "saves/save.sav")
+        )
+        for (src in candidates) {
+            if (src.exists() && src.isFile && src.length() > 0L) {
+                try { src.copyTo(saveFile, overwrite = false) } catch (_: Exception) {}
+                break
+            }
+        }
+    }
+
     private fun persistSave() {
         try {
+            NativeGame.nativeFlushSave()
+            saveDir.mkdirs()
             saveFile.writeBytes(NativeGame.nativeGetSave())
         } catch (_: Exception) {}
     }
@@ -169,7 +187,13 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val nextScreen = NativeGame.nativeGetScreen()
         if (nextScreen != uiScreen) {
             if (nextScreen != NativeGame.SCREEN_PLAYING) resetStickToHome()
+            persistSave()
             uiScreen = nextScreen
+        }
+        persistCounter++
+        if (persistCounter >= NativeGame.TARGET_FPS * 2) {
+            persistCounter = 0
+            persistSave()
         }
 
         NativeGame.nativePresent(pixels)

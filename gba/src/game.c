@@ -225,6 +225,7 @@ static void award_coins(int base_amount) {
     if (earned < 1) earned = 1;
     g_settings.coins += earned;
     if (g_settings.coins > 9999999) g_settings.coins = 9999999;
+    save_write();
 }
 
 static void award_score(int base_pts) {

@@ -58,6 +58,9 @@ static inline s32 lu_cos(u32 theta) {
 #define siprintf(dst, ...) snprintf((dst), sizeof(dst), __VA_ARGS__)
 
 void platform_host_init(void);
+void platform_set_save_dir(const char* dir);
+void platform_persist_save(void);
+bool platform_restore_save(void);
 const u8* gfx_get_framebuffer(void);
 void gfx_present_argb8888(u32* dst);
 

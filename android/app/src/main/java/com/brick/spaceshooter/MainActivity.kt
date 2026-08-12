@@ -71,6 +71,11 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
     }
 
+    override fun onStop() {
+        if (::gameView.isInitialized) gameView.pause()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         if (::gameView.isInitialized) gameView.release()
         super.onDestroy()

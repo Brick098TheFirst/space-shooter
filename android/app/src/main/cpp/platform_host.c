@@ -8,6 +8,7 @@ volatile u16 REG_VCOUNT = 0;
 static u16 s_keys_in = 0;
 static u16 s_keys_held = 0;
 static u16 s_keys_prev = 0;
+static char s_save_path[512];
 
 void platform_set_keys(u16 keys) {
     s_keys_in = keys;
@@ -30,6 +31,31 @@ void platform_host_init(void) {
     memset((void*)platform_sram, 0, PLATFORM_SRAM_SIZE);
     REG_VCOUNT = 0;
     s_keys_in = s_keys_held = s_keys_prev = 0;
+    s_save_path[0] = '\0';
+}
+
+void platform_set_save_dir(const char* dir) {
+    s_save_path[0] = '\0';
+    if (!dir || !dir[0]) return;
+    /* Context.getFilesDir()/saves/save.sav — app-private, always RW, no perms. */
+    snprintf(s_save_path, sizeof(s_save_path), "%s/save.sav", dir);
+}
+
+void platform_persist_save(void) {
+    if (!s_save_path[0]) return;
+    FILE* f = fopen(s_save_path, "wb");
+    if (!f) return;
+    fwrite((const void*)platform_sram, 1, PLATFORM_SRAM_SIZE, f);
+    fclose(f);
+}
+
+bool platform_restore_save(void) {
+    if (!s_save_path[0]) return false;
+    FILE* f = fopen(s_save_path, "rb");
+    if (!f) return false;
+    size_t n = fread((void*)platform_sram, 1, PLATFORM_SRAM_SIZE, f);
+    fclose(f);
+    return n > 0;
 }
 
 void gfx_present_argb8888(u32* dst) {

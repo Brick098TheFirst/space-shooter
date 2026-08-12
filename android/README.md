@@ -13,7 +13,7 @@ GBA-only hardware (Mode 4 VRAM, DirectSound DMA, SRAM at `0x0E000000`) is swappe
 - **Game Modes (Android only):** Play opens a mode select. **Waves** is the classic clear-the-wave run. **Endless** never stops — threat ramps, hunters spawn at random, no wave banners. **Overdrive** is a 90-second score rush with denser random spawns.
 - **Circular Virtual Stick:** In-game only floating circular analog pad (left) plus circular FIRE / DASH buttons and a PAUSE chip.
 - **Dynamic Phone Scaling:** The 284×160 framebuffer letterboxes to the current window size and relayouts on rotate / multi-window resize.
-- **Persistent Storage:** Flash SRAM state persists to local app storage.
+- **Persistent Storage:** Coins, owned loot (paints, trails, weapons, lasers), upgrades, and high score write to `files/saves/save.sav` under the app's private internal storage (`Context.getFilesDir()`). That directory is always readable and writable by the app with **no storage permission and no folder picker** at launch. Legacy `space_unlimited.sav` files are migrated automatically.
 
 ## Build
 
