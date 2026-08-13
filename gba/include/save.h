@@ -16,6 +16,9 @@ void save_format_coins(char* dst, int dst_cap);
  * Android Settings screen and pops a native text dialog.
  * Returns 1 when the code was applied, 0 for an unknown code. */
 int save_apply_cheat(const char* code);
+/* Wipe coins, unlocks, upgrades, high score, and settings back to a
+ * fresh install. Writes the new defaults immediately. */
+void save_reset_all(void);
 #endif
 
 // Item pricing & catalog query helpers

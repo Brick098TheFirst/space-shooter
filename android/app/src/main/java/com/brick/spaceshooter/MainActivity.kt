@@ -3,6 +3,8 @@ package com.brick.spaceshooter
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -85,6 +87,16 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         if (::gameView.isInitialized) gameView.release()
         super.onDestroy()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::gameView.isInitialized && gameView.handleKeyEvent(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (::gameView.isInitialized && gameView.handleMotionEvent(event)) return true
+        return super.dispatchGenericMotionEvent(event)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

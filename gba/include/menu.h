@@ -25,6 +25,8 @@ void  menu_scroll_to(float px);
 /* Settings -> CODES: the native UI raises this once per activation; the
  * Kotlin layer drains it and opens the cheat-code text dialog. */
 int menu_take_code_request(void);
+/* Settings -> ERASE DATA: drained by Kotlin to show a confirm dialog. */
+int menu_take_erase_request(void);
 #endif
 
 #endif

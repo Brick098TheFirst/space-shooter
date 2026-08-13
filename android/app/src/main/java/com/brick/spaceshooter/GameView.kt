@@ -18,6 +18,8 @@ import android.text.InputFilter
 import android.text.InputType
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -118,6 +120,25 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     // Cheat-code entry (Settings -> CODES row in the native menu)
     private var cheatDialogShowing = false
+    private var eraseDialogShowing = false
+
+    // Physical gamepad / Bluetooth controller. Keys stay latched until
+    // KEY_UP so menus and hold-to-beam work the same as the GBA pad.
+    private var padKeys = 0
+    private var analogPadKeys = 0
+    private var padStickNx = 0f
+    private var padStickNy = 0f
+    private var padTriggerFire = false
+    private var padTriggerBeam = false
+    private var lastControllerNanos = 0L
+    private var controllerLive = false
+
+    private fun controllerBits(): Int {
+        var bits = padKeys or analogPadKeys
+        if (padTriggerFire) bits = bits or NativeGame.KEY_A
+        if (padTriggerBeam) bits = bits or NativeGame.KEY_B
+        return bits
+    }
 
     private companion object {
         const val GESTURE_NONE = 0
@@ -247,7 +268,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         if (!running) return
 
         val held = if (uiScreen == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0
-        keys = held or pulseKeys
+        keys = held or controllerBits() or pulseKeys
         pulseKeys = 0
         NativeGame.nativeSetKeys(keys)
 
@@ -272,7 +293,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 if (n > 0) audioTrack.write(audioBuf, 0, n)
                 timeAccumulatorNanos -= targetFrameNanos
                 ticks++
-                keys = if (NativeGame.nativeGetScreen() == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0
+                keys = (if (NativeGame.nativeGetScreen() == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0) or controllerBits()
             }
         }
 
@@ -301,6 +322,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
         // Settings -> CODES was activated: open the cheat-code dialog.
         if (NativeGame.nativeTakeCodeRequest() != 0) showCheatCodeDialog()
+        // Settings -> ERASE DATA: confirm before wiping the save.
+        if (NativeGame.nativeTakeEraseRequest() != 0) showEraseDataDialog()
 
         syncFrameWidth()
         NativeGame.nativePresent(pixels)
@@ -356,14 +379,26 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         stickKnobY = stickBaseY
     }
 
+    private fun usingController(): Boolean {
+        if (!controllerLive) return false
+        return System.nanoTime() - lastControllerNanos < 2_500_000_000L
+    }
+
+    private fun markController() {
+        controllerLive = true
+        lastControllerNanos = System.nanoTime()
+    }
+
     private fun gameplayKeys(): Int {
         if (uiScreen != NativeGame.SCREEN_PLAYING) return 0
         var next = 0
         val dead = 0.28f
-        if (stickNx < -dead) next = next or NativeGame.KEY_LEFT
-        if (stickNx > dead) next = next or NativeGame.KEY_RIGHT
-        if (stickNy < -dead) next = next or NativeGame.KEY_UP
-        if (stickNy > dead) next = next or NativeGame.KEY_DOWN
+        val nx = if (usingController() && abs(padStickNx) > abs(stickNx)) padStickNx else stickNx
+        val ny = if (usingController() && abs(padStickNy) > abs(stickNy)) padStickNy else stickNy
+        if (nx < -dead) next = next or NativeGame.KEY_LEFT
+        if (nx > dead) next = next or NativeGame.KEY_RIGHT
+        if (ny < -dead) next = next or NativeGame.KEY_UP
+        if (ny > dead) next = next or NativeGame.KEY_DOWN
         if (firePointer != -1) next = next or NativeGame.KEY_A
         if (dashPointer != -1) next = next or NativeGame.KEY_B
         return next
@@ -509,9 +544,28 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         }
     }
 
+    private fun showEraseDataDialog() {
+        if (eraseDialogShowing) return
+        eraseDialogShowing = true
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("ERASE ALL DATA")
+            .setMessage("Delete coins, unlocks, upgrades, high score, and settings? This cannot be undone.")
+            .setPositiveButton("ERASE") { d, _ ->
+                NativeGame.nativeResetAllData()
+                persistSave()
+                pulseHaptic(HapticFeedbackConstants.LONG_PRESS)
+                Toast.makeText(context, "All data deleted.", Toast.LENGTH_SHORT).show()
+                d.dismiss()
+            }
+            .setNegativeButton("CANCEL") { d, _ -> d.dismiss() }
+            .create()
+        dialog.setOnDismissListener { eraseDialogShowing = false }
+        dialog.show()
+    }
+
     private fun drawOverlay(canvas: Canvas) {
         when (uiScreen) {
-            NativeGame.SCREEN_PLAYING -> drawGameplayPad(canvas)
+            NativeGame.SCREEN_PLAYING -> if (!usingController()) drawGameplayPad(canvas)
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
             NativeGame.SCREEN_CONTROLS,
@@ -792,6 +846,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     // ── Gameplay touch: pointer-tracked buttons (down must start on them) ─
 
     private fun handleGameplayTouch(event: MotionEvent): Boolean {
+        controllerLive = false
         val action = event.actionMasked
         val index = event.actionIndex
         val id = event.getPointerId(index)
@@ -844,7 +899,105 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
                 if (id == dashPointer || action == MotionEvent.ACTION_CANCEL) dashPointer = -1
             }
         }
-        keys = gameplayKeys() or pulseKeys
+        keys = gameplayKeys() or controllerBits() or pulseKeys
+        NativeGame.nativeSetKeys(keys)
+        return true
+    }
+
+    // ── Physical controller / gamepad ─────────────────────────────────
+
+    private fun isGamepadSource(source: Int): Boolean {
+        return source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
+            source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+    }
+
+    private fun setPadBit(mask: Int, down: Boolean) {
+        padKeys = if (down) padKeys or mask else padKeys and mask.inv()
+    }
+
+    fun handleKeyEvent(event: KeyEvent): Boolean {
+        val code = event.keyCode
+        if (code == KeyEvent.KEYCODE_VOLUME_UP ||
+            code == KeyEvent.KEYCODE_VOLUME_DOWN ||
+            code == KeyEvent.KEYCODE_VOLUME_MUTE
+        ) return false
+
+        val fromPad = isGamepadSource(event.source) ||
+            (code in KeyEvent.KEYCODE_BUTTON_A..KeyEvent.KEYCODE_BUTTON_MODE) ||
+            code == KeyEvent.KEYCODE_DPAD_UP ||
+            code == KeyEvent.KEYCODE_DPAD_DOWN ||
+            code == KeyEvent.KEYCODE_DPAD_LEFT ||
+            code == KeyEvent.KEYCODE_DPAD_RIGHT ||
+            code == KeyEvent.KEYCODE_DPAD_CENTER ||
+            code == KeyEvent.KEYCODE_BUTTON_START ||
+            code == KeyEvent.KEYCODE_BUTTON_SELECT
+
+        if (code == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                if (uiScreen == NativeGame.SCREEN_PLAYING) pulseKeys = pulseKeys or NativeGame.KEY_START
+                else NativeGame.nativeGoBack()
+            }
+            return true
+        }
+
+        if (!fromPad) return false
+        markController()
+        val down = event.action == KeyEvent.ACTION_DOWN
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return true
+        if (down && event.repeatCount > 0) return true
+
+        when (code) {
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_DPAD_CENTER -> setPadBit(NativeGame.KEY_A, down)
+            KeyEvent.KEYCODE_BUTTON_R1,
+            KeyEvent.KEYCODE_BUTTON_R2 -> setPadBit(NativeGame.KEY_A, down)
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_BUTTON_L2 -> setPadBit(NativeGame.KEY_B, down)
+            KeyEvent.KEYCODE_BUTTON_START,
+            KeyEvent.KEYCODE_BUTTON_MODE -> setPadBit(NativeGame.KEY_START, down)
+            KeyEvent.KEYCODE_BUTTON_SELECT,
+            KeyEvent.KEYCODE_BUTTON_Y -> setPadBit(NativeGame.KEY_SELECT, down)
+            KeyEvent.KEYCODE_DPAD_UP -> setPadBit(NativeGame.KEY_UP, down)
+            KeyEvent.KEYCODE_DPAD_DOWN -> setPadBit(NativeGame.KEY_DOWN, down)
+            KeyEvent.KEYCODE_DPAD_LEFT -> setPadBit(NativeGame.KEY_LEFT, down)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> setPadBit(NativeGame.KEY_RIGHT, down)
+            KeyEvent.KEYCODE_BUTTON_THUMBL -> { /* ignore click */ }
+            else -> return false
+        }
+        keys = (if (uiScreen == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0) or controllerBits() or pulseKeys
+        NativeGame.nativeSetKeys(keys)
+        return true
+    }
+
+    fun handleMotionEvent(event: MotionEvent): Boolean {
+        if (!isGamepadSource(event.source)) return false
+        markController()
+        val dead = 0.35f
+        val sx = event.getAxisValue(MotionEvent.AXIS_X)
+        val sy = event.getAxisValue(MotionEvent.AXIS_Y)
+        val hx = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val hy = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        padStickNx = sx
+        padStickNy = sy
+
+        var analog = 0
+        if (hx < -dead || sx < -dead) analog = analog or NativeGame.KEY_LEFT
+        if (hx > dead || sx > dead) analog = analog or NativeGame.KEY_RIGHT
+        if (hy < -dead || sy < -dead) analog = analog or NativeGame.KEY_UP
+        if (hy > dead || sy > dead) analog = analog or NativeGame.KEY_DOWN
+        analogPadKeys = analog
+
+        val ltrig = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+            .coerceAtLeast(event.getAxisValue(MotionEvent.AXIS_BRAKE))
+        val rtrig = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+            .coerceAtLeast(event.getAxisValue(MotionEvent.AXIS_GAS))
+        padTriggerFire = rtrig > 0.4f
+        padTriggerBeam = ltrig > 0.4f
+
+        keys = (if (uiScreen == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0) or controllerBits() or pulseKeys
         NativeGame.nativeSetKeys(keys)
         return true
     }
