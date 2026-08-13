@@ -30,6 +30,8 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
+- **Boss Fights (Waves mode):** Every 10th wave clears the field and spawns a huge crimson battleship with a top-of-screen HP bar. It cycles through aimed spreads, 8-way radial bursts, a telegraphed sweeping mega-beam, and diving lunges. Killing it pays a big score/coin bonus and drops three powerups. Runs on **both** GBA and Android.
+- **Three Game Modes:** Play opens a mode select on both platforms — **Waves** (with bosses), **Endless**, and **Overdrive** (90-second score rush).
 - **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for **2 seconds** to charge a full-screen piercing beam that fires for 3 seconds and reaches the top of the screen. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
 - **Settings Screen:** Difficulty (**Easy / Medium / Hard**), Music & SFX volume, and Screen Shake — plus an **Android-only Haptics** (vibration feedback) toggle. Persisted in the save file. Gyro / tilt steering has been removed.
 - **Combo Coins:** Combo still multiplies coins, but the curve is much softer so a long chain is not a money printer. Locking **15x** is the payday (4.5x coins plus a lump bonus).
@@ -52,13 +54,13 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus (including shop tabs), and shows a circular virtual stick only while playing.
 
-Android Play opens a **mode select** (GBA stays on classic waves):
+Play opens a **mode select** on **both** Android and GBA:
 
-- **Waves** — clear each wave of asteroids and hunters.
+- **Waves** — clear each wave of asteroids and hunters. Every 10th wave is a **boss fight**.
 - **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
 - **Overdrive** — 90-second score rush with denser random spawns.
 
-The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses). Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
+The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
 
 `cd android && ./gradlew assembleDebug` — see `android/README.md`.
 
@@ -91,6 +93,15 @@ npm start
 ```
 
 Navigate to `http://localhost:3000` to play in browser or download the `.gba` ROM.
+
+### 4. Headless ROM Smoke Test
+
+Boots the built ROM in the mGBA core, drives the menus and a gameplay run with synthetic input, and fails if the ROM stops producing frames or the UI wedges:
+
+```bash
+node tools/smoke_gba.mjs            # exits non-zero on hang/crash
+node tools/shot_gba.mjs /tmp/shots  # write PNG screenshots instead
+```
 
 ---
 

@@ -128,13 +128,8 @@ static int shop_get_category_count(int cat) {
 }
 
 static void request_play(void) {
-#ifdef PLATFORM_HOST
+    /* Both platforms go through mode select (Waves / Endless / Overdrive). */
     menu_open(SCREEN_MODE_SELECT);
-#else
-    game_set_mode(GAME_MODE_WAVES);
-    game_start();
-    s_current_screen = SCREEN_PLAYING;
-#endif
 }
 
 static void launch_mode(GameMode mode) {
@@ -501,7 +496,6 @@ static void update_options(void) {
     }
 }
 
-#ifdef PLATFORM_HOST
 static const char* s_mode_titles[3] = { "WAVES", "ENDLESS", "OVERDRIVE" };
 static const char* s_mode_lines[3] = {
     "Clear waves. Classic run.",
@@ -511,11 +505,19 @@ static const char* s_mode_lines[3] = {
 
 static int mode_card_y(int i) { return 28 + i * 36; }
 
+/* Cards span the screen minus a small margin so they fit the 240px GBA
+ * display as well as the wider Android surface. */
+static int mode_card_w(void) {
+    int w = SCREEN_WIDTH - 20;
+    if (w > 220) w = 220;
+    return w;
+}
+
 static void update_mode_select(void) {
     const int count = 3;
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
-        int card_w = 220;
+        int card_w = mode_card_w();
         int card_x = (SCREEN_WIDTH - card_w) / 2;
         for (int i = 0; i < count; i++) {
             if (in_rect(tx, ty, card_x, mode_card_y(i), card_w, 32)) {
@@ -534,7 +536,6 @@ static void update_mode_select(void) {
     if (key_hit(KEY_A) || key_hit(KEY_START)) launch_mode((GameMode)s_menu_selected);
     if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
 }
-#endif
 
 static void pause_activate(int index) {
     switch (index) {
@@ -604,9 +605,7 @@ void menu_update(void) {
         case SCREEN_SETTINGS:  starfield_update(); update_upgrades(); break; // upgrades
         case SCREEN_CONTROLS:  starfield_update(); update_controls(); break;
         case SCREEN_OPTIONS:   starfield_update(); update_options(); break;
-#ifdef PLATFORM_HOST
         case SCREEN_MODE_SELECT: starfield_update(); update_mode_select(); break;
-#endif
         case SCREEN_PLAYING:
             s_tap_pending = false;
             if (key_hit(KEY_START)) { s_current_screen = SCREEN_PAUSED; s_menu_selected = 0; }
@@ -992,15 +991,24 @@ static void render_controls_static(void) {
     gfx_draw_text(12, 60, "B: HOLD 2s = BEAM!", PAL_TEXT_GOLD);
     gfx_draw_text(12, 72, "START: Pause", PAL_TEXT_WHITE);
     gfx_draw_text(12, 84, "SELECT: Reset", PAL_TEXT_WHITE);
+#ifdef PLATFORM_HOST
     gfx_draw_text(12, 100, "Starter: Slow 0.7x", 17);
     gfx_draw_text(12, 110, "2 bullets/sec only!", 17);
+#else
+    gfx_draw_text(12, 100, "3 modes: Waves /", 17);
+    gfx_draw_text(12, 110, "Endless / Overdrive", 17);
+#endif
     gfx_draw_glass_card(right_x, 20, right_w, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(right_x + 4, 24, "UPGRADE GUIDE", PAL_TEXT_CYAN);
     gfx_draw_text(right_x + 4, 36, "Speed: 0.7x->2x", PAL_TEXT_WHITE);
     gfx_draw_text(right_x + 4, 48, "Fire: 2/s->10/s", PAL_TEXT_GOLD);
     gfx_draw_text(right_x + 4, 60, "Hold B: MEGA BEAM", PAL_TEXT_GREEN);
     gfx_draw_text(right_x + 4, 72, "Final Nova = GOD!", PAL_TEXT_GOLD);
+#ifdef PLATFORM_HOST
     gfx_draw_text(right_x + 4, 86, "Later waves HARD!", PAL_TEXT_RED);
+#else
+    gfx_draw_text(right_x + 4, 86, "Wave 10/20: BOSS!", PAL_TEXT_RED);
+#endif
     gfx_draw_text(right_x + 4, 98, "Beam: +25% dmg/lv", PAL_TEXT_CYAN);
     gfx_draw_text(right_x + 4, 110, "15x combo = $$$", PAL_TEXT_WHITE);
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
@@ -1063,17 +1071,20 @@ static void render_options_dynamic(void) {
     }
 }
 
-#ifdef PLATFORM_HOST
 static void render_mode_select_static(void) {
     starfield_draw_base(0, 0);
     gfx_draw_text(10, 6, "SELECT MODE", PAL_TEXT_CYAN);
     gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
+#ifdef PLATFORM_HOST
     gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "Tap a mode    BACK to cancel", PAL_TEXT_WHITE);
+#else
+    gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "D-PAD: Pick   A: Start   B: Back", PAL_TEXT_WHITE);
+#endif
 }
 
 static void render_mode_select_dynamic(void) {
     menu_draw_base();
-    int card_w = 220;
+    int card_w = mode_card_w();
     int card_x = (SCREEN_WIDTH - card_w) / 2;
     for (int i = 0; i < 3; i++) {
         bool sel = (s_menu_selected == i);
@@ -1083,9 +1094,13 @@ static void render_mode_select_dynamic(void) {
         gfx_draw_glass_card(card_x, y, card_w, 32, border, bg);
         gfx_draw_text_centered(card_x, y + 6, card_w, s_mode_titles[i], sel ? PAL_TEXT_WHITE : PAL_TEXT_CYAN);
         gfx_draw_text_centered(card_x, y + 18, card_w, s_mode_lines[i], sel ? PAL_TEXT_GOLD : 17);
+#ifndef PLATFORM_HOST
+        /* D-pad caret: the GBA has no touch input, so make the highlighted
+         * card unmistakable. Android drives this screen by tapping. */
+        if (sel) gfx_draw_char(card_x + 4, y + 6, '>', PAL_TEXT_CYAN);
+#endif
     }
 }
-#endif
 
 static void render_paused(void) {
     game_draw();
@@ -1133,11 +1148,9 @@ void menu_draw(void) {
         case SCREEN_OPTIONS:
             if (!s_static_valid) { menu_static_begin(); render_options_static(); menu_static_end(); }
             render_options_dynamic(); break;
-#ifdef PLATFORM_HOST
         case SCREEN_MODE_SELECT:
             if (!s_static_valid) { menu_static_begin(); render_mode_select_static(); menu_static_end(); }
             render_mode_select_dynamic(); break;
-#endif
         case SCREEN_PLAYING: game_draw(); break;
         case SCREEN_PAUSED: render_paused(); break;
         case SCREEN_GAME_OVER: render_game_over(); break;
