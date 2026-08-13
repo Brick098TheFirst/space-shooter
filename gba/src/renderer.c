@@ -1,13 +1,14 @@
 #include "renderer.h"
 #include <string.h>
 
-EWRAM_BSS static u8 s_back_buffer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
-EWRAM_BSS u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((aligned(4)));
+EWRAM_BSS static u8 s_back_buffer[FB_PIXELS] __attribute__((aligned(4)));
+EWRAM_BSS u8 gfx_static_layer[FB_PIXELS] __attribute__((aligned(4)));
 
 static u8* s_rt = s_back_buffer;
 
-/* Clip rectangle state (default: off). */
-static int s_clip_x0 = 0, s_clip_y0 = 0, s_clip_x1 = SCREEN_WIDTH, s_clip_y1 = SCREEN_HEIGHT;
+/* Clip rectangle state (default: off).  Bounds are set by gfx_set_clip();
+ * the initial values are never read while s_clip_on is false. */
+static int s_clip_x0 = 0, s_clip_y0 = 0, s_clip_x1 = 0, s_clip_y1 = 0;
 static bool s_clip_on = false;
 
 void gfx_set_clip(int x, int y, int w, int h) {

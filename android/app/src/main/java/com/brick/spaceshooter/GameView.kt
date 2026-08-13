@@ -14,12 +14,20 @@ import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.text.InputFilter
+import android.text.InputType
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.exp
@@ -30,8 +38,12 @@ import kotlin.math.roundToInt
 
 class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
-    private val pixels = IntArray(NativeGame.SCREEN_W * NativeGame.SCREEN_H)
-    private val bitmap = Bitmap.createBitmap(NativeGame.SCREEN_W, NativeGame.SCREEN_H, Bitmap.Config.ARGB_8888)
+    // Adaptive widescreen: the native frame is always 160 px tall, and its
+    // width (frameW) follows this view's aspect ratio so the picture fills
+    // the whole screen — no side bars, always landscape.
+    private var frameW = NativeGame.DEFAULT_FRAME_W
+    private val pixels = IntArray(NativeGame.MAX_FRAME_W * NativeGame.SCREEN_H)
+    private var bitmap = Bitmap.createBitmap(NativeGame.DEFAULT_FRAME_W, NativeGame.SCREEN_H, Bitmap.Config.ARGB_8888)
     private val blitPaint = Paint().apply {
         isFilterBitmap = false
         isAntiAlias = false
@@ -103,6 +115,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     }
     private val hapticBuf = IntArray(8)
     private var hapticsEnabled = true
+
+    // Cheat-code entry (Settings -> CODES row in the native menu)
+    private var cheatDialogShowing = false
 
     private companion object {
         const val GESTURE_NONE = 0
@@ -194,14 +209,34 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        syncViewport(w, h)
         updateDest(w, h)
         resetStickToHome()
     }
 
+    /** Matches the native framebuffer width to this view's aspect ratio. */
+    private fun syncViewport(vw: Int = width, vh: Int = height) {
+        if (vw <= 0 || vh <= 0) return
+        val wanted = ((vw.toLong() * NativeGame.SCREEN_H + vh / 2) / vh)
+            .toInt()
+            .coerceIn(NativeGame.MIN_FRAME_W, NativeGame.MAX_FRAME_W)
+        NativeGame.nativeSetViewport(wanted)
+    }
+
+    private fun syncFrameWidth() {
+        val fw = NativeGame.nativeGetFrameWidth()
+        if (fw == frameW) return
+        frameW = fw
+        bitmap = Bitmap.createBitmap(fw, NativeGame.SCREEN_H, Bitmap.Config.ARGB_8888)
+        updateDest()
+    }
+
     private fun updateDest(vw: Int = width, vh: Int = height) {
         if (vw <= 0 || vh <= 0) return
-        val scale = min(vw / NativeGame.SCREEN_W.toFloat(), vh / NativeGame.SCREEN_H.toFloat())
-        val dw = max(1, (NativeGame.SCREEN_W * scale).toInt())
+        // frameW tracks the view aspect, so this normally fills the screen
+        // exactly; centering only kicks in for the clamped extremes.
+        val scale = min(vw / frameW.toFloat(), vh / NativeGame.SCREEN_H.toFloat())
+        val dw = max(1, (frameW * scale).toInt())
         val dh = max(1, (NativeGame.SCREEN_H * scale).toInt())
         val left = (vw - dw) / 2
         val top = (vh - dh) / 2
@@ -264,8 +299,12 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             for (i in 0 until hapticCount) buzzFor(hapticBuf[i])
         }
 
+        // Settings -> CODES was activated: open the cheat-code dialog.
+        if (NativeGame.nativeTakeCodeRequest() != 0) showCheatCodeDialog()
+
+        syncFrameWidth()
         NativeGame.nativePresent(pixels)
-        bitmap.setPixels(pixels, 0, NativeGame.SCREEN_W, 0, 0, NativeGame.SCREEN_W, NativeGame.SCREEN_H)
+        bitmap.setPixels(pixels, 0, frameW, 0, 0, frameW, NativeGame.SCREEN_H)
         invalidate()
         choreographer.postFrameCallback(this)
     }
@@ -393,6 +432,83 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         } catch (_: Exception) {}
     }
 
+    // ── Cheat codes (Settings -> CODES) ─────────────────────────────────
+    // The native settings screen raises a request when the CODES row is
+    // tapped; here we show a proper Android dialog with the soft keyboard.
+
+    private fun showCheatCodeDialog() {
+        if (cheatDialogShowing) return
+        cheatDialogShowing = true
+
+        val input = EditText(context).apply {
+            hint = "ENTER CODE"
+            setSingleLine()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            filters = arrayOf(InputFilter.AllCaps(), InputFilter.LengthFilter(20))
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setSelectAllOnFocus(false)
+        }
+        val padH = dp(20f).toInt()
+        val box = FrameLayout(context).apply {
+            setPadding(padH, dp(6f).toInt(), padH, 0)
+        }
+        box.addView(
+            input,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val dialog = AlertDialog.Builder(context)
+            .setTitle("CHEAT CODE")
+            .setMessage("Enter a secret code:")
+            .setView(box)
+            .setPositiveButton("ENTER", null) // replaced below to keep the dialog open on a bad code
+            .setNegativeButton("CANCEL") { d, _ -> d.dismiss() }
+            .create()
+
+        dialog.setOnDismissListener { cheatDialogShowing = false }
+        dialog.setOnShowListener {
+            input.requestFocus()
+            dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                submitCheatCode(dialog, input)
+            }
+        }
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                submitCheatCode(dialog, input)
+                true
+            } else {
+                false
+            }
+        }
+        dialog.show()
+    }
+
+    private fun submitCheatCode(dialog: AlertDialog, input: EditText) {
+        val code = input.text.toString().trim().uppercase()
+        if (code.isEmpty()) {
+            input.error = "Enter a code"
+            return
+        }
+        if (NativeGame.nativeApplyCheatCode(code) == 1) {
+            persistSave() // native already wrote SRAM; make sure it hits disk right away
+            pulseHaptic(HapticFeedbackConstants.CONFIRM)
+            Toast.makeText(
+                context,
+                "CHEAT ACTIVATED! You now have \$999,000,000,000,000!",
+                Toast.LENGTH_LONG
+            ).show()
+            dialog.dismiss()
+        } else {
+            pulseHaptic(HapticFeedbackConstants.LONG_PRESS)
+            input.error = "Unknown code"
+            input.selectAll()
+        }
+    }
+
     private fun drawOverlay(canvas: Canvas) {
         when (uiScreen) {
             NativeGame.SCREEN_PLAYING -> drawGameplayPad(canvas)
@@ -470,9 +586,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private fun mapToGame(x: Float, y: Float): Pair<Int, Int>? {
         if (dest.width() <= 0 || dest.height() <= 0) return null
         if (!dest.contains(x.toInt(), y.toInt())) return null
-        val gx = ((x - dest.left) * NativeGame.SCREEN_W / dest.width()).toInt()
+        val gx = ((x - dest.left) * frameW / dest.width()).toInt()
         val gy = ((y - dest.top) * NativeGame.SCREEN_H / dest.height()).toInt()
-        return gx.coerceIn(0, NativeGame.SCREEN_W - 1) to gy.coerceIn(0, NativeGame.SCREEN_H - 1)
+        return gx.coerceIn(0, frameW - 1) to gy.coerceIn(0, NativeGame.SCREEN_H - 1)
     }
 
     private fun inCircle(x: Float, y: Float, cx: Float, cy: Float, r: Float) =
@@ -512,7 +628,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     // slop of the same spot — sliding onto a button no longer activates it.
 
     private fun gameScale() =
-        if (dest.width() > 0) dest.width() / NativeGame.SCREEN_W.toFloat() else 1f
+        if (dest.width() > 0) dest.width() / frameW.toFloat() else 1f
 
     private fun isScrollableScreen() =
         uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS

@@ -352,9 +352,17 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
             g_game.powerups[i].y = TO_FIXED(y);
             g_game.powerups[i].vy = 90;
             int roll = rand() % 100;
+#ifdef PLATFORM_HOST
+            /* Android: the shield and rapid-fire drops are removed — the only
+             * powerup left is the life (repair) pickup, and it keeps its
+             * original rarity (the old 20% repair slice of the roll). */
+            if (roll >= 20) return;
+            g_game.powerups[i].type = PWR_REPAIR;
+#else
             if (roll < 40) g_game.powerups[i].type = PWR_SHIELD;
             else if (roll < 80) g_game.powerups[i].type = PWR_RAPID;
             else g_game.powerups[i].type = PWR_REPAIR;
+#endif
             g_game.powerups[i].active = true;
             return;
         }
@@ -368,8 +376,8 @@ static void award_coins(int base_amount) {
     int mult = 100 + scav_lv * 35; // 100% .. 275%
     int earned = (base_amount * mult) / 100;
     if (earned < 1) earned = 1;
-    g_settings.coins += earned;
-    if (g_settings.coins > 9999999) g_settings.coins = 9999999;
+    g_settings.coins += (coin_t)earned;
+    if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
     save_write();
 }
 
@@ -1059,6 +1067,12 @@ static void fire_player_weapon(void) {
 
 void game_init(void) {
     memset(&g_game, 0, sizeof(GameState));
+}
+
+/* The HUD backing card layout depends on the (runtime) screen width, so the
+ * cached static layer must be redrawn when the Android viewport changes. */
+void game_request_full_redraw(void) {
+    s_game_static_valid = false;
 }
 
 void game_start(void) {
@@ -1903,8 +1917,12 @@ void game_draw(void) {
     gfx_draw_text_centered(wave_x, 4, 52, buf, PAL_TEXT_CYAN);
 
     int right_card_x = SCREEN_WIDTH - 75;
-    siprintf(buf, "$%u", (unsigned int)g_settings.coins);
-    gfx_draw_text(right_card_x + 7, 4, buf, PAL_TEXT_GOLD);
+    // Right-aligned inside the card so long balances (e.g. cheat money) fit.
+    save_format_coins(buf, sizeof(buf));
+    int coin_px = (int)strlen(buf) * 6 + 6; // digits + "$"
+    int coin_x = right_card_x + 72 - 3 - coin_px;
+    gfx_draw_char(coin_x, 4, '$', PAL_TEXT_GOLD);
+    gfx_draw_text(coin_x + 6, 4, buf, PAL_TEXT_GOLD);
 
     for (int i = 0; i < g_game.player.lives && i < 7; i++) {
         gfx_draw_char(right_card_x + 3 + i * 6, 11, '^', PAL_TEXT_GREEN);

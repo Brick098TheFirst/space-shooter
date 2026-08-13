@@ -10,9 +10,21 @@
 typedef uint8_t  u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
+typedef uint64_t u64;
 typedef int8_t   s8;
 typedef int16_t  s16;
 typedef int32_t  s32;
+typedef int64_t  s64;
+
+/* Adaptive widescreen: the Android framebuffer is always SCREEN_HEIGHT (160)
+ * px tall, but its width follows the phone's aspect ratio at runtime so the
+ * picture fills the whole screen with no side bars.  284 == 16:9. */
+#define HOST_SCREEN_W_MIN     284
+#define HOST_SCREEN_W_MAX     480
+#define HOST_SCREEN_W_DEFAULT 284
+int  host_screen_width(void);
+/* Clamps and stores a new viewport width. Returns 1 when it changed. */
+int  host_set_screen_width(int w);
 
 #define EWRAM_BSS
 #define IWRAM_CODE

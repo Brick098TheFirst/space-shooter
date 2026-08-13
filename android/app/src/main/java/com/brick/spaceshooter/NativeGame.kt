@@ -5,8 +5,13 @@ object NativeGame {
         System.loadLibrary("spacegame")
     }
 
-    const val SCREEN_W = 284
+    /** Framebuffer is always this tall; the width adapts to the device. */
     const val SCREEN_H = 160
+
+    /** Widescreen frame width range (host side clamps to the same bounds). */
+    const val MIN_FRAME_W = 284
+    const val MAX_FRAME_W = 480
+    const val DEFAULT_FRAME_W = 284
     const val MIX_SAMPLES = 202
     const val AUDIO_SAMPLE_RATE = 44100
     const val AUDIO_SAMPLES_PER_FRAME = 490
@@ -49,4 +54,10 @@ object NativeGame {
     external fun nativeFlushSave()
     external fun nativeGetHaptics(): Int
     external fun nativeTakeHaptics(out: IntArray): Int
+    external fun nativeSetViewport(width: Int)
+    external fun nativeGetFrameWidth(): Int
+    /** 1 once per Settings -> CODES activation; opens the cheat dialog. */
+    external fun nativeTakeCodeRequest(): Int
+    /** 1 if the cheat code was accepted, 0 if unknown. */
+    external fun nativeApplyCheatCode(code: String): Int
 }

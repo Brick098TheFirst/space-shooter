@@ -181,6 +181,7 @@ typedef struct {
 extern GameState g_game;
 
 void game_init(void);
+void game_request_full_redraw(void);
 void game_set_mode(GameMode mode);
 GameMode game_get_mode(void);
 void game_start(void);
