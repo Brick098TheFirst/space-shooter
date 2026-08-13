@@ -1193,7 +1193,7 @@ static void render_controls_static(void) {
 #ifdef PLATFORM_HOST
     gfx_draw_text(right_x + 4, 86, "Later waves HARD!", PAL_TEXT_RED);
 #else
-    gfx_draw_text(right_x + 4, 86, "Wave 10/20: BOSS!", PAL_TEXT_RED);
+    gfx_draw_text(right_x + 4, 86, "W5 mini / W10 BOSS", PAL_TEXT_RED);
 #endif
     gfx_draw_text(right_x + 4, 98, "Beam: +25% dmg/lv", PAL_TEXT_CYAN);
     gfx_draw_text(right_x + 4, 110, "15x combo = $$$", PAL_TEXT_WHITE);

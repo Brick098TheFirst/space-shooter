@@ -79,7 +79,7 @@ typedef struct {
     bool active;
 } Drone;
 
-/* Boss ship (wave 10, 20, 30...). Shared by Android and GBA. */
+/* Boss ship (wave 10/20/30...) and mini-boss (wave 5/15/25...). */
 typedef enum {
     BOSS_IDLE,
     BOSS_SWEEP,        // side-to-side sweep firing straight down
@@ -104,6 +104,7 @@ typedef struct {
     int beam_width;      // half-width in fixed
     int flash_timer;
     bool active;
+    bool mini;           // wave 5/15/25...  ~1/4 HP of the next full boss
     int cooldown;
     int fire_state;
     int sweep_dir;

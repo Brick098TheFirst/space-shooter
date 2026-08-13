@@ -41,9 +41,15 @@ GameMode game_get_mode(void) {
 static void finish_run(bool time_up);
 static void spawn_boss(void);
 
-/* Boss waves: every 10th wave in the classic WAVES mode on both platforms. */
+/* Full bosses every 10th wave; a lighter mini-boss on the 5s (5, 15, 25...). */
+static inline bool is_full_boss_wave(int wave) {
+    return wave > 0 && (wave % 10) == 0;
+}
+static inline bool is_mini_boss_wave(int wave) {
+    return wave > 0 && (wave % 10) == 5;
+}
 static inline bool is_boss_wave(int wave) {
-    return (wave % 10) == 0;
+    return is_full_boss_wave(wave) || is_mini_boss_wave(wave);
 }
 
 #define FIXED_ONE 256
@@ -104,11 +110,13 @@ static int get_damage_bonus(void) {
     return lv; // 0 .. 5 extra damage
 }
 
-/* True endgame build: NOVA rig + OMEGA crystal (laser 11). Shared by both
- * platforms so boss HP scaling reads the same on GBA and Android. */
+#ifdef PLATFORM_HOST
+/* True endgame build: NOVA rig + OMEGA crystal (laser 11). Rocks still
+ * evaporate; boss HP scales up so the same volley takes ~15 shots. */
 static bool is_oneshot_build(void) {
     return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11);
 }
+#endif
 
 #ifdef PLATFORM_HOST
 /* Android damage ladder: early lasers are TINY damage, final rig+omega is a true
@@ -693,8 +701,8 @@ static void begin_wave(void) {
         award_coins(g_game.wave * 30);
     }
 
-    /* Every 10th wave = BOSS WAVE. Don't spawn the normal asteroid/drone
-     * horde; clear the field and spawn the boss instead. */
+    /* Wave 5/15/25... = mini-boss, wave 10/20/30... = full boss. Clear the
+     * field so the fight isn't buried under the asteroid horde. */
     if (g_game.mode == GAME_MODE_WAVES && is_boss_wave(g_game.wave)) {
         // Wipe existing threats so the boss fight feels clean.
         for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
@@ -827,28 +835,68 @@ static bool add_boss_bullet(int x, int y, int vx, int vy, int heavy) {
     return false;
 }
 
-/* How tough the boss is, scaled to the player's equipped damage. The player
- * needs to land roughly 12-25 seconds of focused fire even with a good rig.
- * OMEGA+NOVA truly oneshots nothing against the boss but still tears it apart. */
-static int boss_max_hp(void) {
-    int base_dmg = get_weapon_base_damage(g_settings.weapon_rig)
-                 + get_damage_bonus() + get_laser_bonus();
-    if (base_dmg < 1) base_dmg = 1;
-    // Bosses appear at wave 10, 20, 30... scale HP with boss number (wave/10)
-    int boss_tier = (g_game.wave > 0) ? (g_game.wave / 10) : 1;
-    if (boss_tier < 1) boss_tier = 1;
+/* Damage of one trigger-pull with the current loadout (all bullets that
+ * fire_player_weapon() would spawn). Used so a maxed NOVA volley still
+ * takes ~15 shots instead of deleting the bar. */
+static int current_volley_damage(void) {
+    WeaponRig rig = g_settings.weapon_rig;
+    int dmg_bonus = get_damage_bonus() + get_laser_bonus();
+    int base = get_weapon_base_damage(rig);
 #ifdef PLATFORM_HOST
-    // Tuned so starter gun takes ~60 hits first boss, god-rig ~8-10. Later bosses
-    // grow tougher.
-    int hp = (60 + base_dmg * 12) * boss_tier;
-    if (is_oneshot_build()) hp = 25 * boss_tier;
-#else
-    /* GBA fires noticeably faster per rig than the Android host (per-rig
-     * cooldowns rather than a flat 28 ticks, at 120 sim ticks/sec), so the
-     * pool is a bit deeper to keep the fight at a comparable length. */
-    int hp = (80 + base_dmg * 16) * boss_tier;
-    if (is_oneshot_build()) hp = 40 * boss_tier;
+    if (is_oneshot_build()) base = 99;
 #endif
+    int d = base + dmg_bonus;
+    if (d < 1) d = 1;
+    switch (rig) {
+        case WEAPON_SINGLE:  return d;
+        case WEAPON_TWIN:    return d * 2;
+        case WEAPON_SPREAD:  return d * 3;
+        case WEAPON_FOCUSED: return d;
+        case WEAPON_TRIPLE:  return (1 + dmg_bonus) * 2 + d;
+        case WEAPON_PLASMA:  return d * 2;
+        case WEAPON_QUANTUM: return d * 3;
+        case WEAPON_NOVA: {
+            int nd = d;
+            if (g_settings.laser_index == 11) nd += 2;
+            return nd * 3 + (nd - 1) * 2;
+        }
+        default: return d;
+    }
+}
+
+/* One maxed Focused Beam shot (beam rig + Damage 5 + best crystal). Weak
+ * loadouts are measured against this floor so a starter laser cannot
+ * reasonably solo the boss — you need good stuff. */
+static int maxed_beam_shot_damage(void) {
+    int dmg = get_weapon_base_damage(WEAPON_FOCUSED) + UPG_MAX_LEVEL;
+#ifdef PLATFORM_HOST
+    dmg += 20; /* Omega crystal */
+#else
+    dmg += 7;
+#endif
+    if (dmg < 1) dmg = 1;
+    return dmg;
+}
+
+/* Full boss: ~15 shots of a maxed Focused Beam (or 15 volleys of whatever
+ * stronger rig you brought). Mini-bosses are 4× easier. Never shrink HP
+ * for the NOVA+OMEGA trash-mob nuke — that combo must still work for it. */
+static int boss_max_hp(void) {
+    int per_shot = current_volley_damage();
+    int beam_floor = maxed_beam_shot_damage();
+    if (per_shot < beam_floor) per_shot = beam_floor;
+
+    int boss_tier;
+    if (is_mini_boss_wave(g_game.wave))
+        boss_tier = (g_game.wave / 10) + 1; /* wave 5 → 1, wave 15 → 2 */
+    else
+        boss_tier = (g_game.wave > 0) ? (g_game.wave / 10) : 1;
+    if (boss_tier < 1) boss_tier = 1;
+
+    int hp = per_shot * 15 * boss_tier;
+    if (is_mini_boss_wave(g_game.wave))
+        hp = (hp + 3) / 4;
+    if (hp < 8) hp = 8;
     return hp;
 }
 
@@ -858,6 +906,7 @@ static void spawn_boss(void) {
     g_game.boss.y = -TO_FIXED(40);
     g_game.boss.vx = TO_FIXED(1) + 40; // ~1.16 pixels/tick drift right
     g_game.boss.vy = TO_FIXED(1) + 40; // ~1.16 pixels/tick descent
+    g_game.boss.mini = is_mini_boss_wave(g_game.wave);
     g_game.boss.hp_max = boss_max_hp();
     g_game.boss.hp = g_game.boss.hp_max;
     g_game.boss.hp_frac = 0;
@@ -867,13 +916,41 @@ static void spawn_boss(void) {
     g_game.boss.beam_width = TO_FIXED(10);
     g_game.boss.flash_timer = 0;
     g_game.boss.active = true;
-    g_game.boss.cooldown = 60;
+    g_game.boss.cooldown = g_game.boss.mini ? 80 : 60;
     g_game.boss.fire_state = 0;
     g_game.boss.sweep_dir = 1;
     g_game.boss_active = true;
     g_game.boss_hit_flash = 0;
     // Clear normal drones/asteroids to make room for the boss entrance
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
+}
+
+static int boss_hit_radius(const Boss* b) {
+    return b->mini ? 12 : 16;
+}
+
+static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
+    g_game.boss_active = false;
+    b->active = false;
+    int blasts = b->mini ? 4 : 6;
+    for (int k = 0; k < blasts; k++)
+        trigger_explosion(boss_cx + (rand() % 20) - 10, boss_cy + (rand() % 20) - 10);
+    g_game.shake_timer = b->mini ? 18 : 30;
+    int tier = (g_game.wave / 10) + 1;
+    if (b->mini) {
+        award_score(400 * tier);
+        award_coins(125 + g_game.wave * 8);
+        try_spawn_powerup(boss_cx, boss_cy, 100);
+        try_spawn_powerup(boss_cx + 8, boss_cy + 6, 100);
+    } else {
+        award_score(1500 * tier);
+        award_coins(500 + g_game.wave * 25);
+        try_spawn_powerup(boss_cx - 10, boss_cy, 100);
+        try_spawn_powerup(boss_cx + 10, boss_cy + 8, 100);
+        try_spawn_powerup(boss_cx, boss_cy - 6, 100);
+    }
+    platform_queue_haptic(HAPTIC_BEAM);
+    g_game.intermission_timer = 90;
 }
 
 static void boss_fire_burst(int n, int speed_fixed) {
@@ -1394,14 +1471,16 @@ static void game_update_tick(void) {
                     if (b->cooldown <= 0) {
                         boss_fire_spread_at_player(TO_FIXED(4));
                         b->cooldown = 28 - (g_game.wave / 5);
+                        if (b->mini) b->cooldown += 14;
                         if (b->cooldown < 10) b->cooldown = 10;
                     }
                     if (b->phase_timer <= 0) {
-                        int roll = rand() % 4;
+                        /* Mini-boss skips the dive lunge — same kit, less mean. */
+                        int roll = rand() % (b->mini ? 3 : 4);
                         if (roll == 0) { b->phase = BOSS_BURST; b->phase_timer = 90; b->fire_state = 0; }
                         else if (roll == 1) { b->phase = BOSS_BEAM_WIND; b->phase_timer = 60; b->beam_x = g_game.player.x; }
-                        else if (roll == 2) { b->phase = BOSS_DIVE; b->phase_timer = 140; b->aim_x = g_game.player.x; }
-                        else { b->phase = BOSS_SWEEP; b->phase_timer = 120; b->sweep_dir = (g_game.player.x < b->x) ? -1 : 1; }
+                        else if (roll == 2) { b->phase = BOSS_SWEEP; b->phase_timer = 120; b->sweep_dir = (g_game.player.x < b->x) ? -1 : 1; }
+                        else { b->phase = BOSS_DIVE; b->phase_timer = 140; b->aim_x = g_game.player.x; }
                     }
                     break;
                 }
@@ -1496,7 +1575,7 @@ static void game_update_tick(void) {
         // Collide player with boss body
         int boss_cx = FROM_FIXED(b->x);
         int boss_cy = FROM_FIXED(b->y);
-        int boss_r = 16;
+        int boss_r = boss_hit_radius(b);
         if (g_game.player.invulnerable_timer == 0) {
             int dist_sq = (px - boss_cx)*(px - boss_cx) + (py - boss_cy)*(py - boss_cy);
             if (dist_sq <= (6 + boss_r)*(6 + boss_r)) {
@@ -1525,45 +1604,29 @@ static void game_update_tick(void) {
                         spawn_particle(TO_FIXED(bxp), TO_FIXED(byp), pvx, pvy, PAL_TEXT_GOLD, 8);
                     }
                     if (b->hp <= 0) {
-                        g_game.boss_active = false;
-                        b->active = false;
-                        for (int k = 0; k < 6; k++) trigger_explosion(boss_cx + (rand()%20)-10, boss_cy + (rand()%20)-10);
-                        g_game.shake_timer = 30;
-                        award_score(1500 * (g_game.wave/10 + 1));
-                        award_coins(500 + g_game.wave * 25);
-                        platform_queue_haptic(HAPTIC_BEAM);
-                        try_spawn_powerup(boss_cx - 10, boss_cy, 100);
-                        try_spawn_powerup(boss_cx + 10, boss_cy + 8, 100);
-                        try_spawn_powerup(boss_cx, boss_cy - 6, 100);
-                        g_game.intermission_timer = 90;
+                        defeat_boss(b, boss_cx, boss_cy);
                     }
                 }
             }
         }
 
-        // Big laser vs boss
+        // Big laser vs boss: a full 3s dump is ~20% of the bar (5 beams to
+        // solo). Never oneshots, even with NOVA+OMEGA + max Beam upgrade.
         if (g_game.beam_active) {
             int pbx = FROM_FIXED(g_game.player.x);
             if (boss_cx + boss_r >= pbx - 6 && boss_cx - boss_r <= pbx + 6) {
-                int beam_dmg = BEAM_TICK_DAMAGE();
-                b->hp_frac += beam_dmg * 2;
+                int denom = BEAM_DURATION_TICKS * 5;
+                if (denom < 1) denom = 1;
+                int tick = (b->hp_max << 8) / denom;
+                if (tick < 1) tick = 1;
+                b->hp_frac += tick;
                 while (b->hp_frac >= 256) {
                     b->hp_frac -= 256;
                     b->hp--;
                 }
                 b->flash_timer = 4;
                 if (b->hp <= 0) {
-                    g_game.boss_active = false;
-                    b->active = false;
-                    for (int k = 0; k < 6; k++) trigger_explosion(boss_cx + (rand()%20)-10, boss_cy + (rand()%20)-10);
-                    g_game.shake_timer = 30;
-                    award_score(1500 * (g_game.wave/10 + 1));
-                    award_coins(500 + g_game.wave * 25);
-                    platform_queue_haptic(HAPTIC_BEAM);
-                    try_spawn_powerup(boss_cx - 10, boss_cy, 100);
-                    try_spawn_powerup(boss_cx + 10, boss_cy + 8, 100);
-                    try_spawn_powerup(boss_cx, boss_cy - 6, 100);
-                    g_game.intermission_timer = 90;
+                    defeat_boss(b, boss_cx, boss_cy);
                 }
             }
         }
@@ -1968,7 +2031,10 @@ void game_draw(void) {
         } else if (g_game.mode == GAME_MODE_OVERDRIVE) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "OVERDRIVE", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "90 SECONDS", PAL_TEXT_CYAN);
-        } else if (is_boss_wave(g_game.wave)) {
+        } else if (is_mini_boss_wave(g_game.wave)) {
+            gfx_draw_text_centered(bx, by + 4, banner_w, "MINI BOSS", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_CYAN);
+        } else if (is_full_boss_wave(g_game.wave)) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "!! BOSS !!", PAL_TEXT_RED);
             gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_GOLD);
         } else {
@@ -1999,24 +2065,34 @@ void game_draw(void) {
             gfx_fill_rect(wpx - 1, 0, 2, SCREEN_HEIGHT, PAL_TEXT_WHITE);
         }
 
-        // Draw boss as BIG crimson enemy ship (3x size of normal drone) - procedural
+        // Full boss = big crimson battleship; mini-boss is a smaller cousin.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
         u8 hull = flash ? PAL_TEXT_WHITE : PAL_TEXT_RED;
         u8 trim = flash ? PAL_TEXT_WHITE : PAL_TEXT_GOLD;
         u8 glow = PAL_TEXT_VIOLET;
-        // Main hull rectangle
-        gfx_fill_rect(bxi - 18, byi - 10, 36, 18, hull);
-        gfx_fill_rect(bxi - 14, byi - 14, 28, 6, hull);
-        gfx_fill_rect(bxi - 22, byi - 4, 8, 10, hull);  // left wing
-        gfx_fill_rect(bxi + 14, byi - 4, 8, 10, hull);  // right wing
-        gfx_fill_rect(bxi - 4, byi + 8, 8, 8, hull);    // bottom cannon
-        // Trims
-        gfx_fill_rect(bxi - 16, byi - 9, 32, 1, trim);
-        gfx_fill_rect(bxi - 18, byi + 6, 36, 2, trim);
-        gfx_fill_rect(bxi - 3, byi - 13, 6, 3, trim);
-        // Glow cockpit
-        gfx_fill_rect(bxi - 4, byi - 5, 8, 5, glow);
-        gfx_fill_rect(bxi - 2, byi - 4, 4, 3, PAL_TEXT_WHITE);
+        if (g_game.boss.mini) {
+            gfx_fill_rect(bxi - 13, byi - 8, 26, 14, hull);
+            gfx_fill_rect(bxi - 10, byi - 11, 20, 5, hull);
+            gfx_fill_rect(bxi - 16, byi - 3, 6, 8, hull);
+            gfx_fill_rect(bxi + 10, byi - 3, 6, 8, hull);
+            gfx_fill_rect(bxi - 3, byi + 6, 6, 6, hull);
+            gfx_fill_rect(bxi - 11, byi - 7, 22, 1, trim);
+            gfx_fill_rect(bxi - 13, byi + 4, 26, 2, trim);
+            gfx_fill_rect(bxi - 2, byi - 10, 4, 2, trim);
+            gfx_fill_rect(bxi - 3, byi - 4, 6, 4, glow);
+            gfx_fill_rect(bxi - 1, byi - 3, 2, 2, PAL_TEXT_WHITE);
+        } else {
+            gfx_fill_rect(bxi - 18, byi - 10, 36, 18, hull);
+            gfx_fill_rect(bxi - 14, byi - 14, 28, 6, hull);
+            gfx_fill_rect(bxi - 22, byi - 4, 8, 10, hull);
+            gfx_fill_rect(bxi + 14, byi - 4, 8, 10, hull);
+            gfx_fill_rect(bxi - 4, byi + 8, 8, 8, hull);
+            gfx_fill_rect(bxi - 16, byi - 9, 32, 1, trim);
+            gfx_fill_rect(bxi - 18, byi + 6, 36, 2, trim);
+            gfx_fill_rect(bxi - 3, byi - 13, 6, 3, trim);
+            gfx_fill_rect(bxi - 4, byi - 5, 8, 5, glow);
+            gfx_fill_rect(bxi - 2, byi - 4, 4, 3, PAL_TEXT_WHITE);
+        }
 
         // HP bar across top
         int bar_w = SCREEN_WIDTH - 40;
@@ -2036,7 +2112,9 @@ void game_draw(void) {
         if (hp_w < 0) hp_w = 0;
         if (hp_w > bar_w) hp_w = bar_w;
         gfx_fill_rect(bar_x, bar_y, hp_w, 5, PAL_TEXT_RED);
-        gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH, "BOSS", PAL_TEXT_RED);
+        gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,
+                              g_game.boss.mini ? "MINI BOSS" : "BOSS",
+                              g_game.boss.mini ? PAL_TEXT_GOLD : PAL_TEXT_RED);
     }
 
     // Boss bullets

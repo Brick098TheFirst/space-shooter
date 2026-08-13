@@ -30,7 +30,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
-- **Boss Fights (Waves mode):** Every 10th wave clears the field and spawns a huge crimson battleship with a top-of-screen HP bar. It cycles through aimed spreads, 8-way radial bursts, a telegraphed sweeping mega-beam, and diving lunges. Killing it pays a big score/coin bonus and drops three powerups. Runs on **both** GBA and Android.
+- **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is a **mini-boss** (same kit as the battleship, about **4× less HP**, smaller hull, no dive lunge). Every **10th** wave is the full crimson battleship. Both clear the field and show a top-of-screen HP bar. The full boss takes ~**15 shots** from a maxed Focused Beam (more with a starter laser — you need good gear); the charged mega-beam cannot one-shot it. Killing a full boss pays a big score/coin bonus and drops three powerups; the mini-boss pays less and drops two. Runs on **both** GBA and Android.
 - **Three Game Modes:** Play opens a mode select on both platforms — **Waves** (with bosses), **Endless**, and **Overdrive** (90-second score rush).
 - **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for **2 seconds** to charge a full-screen piercing beam that fires for 3 seconds and reaches the top of the screen. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
 - **Settings Screen:** Difficulty (**Easy / Medium / Hard**), Music & SFX volume, and Screen Shake — plus an **Android-only Haptics** (vibration feedback) toggle. Persisted in the save file. Gyro / tilt steering has been removed.
@@ -56,7 +56,7 @@ The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_
 
 Play opens a **mode select** on **both** Android and GBA:
 
-- **Waves** — clear each wave of asteroids and hunters. Every 10th wave is a **boss fight**.
+- **Waves** — clear each wave of asteroids and hunters. Wave 5/15/25... is a **mini-boss**; every 10th wave is a full **boss fight**.
 - **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
 - **Overdrive** — 90-second score rush with denser random spawns.
 
