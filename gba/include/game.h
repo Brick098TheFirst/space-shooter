@@ -4,11 +4,12 @@
 #include "types.h"
 
 #define MAX_ASTEROIDS 48
-#define MAX_BULLETS 64
+#define MAX_BULLETS 96
 #define MAX_DRONES 8
+#define MAX_BOSS_BULLETS 48
 #define MAX_POWERUPS 6
 #define MAX_PARTICLES 64
-#define MAX_EXPLOSIONS 10
+#define MAX_EXPLOSIONS 16
 
 typedef struct {
     int x; // 8.8 fixed point
@@ -72,6 +73,38 @@ typedef struct {
     bool active;
 } Drone;
 
+#ifdef PLATFORM_HOST
+/* Android-only boss ship (wave 10, 20, 30...) */
+typedef enum {
+    BOSS_IDLE,
+    BOSS_SWEEP,        // side-to-side sweep firing straight down
+    BOSS_BURST,        // radial 8-way burst
+    BOSS_BEAM_WIND,    // warning flash before laser
+    BOSS_BEAM_FIRE,    // huge sweeping beam
+    BOSS_DIVE,         // fast chase lunge
+    BOSS_REPOSITION    // recover high
+} BossPhase;
+
+typedef struct {
+    int x, y;            // 8.8
+    int vx, vy;          // 8.8
+    int hp;
+    int hp_max;
+    int hp_frac;         // 8.8
+    int phase;           // BossPhase
+    int phase_timer;
+    int aim_x;           // 8.8 target during sweeps
+    int beam_x;          // 8.8 beam column
+    int beam_timer;
+    int beam_width;      // half-width in fixed
+    int flash_timer;
+    bool active;
+    int cooldown;
+    int fire_state;
+    int sweep_dir;
+} Boss;
+#endif
+
 typedef enum {
     PWR_SHIELD,
     PWR_RAPID,
@@ -110,6 +143,12 @@ typedef struct {
     Asteroid asteroids[MAX_ASTEROIDS];
     Bullet bullets[MAX_BULLETS];
     Drone drones[MAX_DRONES];
+#ifdef PLATFORM_HOST
+    Boss boss;
+    Bullet boss_bullets[MAX_BOSS_BULLETS];
+    bool boss_active;
+    int boss_hit_flash;
+#endif
     Powerup powerups[MAX_POWERUPS];
     Particle particles[MAX_PARTICLES];
     Explosion explosions[MAX_EXPLOSIONS];
