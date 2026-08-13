@@ -41,6 +41,7 @@ typedef struct {
     AsteroidType type;
     int radius;
     int hp;
+    int hp_frac; // 8.8 fixed fraction of HP (big laser does <1 dmg/frame)
     bool active;
 } Asteroid;
 
@@ -67,6 +68,7 @@ typedef struct {
     int burst_shots;
     int phase;
     int hp;
+    int hp_frac; // 8.8 fixed fraction of HP (big laser)
     bool active;
 } Drone;
 
@@ -127,6 +129,12 @@ typedef struct {
     int spawn_timer;
     int overdrive_timer;
     bool time_up;
+
+    // Big laser (replaces dash): hold to charge 3s, then a piercing beam
+    // fires for 3s dealing (current laser damage / 10) every tick.
+    int beam_charge; // ticks accumulated while charging
+    int beam_timer;  // ticks remaining while beam is live
+    bool beam_active;
 } GameState;
 
 extern GameState g_game;

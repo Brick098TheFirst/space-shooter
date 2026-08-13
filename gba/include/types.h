@@ -45,7 +45,7 @@ typedef enum {
     UPG_DAMAGE      = 2, // bullet damage
     UPG_SHIELD      = 3, // shield cap
     UPG_HULL        = 4, // extra lives
-    UPG_DASH        = 5, // dash cooldown / invuln
+    UPG_DASH        = 5, // Beam Core: big laser damage (+25%/lv)
     UPG_SCAVENGER   = 6, // coin bonus + magnet
     UPG_OVERDRIVE   = 7  // rapid & powerup duration
 } UpgradeType;
@@ -58,7 +58,7 @@ typedef enum {
     SCREEN_PLAYING,
     SCREEN_PAUSED,
     SCREEN_GAME_OVER,
-    SCREEN_CREDITS,
+    SCREEN_OPTIONS,
     SCREEN_MODE_SELECT
 } GameScreen;
 
@@ -73,6 +73,8 @@ typedef struct {
     int music_volume; // 0..100
     int sfx_volume;   // 0..100
     bool screen_shake;
+    bool tilt_steer;  // Android only: accelerometer steering
+    bool haptics;     // Android only: vibration feedback
     int accent_index; // 0..8
     int trail_index;  // 0..7
     WeaponRig weapon_rig; // 0..5

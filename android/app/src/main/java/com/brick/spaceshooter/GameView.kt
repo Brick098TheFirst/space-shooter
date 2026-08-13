@@ -6,18 +6,25 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
+import android.os.VibrationEffect
 import android.view.Choreographer
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.View
 import java.io.File
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
-class GameView(context: Context) : View(context), Choreographer.FrameCallback {
+class GameView(context: Context) : View(context), Choreographer.FrameCallback, SensorEventListener {
 
     private val pixels = IntArray(NativeGame.SCREEN_W * NativeGame.SCREEN_H)
     private val bitmap = Bitmap.createBitmap(NativeGame.SCREEN_W, NativeGame.SCREEN_H, Bitmap.Config.ARGB_8888)
@@ -64,6 +71,18 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var menuScrollAccumY = 0f
     private var menuScrollAccumX = 0f
 
+    // Tilt steering (Settings -> TILT STEER)
+    private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private var tiltAx = 0f
+    private var tiltAy = 0f
+    private var tiltEnabled = false
+
+    // Haptics (Settings -> HAPTICS)
+    private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator?
+    private val hapticBuf = IntArray(8)
+    private var hapticsEnabled = true
+
     init {
         migrateLegacySave()
         NativeGame.nativeInit(saveDir.absolutePath)
@@ -98,15 +117,31 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         lastFrameTimeNanos = 0L
         timeAccumulatorNanos = 0L
         choreographer.postFrameCallback(this)
+        if (accelerometer != null) {
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME)
+        }
         try { audioTrack.play() } catch (_: Exception) {}
     }
 
     fun pause() {
         running = false
         choreographer.removeFrameCallback(this)
+        if (accelerometer != null) {
+            sensorManager.unregisterListener(this)
+        }
         persistSave()
         try { audioTrack.pause() } catch (_: Exception) {}
     }
+
+    override fun onSensorChanged(event: SensorEvent) {
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER && event.values.size >= 2) {
+            // Light low-pass so tilt steering doesn't jitter.
+            tiltAx = tiltAx * 0.75f + event.values[0] * 0.25f
+            tiltAy = tiltAy * 0.75f + event.values[1] * 0.25f
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     fun release() {
         pause()
@@ -196,6 +231,14 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             persistSave()
         }
 
+        // Settings flags + haptic events from the native game core.
+        tiltEnabled = NativeGame.nativeGetTilt() != 0
+        hapticsEnabled = NativeGame.nativeGetHaptics() != 0
+        val hapticCount = NativeGame.nativeTakeHaptics(hapticBuf)
+        if (hapticsEnabled) {
+            for (i in 0 until hapticCount) buzzFor(hapticBuf[i])
+        }
+
         NativeGame.nativePresent(pixels)
         bitmap.setPixels(pixels, 0, NativeGame.SCREEN_W, 0, 0, NativeGame.SCREEN_W, NativeGame.SCREEN_H)
         invalidate()
@@ -259,7 +302,49 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         if (stickNy > dead) next = next or NativeGame.KEY_DOWN
         if (firePointer != -1) next = next or NativeGame.KEY_A
         if (dashPointer != -1) next = next or NativeGame.KEY_B
+
+        // Tilt steering (Settings -> TILT STEER): the phone becomes the
+        // stick. Only used while the thumb stick isn't being touched.
+        if (tiltEnabled && accelerometer != null && stickPointer == -1) {
+            val rot = display?.rotation ?: Surface.ROTATION_0
+            val g = SensorManager.GRAVITY_EARTH
+            var nx: Float
+            var ny: Float
+            when (rot) {
+                Surface.ROTATION_90 -> { nx = tiltAy / g; ny = -tiltAx / g }
+                Surface.ROTATION_180 -> { nx = -tiltAx / g; ny = -tiltAy / g }
+                Surface.ROTATION_270 -> { nx = -tiltAy / g; ny = tiltAx / g }
+                else -> { nx = tiltAx / g; ny = tiltAy / g }
+            }
+            val sens = 1.15f
+            nx = (nx * sens).coerceIn(-1f, 1f)
+            ny = (ny * sens).coerceIn(-1f, 1f)
+            val tiltDead = 0.25f
+            if (nx < -tiltDead) next = next or NativeGame.KEY_LEFT
+            if (nx > tiltDead) next = next or NativeGame.KEY_RIGHT
+            if (ny < -tiltDead) next = next or NativeGame.KEY_UP
+            if (ny > tiltDead) next = next or NativeGame.KEY_DOWN
+        }
         return next
+    }
+
+    private fun buzzFor(type: Int) {
+        val ms = when (type) {
+            0 -> 45L  // player hit
+            1 -> 20L  // beam charged
+            2 -> 35L  // beam fired
+            else -> 25L
+        }
+        vibrator?.let {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    it.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    it.vibrate(ms)
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     private fun drawOverlay(canvas: Canvas) {
@@ -268,7 +353,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
             NativeGame.SCREEN_CONTROLS,
-            NativeGame.SCREEN_CREDITS,
+            NativeGame.SCREEN_OPTIONS,
             NativeGame.SCREEN_MODE_SELECT -> drawBackChip(canvas)
         }
     }
@@ -297,7 +382,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         canvas.drawCircle(stickKnobX - r * 0.08f, stickKnobY - r * 0.08f, r * 0.12f, overlay)
 
         drawRoundAction(canvas, fireCx(), fireCy(), fireR(), "FIRE", firePointer != -1, 0xFF23D6FF.toInt())
-        drawRoundAction(canvas, dashCx(), dashCy(), dashR(), "DASH", dashPointer != -1, 0xFFFFC84A.toInt())
+        drawRoundAction(canvas, dashCx(), dashCy(), dashR(), "BEAM", dashPointer != -1, 0xFFFFC84A.toInt())
 
         val pr = pauseRect()
         overlay.style = Paint.Style.FILL
@@ -365,7 +450,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private fun needsBackChip() = uiScreen == NativeGame.SCREEN_HANGAR ||
         uiScreen == NativeGame.SCREEN_SETTINGS ||
         uiScreen == NativeGame.SCREEN_CONTROLS ||
-        uiScreen == NativeGame.SCREEN_CREDITS
+        uiScreen == NativeGame.SCREEN_OPTIONS
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val action = event.actionMasked

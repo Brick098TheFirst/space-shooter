@@ -10,6 +10,27 @@ static u16 s_keys_held = 0;
 static u16 s_keys_prev = 0;
 static char s_save_path[512];
 
+#define HAPTIC_QUEUE_MAX 8
+static s32 s_haptic_queue[HAPTIC_QUEUE_MAX];
+static int s_haptic_head = 0;
+static int s_haptic_count = 0;
+
+void platform_queue_haptic(int type) {
+    if (s_haptic_count >= HAPTIC_QUEUE_MAX) return;
+    s_haptic_queue[(s_haptic_head + s_haptic_count) % HAPTIC_QUEUE_MAX] = type;
+    s_haptic_count++;
+}
+
+int platform_take_haptics(int* out, int max) {
+    int n = 0;
+    while (n < max && s_haptic_count > 0) {
+        out[n++] = s_haptic_queue[s_haptic_head];
+        s_haptic_head = (s_haptic_head + 1) % HAPTIC_QUEUE_MAX;
+        s_haptic_count--;
+    }
+    return n;
+}
+
 void platform_set_keys(u16 keys) {
     s_keys_in = keys;
 }
@@ -32,6 +53,8 @@ void platform_host_init(void) {
     REG_VCOUNT = 0;
     s_keys_in = s_keys_held = s_keys_prev = 0;
     s_save_path[0] = '\0';
+    s_haptic_head = 0;
+    s_haptic_count = 0;
 }
 
 void platform_set_save_dir(const char* dir) {

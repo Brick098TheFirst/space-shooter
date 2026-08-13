@@ -60,16 +60,9 @@ static int get_engine_mult(void) {
     return s_engine_mult[get_engine_level()];
 }
 
-static int get_max_dash_cooldown(void) {
-    static const int cd[6] = { 84, 66, 52, 40, 30, 24 }; // 1.4s -> 0.4s
-    int lv = g_settings.upgrade_levels[UPG_DASH];
-    if (lv < 0) lv = 0;
-    if (lv > 5) lv = 5;
-    return cd[lv];
-}
 static int get_dash_invuln(void) {
     int lv = g_settings.upgrade_levels[UPG_DASH];
-    return 16 + lv * 3; // 16 .. 31
+    return 16 + lv * 3; // 16 .. 31 (post-hit invulnerability)
 }
 
 static int get_fire_rate_level(void) {
@@ -92,11 +85,65 @@ static int get_damage_bonus(void) {
 }
 
 static int get_laser_bonus(void) {
-    // 12 lasers - starter weak, final god
-    static const int bonus[12] = { 0, 1, 1, 2, 2, 3, 3, 3, 2, 3, 4, 5 };
+    // 12 lasers - starter is weak, final Omega one-shots everything.
+    // Early crystals are weaker than before; late ones scale far harder.
+    static const int bonus[12] = { 0, 0, 1, 1, 2, 3, 4, 5, 2, 3, 5, 7 };
     int idx = g_settings.laser_index;
     if (idx < 0 || idx >= 12) return 0;
     return bonus[idx];
+}
+
+/* Base damage of a single main bullet for the equipped rig. */
+static int get_weapon_base_damage(WeaponRig rig) {
+    switch (rig) {
+        case WEAPON_SINGLE:
+        case WEAPON_TWIN:
+        case WEAPON_SPREAD:  return 1;
+        case WEAPON_FOCUSED:
+        case WEAPON_TRIPLE:  return 2;
+        case WEAPON_PLASMA:  return 3;
+        case WEAPON_QUANTUM: return 4;
+        case WEAPON_NOVA:    return 5;
+        default:             return 1;
+    }
+}
+
+/* Big laser beam damage = exactly what your current laser does per bullet,
+ * divided by ten per tick (e.g. 1 dmg -> 0.1 dmg/frame).  Beam Core
+ * upgrade (UPG_DASH) boosts it +25% per level. */
+static int get_beam_damage(void) {
+    int dmg = get_weapon_base_damage(g_settings.weapon_rig)
+            + get_damage_bonus() + get_laser_bonus();
+    if (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11) {
+        dmg += 2; // omega crystal + nova synergy
+    }
+    int lv = g_settings.upgrade_levels[UPG_DASH];
+    if (lv < 0) lv = 0;
+    if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+    dmg = (dmg * (100 + lv * 25)) / 100;
+    return dmg;
+}
+
+/* Big laser timing: 3s charge, 3s beam. Ticks run at 90/s on the Android
+ * host and 120/s on GBA (2 sim ticks per 60fps frame). */
+#ifdef PLATFORM_HOST
+#define BEAM_CHARGE_TICKS (3 * 90)
+#define BEAM_DURATION_TICKS (3 * 90)
+#else
+#define BEAM_CHARGE_TICKS (3 * 120)
+#define BEAM_DURATION_TICKS (3 * 120)
+#endif
+
+/* Rock speeds: big rocks drift slow, medium keep current speed, small/tiny
+ * scream past. 256 = 1.0x. */
+static int asteroid_speed_mult(AsteroidType type) {
+    switch (type) {
+        case AST_LARGE:            return 179; // 0.70x slow
+        case AST_MED_A:
+        case AST_MED_B:            return 256; // 1.00x current speed
+        case AST_SMALL:            return 460; // 1.80x very fast
+        default:                   return 512; // tiny 2.00x
+    }
 }
 
 static int get_max_shields(void) {
@@ -240,8 +287,8 @@ static int coins_for_asteroid(AsteroidType type) {
         case AST_LARGE: return 20;
         case AST_MED_A:
         case AST_MED_B: return 12;
-        case AST_SMALL: return 6;
-        default: return 4;
+        case AST_SMALL: return 30; // fast & tricky - pays a lot
+        default:        return 18; // tiny
     }
 }
 
@@ -249,6 +296,9 @@ static void damage_player(void) {
     if (g_game.player.invulnerable_timer > 0) return;
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
+#ifdef PLATFORM_HOST
+    platform_queue_haptic(HAPTIC_HIT);
+#endif
 
     if (g_game.player.shield_charges > 0) {
         g_game.player.shield_charges--;
@@ -278,13 +328,17 @@ static void spawn_asteroid(AsteroidType type, int x, int y, int vx, int vy) {
             g_game.asteroids[i].vx = vx;
             g_game.asteroids[i].vy = vy;
             g_game.asteroids[i].active = true;
+            g_game.asteroids[i].hp_frac = 0;
             if (type == AST_LARGE) {
                 g_game.asteroids[i].radius = 12;
-                // Large tougher in later waves
-                g_game.asteroids[i].hp = 2 + (g_game.wave / 5);
+                // Large tougher in later waves, but capped so the final
+                // laser can one-shot everything.
+                g_game.asteroids[i].hp = 2 + (g_game.wave / 8);
+                if (g_game.asteroids[i].hp > 12) g_game.asteroids[i].hp = 12;
             } else if (type == AST_MED_A || type == AST_MED_B) {
                 g_game.asteroids[i].radius = 8;
-                g_game.asteroids[i].hp = 1 + (g_game.wave / 8);
+                g_game.asteroids[i].hp = 1 + (g_game.wave / 12);
+                if (g_game.asteroids[i].hp > 9) g_game.asteroids[i].hp = 9;
             } else if (type == AST_SMALL) {
                 g_game.asteroids[i].radius = 5;
                 g_game.asteroids[i].hp = 1;
@@ -306,16 +360,17 @@ static void destroy_asteroid(int idx, bool award) {
     trigger_explosion(ax, ay);
 
     if (award) {
+        int combo = g_game.combo; // combo multiplies coins per kill
         int pts = (t == AST_LARGE) ? 60 : ((t == AST_MED_A || t == AST_MED_B) ? 35 : 20);
         award_score(pts);
-        award_coins(coins_for_asteroid(t));
+        award_coins(coins_for_asteroid(t) * combo);
         int mult = get_diff_speed_mult() + g_game.wave * 12;
         if (t == AST_LARGE) {
-            int spd = (160 * mult) >> 8;
+            int spd = ((160 * mult) >> 8) * asteroid_speed_mult(AST_MED_A) >> 8;
             spawn_asteroid(AST_MED_A, a->x - TO_FIXED(6), a->y, -spd, spd);
             spawn_asteroid(AST_MED_B, a->x + TO_FIXED(6), a->y, spd, spd);
         } else if (t == AST_MED_A || t == AST_MED_B) {
-            int spd = (200 * mult) >> 8;
+            int spd = ((200 * mult) >> 8) * asteroid_speed_mult(AST_SMALL) >> 8;
             spawn_asteroid(AST_SMALL, a->x - TO_FIXED(4), a->y, -spd, spd);
             spawn_asteroid(AST_TINY, a->x + TO_FIXED(4), a->y, spd, spd);
         }
@@ -330,8 +385,9 @@ static void destroy_drone(int idx, bool award) {
     int dy = FROM_FIXED(d->y);
     trigger_explosion(dx, dy);
     if (award) {
+        int combo = g_game.combo;
         award_score(120);
-        award_coins(45);
+        award_coins(45 * combo);
         try_spawn_powerup(dx, dy, 10);
     }
 }
@@ -363,6 +419,9 @@ static void spawn_random_asteroid(void) {
     int vy = ((rand() % 90) + 80 + threat * 6) * mult >> 8;
     bool is_large = (rand() % 100) < (15 + threat * 7);
     AsteroidType type = is_large ? AST_LARGE : ((rand() & 1) ? AST_MED_A : AST_MED_B);
+    int tmult = asteroid_speed_mult(type);
+    vx = (vx * tmult) >> 8;
+    vy = (vy * tmult) >> 8;
     spawn_asteroid(type, x, y, vx, vy);
 }
 
@@ -384,6 +443,7 @@ static bool spawn_random_drone(void) {
         g_game.drones[i].hp = 2 + (threat / 3) + (rand() % 3);
         if (g_settings.difficulty == DIFF_ACE) g_game.drones[i].hp++;
         if (g_game.drones[i].hp > 6) g_game.drones[i].hp = 6;
+        g_game.drones[i].hp_frac = 0;
         g_game.drones[i].active = true;
         return true;
     }
@@ -487,7 +547,11 @@ static void begin_wave(void) {
         int vy = ((rand() % 90) + 80 + g_game.wave * 6) * mult >> 8; // faster downward over waves
 
         bool is_large = (rand() % 100) < (15 + g_game.wave * 7); // 22% w1, 43% w4, 71% w8
-        spawn_asteroid(is_large ? AST_LARGE : (rand() % 2 == 0 ? AST_MED_A : AST_MED_B), x, y, vx, vy);
+        AsteroidType type = is_large ? AST_LARGE : (rand() % 2 == 0 ? AST_MED_A : AST_MED_B);
+        int tmult = asteroid_speed_mult(type);
+        vx = (vx * tmult) >> 8;
+        vy = (vy * tmult) >> 8;
+        spawn_asteroid(type, x, y, vx, vy);
     }
 
     // Drones from wave 2, much more aggressive ramp
@@ -510,6 +574,7 @@ static void begin_wave(void) {
             g_game.drones[i].phase = rand() % 256;
             g_game.drones[i].hp = 2 + (g_game.wave / 3) + (g_settings.difficulty == DIFF_ACE ? 1 : 0);
             if (g_game.drones[i].hp > 6) g_game.drones[i].hp = 6;
+            g_game.drones[i].hp_frac = 0;
             g_game.drones[i].active = true;
         }
     }
@@ -584,49 +649,50 @@ static void fire_player_weapon(void) {
     if (cooldown < 3) cooldown = 3; // absolute min 20/sec
     if (is_omega) { if (cooldown > 3) cooldown--; } // omega tiny buff
 
+    int base = get_weapon_base_damage(rig);
     switch (rig) {
         case WEAPON_SINGLE: {
             // One weak laser that can only break 1 small rock at a time (low dmg, no pierce)
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), 1 + dmg_bonus, false);
+            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, false);
             break;
         }
         case WEAPON_TWIN: {
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
             break;
         }
         case WEAPON_SPREAD: {
-            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(4), -TO_FIXED(1), -TO_FIXED(4), 1 + dmg_bonus, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(4), TO_FIXED(1), -TO_FIXED(4), 1 + dmg_bonus, false);
+            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(4), -TO_FIXED(1), -TO_FIXED(4), base + dmg_bonus, false);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(4), TO_FIXED(1), -TO_FIXED(4), base + dmg_bonus, false);
             break;
         }
         case WEAPON_FOCUSED: {
             // Heavy single that pierces small rocks
             bool heavy = true;
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), 2 + dmg_bonus, heavy);
+            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, heavy);
             break;
         }
         case WEAPON_TRIPLE: {
             add_player_bullet(px - TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), 2 + dmg_bonus, true);
+            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, true);
             add_player_bullet(px + TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
             break;
         }
         case WEAPON_PLASMA: {
-            add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(7), -50, -TO_FIXED(5), 3 + dmg_bonus, true);
-            add_player_bullet(px + TO_FIXED(5), py - TO_FIXED(7), 50, -TO_FIXED(5), 3 + dmg_bonus, true);
+            add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(7), -50, -TO_FIXED(5), base + dmg_bonus, true);
+            add_player_bullet(px + TO_FIXED(5), py - TO_FIXED(7), 50, -TO_FIXED(5), base + dmg_bonus, true);
             break;
         }
         case WEAPON_QUANTUM: {
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), 4 + dmg_bonus, true);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), 4 + dmg_bonus, true);
-            add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(8), 4 + dmg_bonus, true);
+            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), base + dmg_bonus, true);
+            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), base + dmg_bonus, true);
+            add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(8), base + dmg_bonus, true);
             break;
         }
         case WEAPON_NOVA: {
             // Final god weapon: 5 bullets, massive dmg, piercing, fast
-            int d = 5 + dmg_bonus;
+            int d = base + dmg_bonus;
             if (is_omega) d += 2; // extra crazy with omega crystal
             add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(9), d, true);
             add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(8), -70, -TO_FIXED(8), d, true);
@@ -636,7 +702,7 @@ static void fire_player_weapon(void) {
             break;
         }
         default: {
-            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
+            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
             break;
         }
     }
@@ -743,8 +809,6 @@ static void game_update_tick(void) {
     }
 
     if (g_game.player.fire_cooldown > 0) g_game.player.fire_cooldown--;
-    if (g_game.player.dash_cooldown > 0) g_game.player.dash_cooldown--;
-    if (g_game.player.dash_remaining > 0) g_game.player.dash_remaining--;
     if (g_game.player.invulnerable_timer > 0) g_game.player.invulnerable_timer--;
     if (g_game.player.rapid_fire_timer > 0) g_game.player.rapid_fire_timer--;
 
@@ -754,38 +818,18 @@ static void game_update_tick(void) {
     if (key_is_down(KEY_UP)) my -= 1;
     if (key_is_down(KEY_DOWN)) my += 1;
 
-    int max_dash_cd = get_max_dash_cooldown();
-    if ((key_hit(KEY_B) || key_hit(KEY_R) || key_hit(KEY_L)) && g_game.player.dash_cooldown == 0) {
-        if (mx != 0 || my != 0) {
-            g_game.player.dash_dir_x = mx;
-            g_game.player.dash_dir_y = my;
-        } else {
-            g_game.player.dash_dir_x = 0;
-            g_game.player.dash_dir_y = -1;
-        }
-        g_game.player.dash_remaining = 12 + get_engine_level();
-        g_game.player.dash_cooldown = max_dash_cd;
-        g_game.player.invulnerable_timer = get_dash_invuln();
-        for (int b = 0; b < 10; b++) emit_engine_particle();
-    }
-
     // ── Engine speed with 2x cap logic ───────────────────────────────
     int eng_mult = get_engine_mult(); // 180..512
     int base_spd = TO_FIXED(1) + 50; // 306 base
     base_spd = (base_spd * eng_mult) >> 8;
-    int dash_extra = TO_FIXED(2) + (get_engine_level() * 30);
-    dash_extra = (dash_extra * eng_mult) >> 8;
-    int spd = (g_game.player.dash_remaining > 0) ? (base_spd + dash_extra) : base_spd;
+    int spd = base_spd;
 
-    int dir_x = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_x : mx;
-    int dir_y = (g_game.player.dash_remaining > 0) ? g_game.player.dash_dir_y : my;
-
-    if (dir_x != 0 && dir_y != 0) {
-        g_game.player.x += (dir_x * spd * 181) / 256;
-        g_game.player.y += (dir_y * spd * 181) / 256;
+    if (mx != 0 && my != 0) {
+        g_game.player.x += (mx * spd * 181) / 256;
+        g_game.player.y += (my * spd * 181) / 256;
     } else {
-        g_game.player.x += dir_x * spd;
-        g_game.player.y += dir_y * spd;
+        g_game.player.x += mx * spd;
+        g_game.player.y += my * spd;
     }
 
     if (g_game.player.x < TO_FIXED(12)) g_game.player.x = TO_FIXED(12);
@@ -793,8 +837,39 @@ static void game_update_tick(void) {
     if (g_game.player.y < TO_FIXED(22)) g_game.player.y = TO_FIXED(22);
     if (g_game.player.y > TO_FIXED(SCREEN_HEIGHT - 12)) g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 12);
 
-    if (mx != 0 || my != 0 || g_game.player.dash_remaining > 0) {
+    if (mx != 0 || my != 0) {
         if ((rand() & 1) == 0) emit_engine_particle();
+    }
+
+    // ── Big laser: hold B/R/L for 3s to charge, then a piercing beam
+    //    fires for 3s (Undertale yellow-soul style). ──────────────────
+    bool beam_held = key_is_down(KEY_B) || key_is_down(KEY_R) || key_is_down(KEY_L);
+    if (!g_game.beam_active) {
+        if (beam_held) {
+            if (g_game.beam_charge < BEAM_CHARGE_TICKS) {
+                g_game.beam_charge++;
+                if (g_game.beam_charge >= BEAM_CHARGE_TICKS) {
+#ifdef PLATFORM_HOST
+                    platform_queue_haptic(HAPTIC_CHARGE);
+#endif
+                    g_game.beam_active = true;
+                    g_game.beam_timer = BEAM_DURATION_TICKS;
+#ifdef PLATFORM_HOST
+                    platform_queue_haptic(HAPTIC_BEAM);
+#endif
+                    audio_play_sfx(SFX_LASER);
+                }
+            }
+        } else if (g_game.beam_charge > 0) {
+            g_game.beam_charge -= 2; // released early: charge drains fast
+            if (g_game.beam_charge < 0) g_game.beam_charge = 0;
+        }
+    } else {
+        g_game.beam_timer--;
+        if (g_game.beam_timer <= 0) {
+            g_game.beam_active = false;
+            g_game.beam_charge = 0;
+        }
     }
 
     if (key_is_down(KEY_A) && g_game.player.fire_cooldown == 0) {
@@ -824,8 +899,14 @@ static void game_update_tick(void) {
             if (ax < -rad) g_game.asteroids[i].x = TO_FIXED(SCREEN_WIDTH + rad);
             if (ax > SCREEN_WIDTH + rad) g_game.asteroids[i].x = -TO_FIXED(rad);
             if (ay > SCREEN_HEIGHT + rad) {
-                g_game.asteroids[i].y = -TO_FIXED(rad + 10);
-                g_game.asteroids[i].x = TO_FIXED((rand() % (SCREEN_WIDTH - 30)) + 15);
+                if (g_game.asteroids[i].type == AST_SMALL || g_game.asteroids[i].type == AST_TINY) {
+                    // Small rocks only come around once: they leave the field
+                    // for good when they fall off-screen, so waves end cleanly.
+                    g_game.asteroids[i].active = false;
+                } else {
+                    g_game.asteroids[i].y = -TO_FIXED(rad + 10);
+                    g_game.asteroids[i].x = TO_FIXED((rand() % (SCREEN_WIDTH - 30)) + 15);
+                }
             }
         }
     }
@@ -963,6 +1044,38 @@ static void game_update_tick(void) {
         }
     }
 
+    // ── Big laser beam: pierces everything in its column, dealing
+    //    laser_damage/10 per tick (fractional HP accumulates). ─────────
+    if (g_game.beam_active) {
+        int bx = FROM_FIXED(g_game.player.x);
+        int beam_dmg = ((get_beam_damage() << 8) + 5) / 10; // 8.8 fixed
+        for (int a = 0; a < MAX_ASTEROIDS; a++) {
+            Asteroid* ast = &g_game.asteroids[a];
+            if (!ast->active) continue;
+            int ax = FROM_FIXED(ast->x);
+            int ar = ast->radius;
+            if (ax + ar < bx - 6 || ax - ar > bx + 6) continue; // beam column
+            ast->hp_frac += beam_dmg;
+            while (ast->hp_frac >= 256) {
+                ast->hp_frac -= 256;
+                ast->hp--;
+            }
+            if (ast->hp <= 0) destroy_asteroid(a, true);
+        }
+        for (int d = 0; d < MAX_DRONES; d++) {
+            Drone* dr = &g_game.drones[d];
+            if (!dr->active) continue;
+            int dx = FROM_FIXED(dr->x);
+            if (dx + 8 < bx - 6 || dx - 8 > bx + 6) continue;
+            dr->hp_frac += beam_dmg;
+            while (dr->hp_frac >= 256) {
+                dr->hp_frac -= 256;
+                dr->hp--;
+            }
+            if (dr->hp <= 0) destroy_drone(d, true);
+        }
+    }
+
     if (g_game.player.invulnerable_timer == 0) {
         for (int a = 0; a < MAX_ASTEROIDS; a++) {
             if (!g_game.asteroids[a].active) continue;
@@ -1045,7 +1158,7 @@ static void game_draw_static(void) {
     gfx_draw_glass_card(3, 2, 72, 16, PAL_BTN_BORDER, 14);
     gfx_draw_glass_card(wave_x, 2, 52, 16, PAL_BTN_BORDER, 14);
     gfx_draw_glass_card(right_card_x, 2, 72, 16, PAL_BTN_BORDER, 14);
-    gfx_draw_text(SCREEN_WIDTH - 82, SCREEN_HEIGHT - 10, "DASH", PAL_TEXT_WHITE);
+    gfx_draw_text(SCREEN_WIDTH - 82, SCREEN_HEIGHT - 10, "BEAM", PAL_TEXT_WHITE);
 }
 
 void game_draw(void) {
@@ -1083,6 +1196,17 @@ void game_draw(void) {
                                g_settings.laser_index, s_game_frame, false);
             }
         }
+    }
+
+    // Big laser: faint aim line while charging, then a full-column beam
+    int beam_bx = FROM_FIXED(g_game.player.x) + ox;
+    if (g_game.beam_active) {
+        u8 beam_col = gfx_get_laser_color(g_settings.laser_index);
+        int bw = ((s_game_frame & 3) == 0) ? 10 : 8; // subtle flicker
+        gfx_fill_rect(beam_bx - bw / 2, 20, bw, SCREEN_HEIGHT - 24, beam_col);
+        gfx_fill_rect(beam_bx - 1, 20, 2, SCREEN_HEIGHT - 24, PAL_TEXT_WHITE);
+    } else if (g_game.beam_charge > 0) {
+        gfx_fill_rect(beam_bx - 1, 20, 2, SCREEN_HEIGHT - 24, 15);
     }
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
@@ -1179,10 +1303,17 @@ void game_draw(void) {
         gfx_draw_text_centered((SCREEN_WIDTH - 80) / 2, 20, 80, buf, PAL_TEXT_GOLD);
     }
 
-    int max_dash_cd = get_max_dash_cooldown();
-    int dash_ready = max_dash_cd - g_game.player.dash_cooldown;
-    u8 dash_col = (g_game.player.dash_cooldown == 0) ? PAL_TEXT_GREEN : gfx_get_accent_color(g_settings.accent_index);
-    gfx_draw_progress_bar(SCREEN_WIDTH - 54, SCREEN_HEIGHT - 9, 50, 5, dash_ready, max_dash_cd, dash_col, 18);
+    // Big laser status: charge-up fills while holding, then drains as it fires
+    if (g_game.beam_active) {
+        gfx_draw_text(SCREEN_WIDTH - 82, SCREEN_HEIGHT - 10, "FIRING", PAL_TEXT_GOLD);
+        gfx_draw_progress_bar(SCREEN_WIDTH - 54, SCREEN_HEIGHT - 9, 50, 5,
+                              g_game.beam_timer, BEAM_DURATION_TICKS, PAL_TEXT_GOLD, 18);
+    } else {
+        u8 beam_col = gfx_get_accent_color(g_settings.accent_index);
+        if (g_game.beam_charge >= BEAM_CHARGE_TICKS) beam_col = PAL_TEXT_GREEN;
+        gfx_draw_progress_bar(SCREEN_WIDTH - 54, SCREEN_HEIGHT - 9, 50, 5,
+                              g_game.beam_charge, BEAM_CHARGE_TICKS, beam_col, 18);
+    }
 
     if (g_game.wave_banner_timer > 0) {
         int banner_w = 120;

@@ -138,3 +138,28 @@ Java_com_brick_spaceshooter_NativeGame_nativeFlushSave(JNIEnv* env, jclass clazz
     (void)env; (void)clazz;
     save_write();
 }
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeGetTilt(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return g_settings.tilt_steer ? 1 : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeGetHaptics(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return g_settings.haptics ? 1 : 0;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeTakeHaptics(JNIEnv* env, jclass clazz, jintArray out) {
+    (void)clazz;
+    if (!out) return 0;
+    jsize n = (*env)->GetArrayLength(env, out);
+    if (n <= 0) return 0;
+    jint* dst = (*env)->GetIntArrayElements(env, out, NULL);
+    if (!dst) return 0;
+    int got = platform_take_haptics((int*)dst, (int)n);
+    (*env)->ReleaseIntArrayElements(env, out, dst, 0);
+    return got;
+}

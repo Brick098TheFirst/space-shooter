@@ -89,7 +89,7 @@ class GbaPlayer {
             case "ShiftRight":
             case "KeyX":
             case "KeyK":
-                return 0; // B (Dash / Back)
+                return 0; // B (Beam / Back)
             case "KeyQ":
             case "KeyU":
                 return 10; // L
@@ -128,7 +128,7 @@ class GbaPlayer {
 
             // Action Buttons
             const btnA = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed; // A or RT (Fire / Buy)
-            const btnB = gp.buttons[2]?.pressed || gp.buttons[1]?.pressed || gp.buttons[5]?.pressed; // X, B or RB (Dash)
+            const btnB = gp.buttons[2]?.pressed || gp.buttons[1]?.pressed || gp.buttons[5]?.pressed; // X, B or RB (Beam)
             const btnL = gp.buttons[4]?.pressed || gp.buttons[6]?.pressed; // LB or LT (Prev Tab)
             const btnR = gp.buttons[5]?.pressed || gp.buttons[7]?.pressed; // RB or RT (Next Tab)
             const btnStart = gp.buttons[9]?.pressed || gp.buttons[16]?.pressed; // Start / Menu
