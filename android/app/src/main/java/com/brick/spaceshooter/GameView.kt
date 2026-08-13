@@ -17,11 +17,16 @@ import android.os.VibratorManager
 import android.view.Choreographer
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import android.view.ViewConfiguration
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
@@ -65,10 +70,24 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var stickKnobY = 0f
     private var stickNx = 0f
     private var stickNy = 0f
+
+    // ── Menu touch gesture state ─────────────────────────────────────────
+    private val velocityTracker = VelocityTracker.obtain()
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var menuPointerId = -1
     private var menuDownX = 0f
     private var menuDownY = 0f
-    private var menuScrollAccumY = 0f
-    private var menuScrollAccumX = 0f
+    private var menuGesture = GESTURE_NONE
+    private var menuAxis = AXIS_NONE
+
+    // ── Smooth scroll model (game pixels; native holds the real value) ──
+    private var scrollPx = 0f
+    private var scrollMax = 0f
+    private var dragging = false
+    private var flinging = false
+    private var snapping = false
+    private var flingVel = 0f
+    private var snapTarget = 0f
 
     // Haptics (Settings -> HAPTICS). Use VibratorManager on API 31+;
     // the old VIBRATOR_SERVICE path is silent on many modern phones.
@@ -84,6 +103,20 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     }
     private val hapticBuf = IntArray(8)
     private var hapticsEnabled = true
+
+    private companion object {
+        const val GESTURE_NONE = 0
+        const val GESTURE_SCROLL = 1
+        const val GESTURE_CANCELLED = 2
+        const val AXIS_NONE = 0
+        const val AXIS_VERTICAL = 1
+        const val AXIS_HORIZONTAL = 2
+        const val ROW_H = 21f            // matches LIST_ROW_H in menu.c
+        const val FLING_DECEL = 4.0f     // exponential friction (per second)
+        const val FLING_MIN_V = 30f      // game px/s: stop fling below this
+        const val FLING_START_V = 100f   // game px/s: below this, just snap
+        const val SNAP_SPEED = 10f       // snap easing rate (per second)
+    }
 
     init {
         isHapticFeedbackEnabled = true
@@ -183,6 +216,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         pulseKeys = 0
         NativeGame.nativeSetKeys(keys)
 
+        var dtSec = 0f
         if (lastFrameTimeNanos == 0L) {
             lastFrameTimeNanos = frameTimeNanos
             NativeGame.nativeTick()
@@ -192,6 +226,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             val elapsed = frameTimeNanos - lastFrameTimeNanos
             lastFrameTimeNanos = frameTimeNanos
             val clampedElapsed = elapsed.coerceIn(0L, targetFrameNanos * 4)
+            dtSec = clampedElapsed / 1_000_000_000f
             timeAccumulatorNanos += clampedElapsed
 
             var ticks = 0
@@ -209,9 +244,13 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val nextScreen = NativeGame.nativeGetScreen()
         if (nextScreen != uiScreen) {
             if (nextScreen != NativeGame.SCREEN_PLAYING) resetStickToHome()
+            stopScrollAnim()
+            scrollPx = 0f
+            scrollMax = NativeGame.nativeScrollMax()
             persistSave()
             uiScreen = nextScreen
         }
+        updateScrollAnim(dtSec)
         persistCounter++
         if (persistCounter >= NativeGame.TARGET_FPS * 2) {
             persistCounter = 0
@@ -457,68 +496,191 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private fun needsBackChip() = uiScreen == NativeGame.SCREEN_HANGAR ||
         uiScreen == NativeGame.SCREEN_SETTINGS ||
         uiScreen == NativeGame.SCREEN_CONTROLS ||
-        uiScreen == NativeGame.SCREEN_OPTIONS
+        uiScreen == NativeGame.SCREEN_OPTIONS ||
+        uiScreen == NativeGame.SCREEN_MODE_SELECT
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        return if (uiScreen == NativeGame.SCREEN_PLAYING) {
+            handleGameplayTouch(event)
+        } else {
+            handleMenuTouch(event)
+        }
+    }
+
+    // ── Menu touch: tap vs drag vs fling ─────────────────────────────────
+    // A "tap" only fires when the finger goes down AND comes up within touch
+    // slop of the same spot — sliding onto a button no longer activates it.
+
+    private fun gameScale() =
+        if (dest.width() > 0) dest.width() / NativeGame.SCREEN_W.toFloat() else 1f
+
+    private fun isScrollableScreen() =
+        uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS
+
+    private fun handleMenuTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                menuPointerId = event.getPointerId(0)
+                menuDownX = event.getX(0)
+                menuDownY = event.getY(0)
+                menuGesture = GESTURE_NONE
+                menuAxis = AXIS_NONE
+                stopScrollAnim()
+                velocityTracker.clear()
+                velocityTracker.addMovement(event)
+                // Adopt whatever native currently has (handles tab/screen resets).
+                scrollPx = NativeGame.nativeScrollGet()
+                scrollMax = NativeGame.nativeScrollMax()
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // Second finger: cancel the gesture so it can't turn into a tap.
+                cancelMenuGesture()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val idx = event.findPointerIndex(menuPointerId)
+                if (idx < 0) return true
+                velocityTracker.addMovement(event)
+                val x = event.getX(idx)
+                val y = event.getY(idx)
+                val dx = x - menuDownX
+                val dy = y - menuDownY
+
+                if (menuGesture == GESTURE_NONE && hypot(dx, dy) > touchSlop) {
+                    menuAxis = if (abs(dx) > abs(dy)) AXIS_HORIZONTAL else AXIS_VERTICAL
+                    if (menuAxis == AXIS_VERTICAL && isScrollableScreen()) {
+                        menuGesture = GESTURE_SCROLL
+                        dragging = true
+                    } else if (menuAxis == AXIS_HORIZONTAL && uiScreen == NativeGame.SCREEN_HANGAR) {
+                        menuGesture = GESTURE_SCROLL
+                    } else {
+                        // Axis isn't scrollable here — treat as a cancelled tap.
+                        menuGesture = GESTURE_CANCELLED
+                        menuAxis = AXIS_NONE
+                    }
+                }
+
+                if (dragging) {
+                    // 1:1 finger tracking: finger up = scroll down (offset grows).
+                    scrollPx = NativeGame.nativeScrollTo(scrollPx - dy / gameScale())
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (event.getPointerId(event.actionIndex) == menuPointerId) {
+                    velocityTracker.addMovement(event)
+                    finishMenuGesture(event, event.actionIndex)
+                    menuPointerId = -1
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val idx = event.findPointerIndex(menuPointerId)
+                if (idx >= 0) velocityTracker.addMovement(event)
+                finishMenuGesture(event, idx)
+                menuPointerId = -1
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                cancelMenuGesture()
+                return true
+            }
+        }
+        return true
+    }
+
+    private fun finishMenuGesture(event: MotionEvent, idx: Int) {
+        if (idx < 0) { cancelMenuGesture(); return }
+        val x = event.getX(idx)
+        val y = event.getY(idx)
+
+        if (menuGesture == GESTURE_SCROLL) {
+            if (dragging) {
+                dragging = false
+                velocityTracker.computeCurrentVelocity(1000)
+                val v = -velocityTracker.yVelocity / gameScale() // game px/s, + = scroll down
+                if (abs(v) > FLING_START_V) {
+                    flinging = true
+                    flingVel = v
+                    snapTarget = nearestScrollBoundary()
+                } else {
+                    startSnap()
+                }
+            } else if (menuAxis == AXIS_HORIZONTAL) {
+                // Horizontal swipe across the hangar tab strip.
+                if (x - menuDownX < -touchSlop * 2) pulseKeys = pulseKeys or NativeGame.KEY_R
+                else if (x - menuDownX > touchSlop * 2) pulseKeys = pulseKeys or NativeGame.KEY_L
+            }
+        } else {
+            // Undecided = never left slop → a real tap (at the DOWN position).
+            if (menuGesture == GESTURE_NONE) performMenuTap(menuDownX, menuDownY)
+        }
+    }
+
+    private fun cancelMenuGesture() {
+        dragging = false
+        flinging = false
+        snapping = false
+        flingVel = 0f
+        menuGesture = GESTURE_CANCELLED
+        menuAxis = AXIS_NONE
+    }
+
+    private fun performMenuTap(x: Float, y: Float) {
+        if (needsBackChip() && backRect().contains(x, y)) {
+            pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
+            NativeGame.nativeGoBack()
+            return
+        }
+        val mapped = mapToGame(x, y) ?: return
+        pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
+        NativeGame.nativeQueueTap(mapped.first, mapped.second)
+    }
+
+    // ── Smooth scroll animation (run from doFrame) ──────────────────────
+
+    private fun nearestScrollBoundary(): Float =
+        (scrollPx / ROW_H).roundToInt().coerceIn(0, (scrollMax / ROW_H).roundToInt()) * ROW_H
+
+    private fun startSnap() {
+        flinging = false
+        snapping = true
+        snapTarget = nearestScrollBoundary()
+    }
+
+    private fun stopScrollAnim() {
+        flinging = false
+        snapping = false
+        flingVel = 0f
+    }
+
+    private fun updateScrollAnim(dtSec: Float) {
+        if (flinging) {
+            scrollPx = NativeGame.nativeScrollTo(scrollPx + flingVel * dtSec)
+            flingVel *= exp((-FLING_DECEL * dtSec).toDouble()).toFloat()
+            if (scrollPx <= 0f || scrollPx >= scrollMax || abs(flingVel) < FLING_MIN_V) {
+                startSnap()
+            }
+        } else if (snapping) {
+            scrollPx += (snapTarget - scrollPx) * min(1f, SNAP_SPEED * dtSec)
+            if (abs(snapTarget - scrollPx) < 0.5f) {
+                scrollPx = NativeGame.nativeScrollTo(snapTarget)
+                snapping = false
+            } else {
+                NativeGame.nativeScrollTo(scrollPx)
+            }
+        }
+    }
+
+    // ── Gameplay touch: pointer-tracked buttons (down must start on them) ─
+
+    private fun handleGameplayTouch(event: MotionEvent): Boolean {
         val action = event.actionMasked
         val index = event.actionIndex
         val id = event.getPointerId(index)
         val x = event.getX(index)
         val y = event.getY(index)
-
-        if (uiScreen != NativeGame.SCREEN_PLAYING) {
-            when (action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                    menuDownX = x
-                    menuDownY = y
-                    menuScrollAccumY = 0f
-                    menuScrollAccumX = 0f
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    // Accumulate scroll distance for swipe-to-scroll in shop
-                    val dy = y - menuDownY
-                    val dx = x - menuDownX
-                    menuScrollAccumY += dy
-                    menuScrollAccumX += dx
-                    menuDownY = y
-                    menuDownX = x
-
-                    // Trigger scroll every ~24dp of vertical swipe in hangar/upgrades
-                    val threshold = dp(24f)
-                    if (uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS) {
-                        if (menuScrollAccumY < -threshold) {
-                            pulseKeys = pulseKeys or NativeGame.KEY_DOWN
-                            menuScrollAccumY = 0f
-                        } else if (menuScrollAccumY > threshold) {
-                            pulseKeys = pulseKeys or NativeGame.KEY_UP
-                            menuScrollAccumY = 0f
-                        }
-                    }
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                    val dx = x - menuDownX
-                    val dy = y - menuDownY
-                    if (needsBackChip() && backRect().contains(x, y)) {
-                        pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
-                        NativeGame.nativeGoBack()
-                    } else if ((uiScreen == NativeGame.SCREEN_HANGAR || uiScreen == NativeGame.SCREEN_SETTINGS) &&
-                        kotlin.math.abs(menuScrollAccumX) > dp(36f) &&
-                        kotlin.math.abs(menuScrollAccumX) > kotlin.math.abs(menuScrollAccumY) * 1.3f
-                    ) {
-                        // Horizontal swipe across the hangar tab strip / catalog.
-                        pulseKeys = pulseKeys or if (menuScrollAccumX < 0) NativeGame.KEY_R else NativeGame.KEY_L
-                    } else {
-                        val mapped = mapToGame(x, y)
-                        if (mapped != null) {
-                            pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
-                            NativeGame.nativeQueueTap(mapped.first, mapped.second)
-                        }
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> { /* nothing to release on cancel in menu */ }
-            }
-            return true
-        }
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -548,9 +710,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             MotionEvent.ACTION_MOVE -> {
                 for (i in 0 until event.pointerCount) {
                     val pid = event.getPointerId(i)
-                    val px = event.getX(i)
-                    val py = event.getY(i)
-                    if (pid == stickPointer) updateStickFrom(px, py)
+                    if (pid == stickPointer) updateStickFrom(event.getX(i), event.getY(i))
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
