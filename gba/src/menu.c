@@ -20,6 +20,9 @@ static int s_shop_scroll[SHOP_CAT_COUNT]   = { 0, 0, 0, 0 };
 static int s_upg_selected = 0;
 static int s_upg_scroll = 0;
 
+// Settings (options) state
+static int s_opt_selected = 0;
+
 static int s_shop_msg_timer = 0;
 static char s_shop_msg[36] = {0};
 static u8 s_shop_msg_col = PAL_TEXT_GOLD;
@@ -52,9 +55,10 @@ void menu_open(GameScreen screen) {
     s_tap_pending = false;
     menu_static_invalidate();
     if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS ||
-        screen == SCREEN_CONTROLS || screen == SCREEN_CREDITS || screen == SCREEN_MODE_SELECT) {
+        screen == SCREEN_CONTROLS || screen == SCREEN_OPTIONS || screen == SCREEN_MODE_SELECT) {
         audio_play_bgm(BGM_MENU);
     }
+    s_opt_selected = 0;
 }
 
 GameScreen menu_current_screen(void) {
@@ -75,7 +79,10 @@ void menu_go_back(void) {
             menu_open(SCREEN_MAIN_MENU);
             break;
         case SCREEN_CONTROLS:
-        case SCREEN_CREDITS:
+        case SCREEN_OPTIONS:
+            save_write();
+            menu_open(SCREEN_MAIN_MENU);
+            break;
         case SCREEN_MODE_SELECT:
             menu_open(SCREEN_MAIN_MENU);
             break;
@@ -198,7 +205,7 @@ static void main_menu_activate(int index) {
         case 1: menu_open(SCREEN_HANGAR); break;
         case 2: menu_open(SCREEN_SETTINGS); break; // now UPGRADES
         case 3: menu_open(SCREEN_CONTROLS); break;
-        case 4: menu_open(SCREEN_CREDITS); break;
+        case 4: menu_open(SCREEN_OPTIONS); break;
         default: break;
     }
 }
@@ -404,10 +411,96 @@ static void update_controls(void) {
     if (consume_tap(&tx, &ty)) { menu_open(SCREEN_MAIN_MENU); return; }
     if (key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START)) menu_open(SCREEN_MAIN_MENU);
 }
-static void update_credits(void) {
+
+// ── SETTINGS screen (replaces credits) ────────────────────────────────
+static int options_row_count(void) {
+#ifdef PLATFORM_HOST
+    return 6; // + tilt steer + haptics (Android only)
+#else
+    return 4;
+#endif
+}
+
+static void options_set_difficulty(int diff) {
+    if (diff < 0) diff = 2;
+    if (diff > 2) diff = 0;
+    g_settings.difficulty = (Difficulty)diff;
+}
+
+static void options_cycle(int row) {
+    switch (row) {
+        case 0: options_set_difficulty((int)g_settings.difficulty + 1); break;
+        case 1:
+            g_settings.music_volume += 10;
+            if (g_settings.music_volume > 100) g_settings.music_volume = 0;
+            break;
+        case 2:
+            g_settings.sfx_volume += 10;
+            if (g_settings.sfx_volume > 100) g_settings.sfx_volume = 0;
+            break;
+        case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
+#ifdef PLATFORM_HOST
+        case 4: g_settings.tilt_steer = !g_settings.tilt_steer; break;
+        case 5: g_settings.haptics = !g_settings.haptics; break;
+#endif
+        default: break;
+    }
+    save_write();
+}
+
+static void options_step(int row, int dir) {
+    switch (row) {
+        case 0: options_set_difficulty((int)g_settings.difficulty + dir); break;
+        case 1: {
+            int v = g_settings.music_volume + dir * 10;
+            if (v < 0) v = 0;
+            if (v > 100) v = 100;
+            g_settings.music_volume = v;
+            break;
+        }
+        case 2: {
+            int v = g_settings.sfx_volume + dir * 10;
+            if (v < 0) v = 0;
+            if (v > 100) v = 100;
+            g_settings.sfx_volume = v;
+            break;
+        }
+        case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
+#ifdef PLATFORM_HOST
+        case 4: g_settings.tilt_steer = !g_settings.tilt_steer; break;
+        case 5: g_settings.haptics = !g_settings.haptics; break;
+#endif
+        default: break;
+    }
+    save_write();
+}
+
+static void update_options(void) {
+    const int count = options_row_count();
     int tx, ty;
-    if (consume_tap(&tx, &ty)) { menu_open(SCREEN_MAIN_MENU); return; }
-    if (key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START)) menu_open(SCREEN_MAIN_MENU);
+    if (consume_tap(&tx, &ty)) {
+        for (int i = 0; i < count; i++) {
+            if (in_rect(tx, ty, 8, 24 + i * 20, SCREEN_WIDTH - 16, 18)) {
+                if (s_opt_selected == i) options_cycle(i);
+                else s_opt_selected = i;
+                return;
+            }
+        }
+        if (ty >= 144) {
+            save_write();
+            menu_open(SCREEN_MAIN_MENU);
+            return;
+        }
+    }
+    if (key_hit(KEY_UP)) s_opt_selected = (s_opt_selected + count - 1) % count;
+    if (key_hit(KEY_DOWN)) s_opt_selected = (s_opt_selected + 1) % count;
+    if (key_hit(KEY_LEFT)) options_step(s_opt_selected, -1);
+    if (key_hit(KEY_RIGHT)) options_step(s_opt_selected, 1);
+    if (key_hit(KEY_A)) options_cycle(s_opt_selected);
+    if (key_hit(KEY_START) || key_hit(KEY_B)) {
+        save_write();
+        menu_open(SCREEN_MAIN_MENU);
+    }
 }
 
 #ifdef PLATFORM_HOST
@@ -512,7 +605,7 @@ void menu_update(void) {
         case SCREEN_HANGAR:    starfield_update(); update_hangar(); break;
         case SCREEN_SETTINGS:  starfield_update(); update_upgrades(); break; // upgrades
         case SCREEN_CONTROLS:  starfield_update(); update_controls(); break;
-        case SCREEN_CREDITS:   starfield_update(); update_credits(); break;
+        case SCREEN_OPTIONS:   starfield_update(); update_options(); break;
 #ifdef PLATFORM_HOST
         case SCREEN_MODE_SELECT: starfield_update(); update_mode_select(); break;
 #endif
@@ -576,7 +669,7 @@ static void render_main_menu_static(void) {
     gfx_fill_rect(10, 28, 45, 1, PAL_TEXT_CYAN);
     gfx_draw_text(10, 32, "GBA Edition", 17);
 
-    const char* items[] = { "Play", "Shop", "Upgrades", "Controls", "Credits" };
+    const char* items[] = { "Play", "Shop", "Upgrades", "Controls", "Settings" };
     int start_y = 44; int step_y = 19;
     for (int i = 0; i < 5; i++) gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], false);
 
@@ -590,7 +683,7 @@ static void render_main_menu_static(void) {
 static void render_main_menu_dynamic(void) {
     menu_draw_base();
     gfx_draw_button(10, 44 + s_menu_selected * 19, 90, 16,
-        (const char*[]){"Play","Shop","Upgrades","Controls","Credits"}[s_menu_selected], true);
+        (const char*[]){"Play","Shop","Upgrades","Controls","Settings"}[s_menu_selected], true);
     int card_w = 126;
     int card_x = SCREEN_WIDTH - card_w - 6;
     draw_ship_preview_dynamic(card_x, 10, card_w);
@@ -842,7 +935,7 @@ static void render_upgrades_dynamic(void) {
         case UPG_DAMAGE: limit_info = "Start 1dmg Max 6dmg+"; break;
         case UPG_SHIELD: limit_info = "Cap 6 shields"; break;
         case UPG_HULL: limit_info = "Cap 7 lives - hard start 2"; break;
-        case UPG_DASH: limit_info = "CD 1.4s -> 0.4s"; break;
+        case UPG_DASH: limit_info = "Beam +25% dmg per lv"; break;
         case UPG_SCAVENGER: limit_info = "+275% coins max"; break;
         case UPG_OVERDRIVE: limit_info = "8s -> 26s rapid"; break;
         default: break;
@@ -898,7 +991,7 @@ static void render_controls_static(void) {
     gfx_draw_text(12, 24, "GBA CONTROLS", PAL_TEXT_CYAN);
     gfx_draw_text(12, 36, "D-PAD: Move ship", PAL_TEXT_WHITE);
     gfx_draw_text(12, 48, "A: Fire lasers", PAL_TEXT_WHITE);
-    gfx_draw_text(12, 60, "B / R: Dash burst", PAL_TEXT_WHITE);
+    gfx_draw_text(12, 60, "B: HOLD 3s = BEAM!", PAL_TEXT_GOLD);
     gfx_draw_text(12, 72, "START: Pause", PAL_TEXT_WHITE);
     gfx_draw_text(12, 84, "SELECT: Reset", PAL_TEXT_WHITE);
     gfx_draw_text(12, 100, "Starter: Slow 0.7x", 17);
@@ -907,31 +1000,72 @@ static void render_controls_static(void) {
     gfx_draw_text(right_x + 4, 24, "UPGRADE GUIDE", PAL_TEXT_CYAN);
     gfx_draw_text(right_x + 4, 36, "Engine: 0.7x->2x", PAL_TEXT_WHITE);
     gfx_draw_text(right_x + 4, 48, "Fire: 2/s->10/s", PAL_TEXT_GOLD);
-    gfx_draw_text(right_x + 4, 60, "Start Single weak", PAL_TEXT_GREEN);
+    gfx_draw_text(right_x + 4, 60, "Hold B: MEGA BEAM", PAL_TEXT_GREEN);
     gfx_draw_text(right_x + 4, 72, "Final Nova = GOD!", PAL_TEXT_GOLD);
     gfx_draw_text(right_x + 4, 86, "Wave4 = HARD!", PAL_TEXT_RED);
-    gfx_draw_text(right_x + 4, 98, "Omega Prism ultimate", PAL_TEXT_CYAN);
-    gfx_draw_text(right_x + 4, 110, "Shop+Rigs 8 total", PAL_TEXT_WHITE);
+    gfx_draw_text(right_x + 4, 98, "Beam Core: +25%/lv", PAL_TEXT_CYAN);
+    gfx_draw_text(right_x + 4, 110, "Small rocks = $", PAL_TEXT_WHITE);
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 static void render_controls_dynamic(void) { menu_draw_base(); }
 
-static void render_credits_static(void) {
-    starfield_draw_base(0, 0);
-    int cw = 200 + (SCREEN_WIDTH - 240);
-    int cx = (SCREEN_WIDTH - cw) / 2;
-    gfx_draw_glass_card(cx, 16, cw, 124, PAL_BTN_BORDER, 14);
-    gfx_draw_text_centered(cx, 22, cw, "SPACE UNLIMITED", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(cx, 34, cw, "Recharged: GBA Edition", PAL_TEXT_WHITE);
-    gfx_fill_rect(cx + 10, 46, cw - 20, 1, 20);
-    gfx_draw_text_centered(cx, 54, cw, "Upgrades Overhaul v4", 17);
-    gfx_draw_text_centered(cx, 66, cw, "8 Rigs 12 Lasers", PAL_TEXT_WHITE);
-    gfx_draw_text_centered(cx, 78, cw, "5 Level Caps 2x Speed", PAL_TEXT_CYAN);
-    gfx_draw_text_centered(cx, 90, cw, "Nova Annihilator Final", PAL_TEXT_GOLD);
-    gfx_draw_text_centered(cx, 102, cw, "W4 Hard Core", PAL_TEXT_GREEN);
-    gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
+// ── Settings screen ──────────────────────────────────────────────────
+static const char* options_label(int row) {
+    switch (row) {
+        case 0: return "DIFFICULTY";
+        case 1: return "MUSIC";
+        case 2: return "SFX";
+        case 3: return "SCREEN SHAKE";
+#ifdef PLATFORM_HOST
+        case 4: return "TILT STEER";
+        case 5: return "HAPTICS";
+#endif
+        default: return "";
+    }
 }
-static void render_credits_dynamic(void) { menu_draw_base(); }
+
+static void render_options_static(void) {
+    starfield_draw_base(0, 0);
+    gfx_draw_text(10, 6, "SETTINGS", PAL_TEXT_CYAN);
+    gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
+#ifdef PLATFORM_HOST
+    gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "Tap a row to change    BACK to exit", PAL_TEXT_WHITE);
+#else
+    gfx_draw_text_centered(0, 148, SCREEN_WIDTH, "A: Change  L/R: Value  B: Back", PAL_TEXT_WHITE);
+#endif
+}
+
+static void render_options_dynamic(void) {
+    menu_draw_base();
+    const int count = options_row_count();
+    for (int i = 0; i < count; i++) {
+        int row_y = 24 + i * 20;
+        bool sel = (i == s_opt_selected);
+        u8 border = sel ? PAL_TEXT_CYAN : 20;
+        u8 bg = sel ? PAL_BTN_HOVER : PAL_BTN_BG;
+        gfx_draw_glass_card(8, row_y, SCREEN_WIDTH - 16, 18, border, bg);
+
+        char val[16];
+        const char* value = "";
+        switch (i) {
+            case 0: value = gfx_get_diff_name(g_settings.difficulty); break;
+            case 1: siprintf(val, "%d%%", g_settings.music_volume); value = val; break;
+            case 2: siprintf(val, "%d%%", g_settings.sfx_volume); value = val; break;
+            case 3: value = g_settings.screen_shake ? "ON" : "OFF"; break;
+#ifdef PLATFORM_HOST
+            case 4: value = g_settings.tilt_steer ? "ON" : "OFF"; break;
+            case 5: value = g_settings.haptics ? "ON" : "OFF"; break;
+#endif
+            default: break;
+        }
+
+        u8 label_col = sel ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
+        gfx_draw_text(14, row_y + 6, options_label(i), label_col);
+        int vx = SCREEN_WIDTH - 14 - 6 - (int)strlen(value) * 6;
+        gfx_draw_text(vx, row_y + 6, value, PAL_TEXT_GOLD);
+        if (sel) gfx_draw_char(8, row_y + 6, '>', PAL_TEXT_CYAN);
+    }
+}
 
 #ifdef PLATFORM_HOST
 static void render_mode_select_static(void) {
@@ -1000,9 +1134,9 @@ void menu_draw(void) {
         case SCREEN_CONTROLS:
             if (!s_static_valid) { menu_static_begin(); render_controls_static(); menu_static_end(); }
             render_controls_dynamic(); break;
-        case SCREEN_CREDITS:
-            if (!s_static_valid) { menu_static_begin(); render_credits_static(); menu_static_end(); }
-            render_credits_dynamic(); break;
+        case SCREEN_OPTIONS:
+            if (!s_static_valid) { menu_static_begin(); render_options_static(); menu_static_end(); }
+            render_options_dynamic(); break;
 #ifdef PLATFORM_HOST
         case SCREEN_MODE_SELECT:
             if (!s_static_valid) { menu_static_begin(); render_mode_select_static(); menu_static_end(); }

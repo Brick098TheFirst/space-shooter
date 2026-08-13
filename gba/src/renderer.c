@@ -492,17 +492,17 @@ const char* gfx_get_laser_name(int laser_idx) {
 const char* gfx_get_laser_desc(int laser_idx) {
     switch (laser_idx) {
         case 0: return "Starter - weak 1dmg";
-        case 1: return "Amber photon +1";
+        case 1: return "Amber photon +0";
         case 2: return "Purple bolt +1";
-        case 3: return "Toxin glow +2";
+        case 3: return "Toxin glow +1";
         case 4: return "Thermal over +2";
         case 5: return "Gamma green +3";
-        case 6: return "Dark matter +3";
-        case 7: return "Spectrum + pierce";
+        case 6: return "Dark matter +4";
+        case 7: return "Spectrum + pierce +5";
         case 8: return "Inferno heat +2";
         case 9: return "Frost bite +3";
-        case 10: return "Photon burst +4";
-        case 11: return "GOD! Pierce+5dmg";
+        case 10: return "Photon burst +5";
+        case 11: return "GOD! Pierce +7, 1shot";
         default: return "Laser wavelength";
     }
 }

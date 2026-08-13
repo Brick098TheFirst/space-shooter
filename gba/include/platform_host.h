@@ -64,4 +64,12 @@ bool platform_restore_save(void);
 const u8* gfx_get_framebuffer(void);
 void gfx_present_argb8888(u32* dst);
 
+/* Haptic feedback queue (Android only).  The game core enqueues events and
+ * the Kotlin layer drains them each frame and fires the vibrator. */
+#define HAPTIC_HIT    0 // player took damage
+#define HAPTIC_CHARGE 1 // big laser finished charging
+#define HAPTIC_BEAM   2 // big laser fired
+void platform_queue_haptic(int type);
+int platform_take_haptics(int* out, int max);
+
 #endif
