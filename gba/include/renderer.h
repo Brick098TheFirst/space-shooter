@@ -30,7 +30,13 @@ void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_co
 void gfx_draw_sprite(int x, int y, int w, int h, const u8* data);
 void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
 void gfx_draw_enemy_ship(int x, int y);
+#ifdef PLATFORM_HOST
+/* Boss hull: the unused mini-drone sprite, recolored + scaled so it
+ * cannot be mistaken for a hunter (crimson player ship) or a rock. */
+void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int anim_frame);
+#endif
 void gfx_draw_laser(int center_x, int center_y, bool heavy, int laser_idx, int anim_frame, bool downward);
+bool gfx_laser_is_animated(int laser_idx);
 void gfx_draw_sprite_rotated(int cx, int cy, int w, int h, const u8* data, int angle_deg);
 void gfx_draw_sprite_clipped(int x, int y, int w, int h, const u8* data, int clip_x, int clip_y, int clip_w, int clip_h);
 

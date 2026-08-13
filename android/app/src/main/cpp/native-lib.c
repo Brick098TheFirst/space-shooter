@@ -216,3 +216,16 @@ Java_com_brick_spaceshooter_NativeGame_nativeApplyCheatCode(JNIEnv* env, jclass 
     (*env)->ReleaseStringUTFChars(env, code, s);
     return (jint)applied;
 }
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeTakeEraseRequest(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)menu_take_erase_request();
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeResetAllData(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    save_reset_all();
+    menu_request_full_redraw();
+}

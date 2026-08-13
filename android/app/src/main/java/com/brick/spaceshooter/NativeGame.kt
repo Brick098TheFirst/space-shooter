@@ -60,4 +60,8 @@ object NativeGame {
     external fun nativeTakeCodeRequest(): Int
     /** 1 if the cheat code was accepted, 0 if unknown. */
     external fun nativeApplyCheatCode(code: String): Int
+    /** 1 once per Settings -> ERASE DATA activation. */
+    external fun nativeTakeEraseRequest(): Int
+    /** Wipe coins, unlocks, upgrades, high score, and settings. */
+    external fun nativeResetAllData()
 }

@@ -111,21 +111,23 @@ static int get_damage_bonus(void) {
 }
 
 #ifdef PLATFORM_HOST
-/* True endgame build: NOVA rig + OMEGA crystal (laser 11). Rocks still
+/* True endgame build: NOVA rig + the final Apex crystal. Rocks still
  * evaporate; boss HP scales up so the same volley takes ~15 shots. */
 static bool is_oneshot_build(void) {
-    return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11);
+    return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == LASER_FINAL_IDX);
 }
 #endif
 
 #ifdef PLATFORM_HOST
-/* Android damage ladder: early lasers are TINY damage, final rig+omega is a true
- * one-shot nuke. Lower tiers are deliberately weak so players feel real power
- * progression through mid/late game. */
+/* Android damage ladder: each crystal is strictly stronger than the last.
+ * Early lasers are tiny; Apex (23) is the only true nuke. */
 static int get_laser_bonus(void) {
-    static const int bonus[12] = { 0, 0, 1, 1, 2, 2, 3, 3, 2, 3, 4, 20 }; // omega is +20 = nuke
+    static const int bonus[24] = {
+        0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6,
+        7, 8, 9, 10, 12, 14, 16, 18, 20, 23, 26, 32
+    };
     int idx = g_settings.laser_index;
-    if (idx < 0 || idx >= 12) return 0;
+    if (idx < 0 || idx >= NUM_LASERS) return 0;
     return bonus[idx];
 }
 
@@ -857,7 +859,7 @@ static int current_volley_damage(void) {
         case WEAPON_QUANTUM: return d * 3;
         case WEAPON_NOVA: {
             int nd = d;
-            if (g_settings.laser_index == 11) nd += 2;
+            if (g_settings.laser_index == LASER_FINAL_IDX) nd += 2;
             return nd * 3 + (nd - 1) * 2;
         }
         default: return d;
@@ -870,7 +872,7 @@ static int current_volley_damage(void) {
 static int maxed_beam_shot_damage(void) {
     int dmg = get_weapon_base_damage(WEAPON_FOCUSED) + UPG_MAX_LEVEL;
 #ifdef PLATFORM_HOST
-    dmg += 20; /* Omega crystal */
+    dmg += 32; /* Apex crystal floor for boss HP */
 #else
     dmg += 7;
 #endif
@@ -1055,7 +1057,7 @@ static void fire_player_weapon(void) {
     int py = g_game.player.y;
     int dmg_bonus = get_damage_bonus() + get_laser_bonus();
     // Omega and Rainbow add extra pierce
-    bool is_omega = (g_settings.laser_index == 11);
+    bool is_omega = (g_settings.laser_index == LASER_FINAL_IDX);
     /* Rainbow crystal is purely a visual variant (see gfx_draw_laser), so it
      * intentionally has no effect on the damage/cooldown maths here. */
 
@@ -2065,8 +2067,11 @@ void game_draw(void) {
             gfx_fill_rect(wpx - 1, 0, 2, SCREEN_HEIGHT, PAL_TEXT_WHITE);
         }
 
-        // Full boss = big crimson battleship; mini-boss is a smaller cousin.
+        // Boss hull: the mini-drone sprite, recolored + scaled.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
+#ifdef PLATFORM_HOST
+        gfx_draw_boss_drone(bxi, byi, g_game.boss.mini, flash != 0, s_game_frame);
+#else
         u8 hull = flash ? PAL_TEXT_WHITE : PAL_TEXT_RED;
         u8 trim = flash ? PAL_TEXT_WHITE : PAL_TEXT_GOLD;
         u8 glow = PAL_TEXT_VIOLET;
@@ -2093,6 +2098,7 @@ void game_draw(void) {
             gfx_fill_rect(bxi - 4, byi - 5, 8, 5, glow);
             gfx_fill_rect(bxi - 2, byi - 4, 4, 3, PAL_TEXT_WHITE);
         }
+#endif
 
         // HP bar across top
         int bar_w = SCREEN_WIDTH - 40;

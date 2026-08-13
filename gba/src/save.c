@@ -13,6 +13,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V4 0x53554745 // 'SUGE' new core upgrades + 12 lasers + 8 rigs + 5 lvls
 #define SAVE_MAGIC_V5 0x53554746 // 'SUGF' + settings screen flags (tilt steer, haptics)
 #define SAVE_MAGIC_V6 0x53554747 // 'SUGG' Android only: 64-bit coins (as 2 x u32)
+#define SAVE_MAGIC_V7 0x53554748 // 'SUGH' Android only: 24-laser bitmask (hi word in pads)
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -155,10 +156,44 @@ typedef struct {
     u32 checksum;
 } SaveDataV6;
 
+/* V7 is the same 48-byte layout as V6, but the two pad bytes hold the
+ * high 16 bits of the 24-laser ownership mask. */
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins_lo;
+    u32 coins_hi;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;
+    u16 owned_lasers_lo;
+    u8  upgrade_levels[NUM_UPGRADES]; // 8 x 0..5
+    u8  tilt_steer;
+    u8  haptics;
+    u16 owned_lasers_hi;
+    u32 checksum;
+} SaveDataV7;
+
 static u32 calc_checksum_v6(const SaveDataV6* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
     for (u32 i = 0; i < sizeof(SaveDataV6) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
+static u32 calc_checksum_v7(const SaveDataV7* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV7) - sizeof(u32); i++) {
         sum = (sum * 33) ^ bytes[i];
     }
     return sum;
@@ -235,7 +270,43 @@ void save_load(void) {
     /* Pull coins/loot/settings from filesDir/saves/save.sav if present. */
     platform_restore_save();
 
-    // Android current format: V6 (64-bit coins)
+    // Android current format: V7 (64-bit coins + 24-laser mask)
+    SaveDataV7 d7;
+    u8* dest7 = (u8*)&d7;
+    for (u32 i = 0; i < sizeof(SaveDataV7); i++) dest7[i] = SRAM_BASE[i];
+    if (d7.magic == SAVE_MAGIC_V7 && d7.checksum == calc_checksum_v7(&d7)) {
+        if (d7.difficulty <= 2) g_settings.difficulty = (Difficulty)d7.difficulty;
+        g_settings.music_volume = d7.music_volume <= 100 ? d7.music_volume : 80;
+        g_settings.sfx_volume = d7.sfx_volume <= 100 ? d7.sfx_volume : 80;
+        g_settings.screen_shake = (d7.screen_shake != 0);
+        g_settings.tilt_steer = false; // gyro removed
+        g_settings.haptics = (d7.haptics != 0);
+        if (d7.accent_index < NUM_ACCENTS) g_settings.accent_index = d7.accent_index;
+        if (d7.trail_index < NUM_TRAILS) g_settings.trail_index = d7.trail_index;
+        if (d7.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d7.weapon_rig;
+        if (d7.laser_index < NUM_LASERS) g_settings.laser_index = d7.laser_index;
+        g_settings.high_score = d7.high_score;
+        g_settings.coins = ((coin_t)d7.coins_hi << 32) | (coin_t)d7.coins_lo;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        g_settings.owned_accents = d7.owned_accents ? d7.owned_accents : (1<<1);
+        g_settings.owned_trails  = d7.owned_trails  ? d7.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d7.owned_rigs    ? d7.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = ((u32)d7.owned_lasers_hi << 16) | (u32)d7.owned_lasers_lo;
+        if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d7.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+        return;
+    }
+
+    // Legacy V6 (64-bit coins, 16-bit laser mask)
     SaveDataV6 d6;
     u8* dest6 = (u8*)&d6;
     for (u32 i = 0; i < sizeof(SaveDataV6); i++) dest6[i] = SRAM_BASE[i];
@@ -256,7 +327,7 @@ void save_load(void) {
         g_settings.owned_accents = d6.owned_accents ? d6.owned_accents : (1<<1);
         g_settings.owned_trails  = d6.owned_trails  ? d6.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d6.owned_rigs    ? d6.owned_rigs    : (1<<WEAPON_SINGLE);
-        g_settings.owned_lasers  = d6.owned_lasers  ? d6.owned_lasers  : (1<<0);
+        g_settings.owned_lasers  = d6.owned_lasers  ? (u32)d6.owned_lasers  : (1u<<0);
         for (int i = 0; i < NUM_UPGRADES; i++) {
             int lv = d6.upgrade_levels[i];
             if (lv < 0) lv = 0;
@@ -266,7 +337,8 @@ void save_load(void) {
         if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
         if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
-        if (!(g_settings.owned_lasers & (1 << g_settings.laser_index))) g_settings.laser_index = 0;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+        save_write(); // upgrade V6 -> V7
         return;
     }
 #endif
@@ -440,10 +512,10 @@ void save_load(void) {
 
 void save_write(void) {
 #ifdef PLATFORM_HOST
-    // Android: V6 with 64-bit coins (lo/hi split keeps the layout portable).
-    SaveDataV6 data;
-    memset(&data, 0, sizeof(SaveDataV6));
-    data.magic = SAVE_MAGIC_V6;
+    // Android: V7 with 64-bit coins and a 32-bit laser mask.
+    SaveDataV7 data;
+    memset(&data, 0, sizeof(SaveDataV7));
+    data.magic = SAVE_MAGIC_V7;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -460,14 +532,15 @@ void save_write(void) {
     data.owned_accents = g_settings.owned_accents;
     data.owned_trails  = g_settings.owned_trails;
     data.owned_rigs    = g_settings.owned_rigs;
-    data.owned_lasers  = g_settings.owned_lasers;
+    data.owned_lasers_lo = (u16)(g_settings.owned_lasers & 0xFFFFu);
+    data.owned_lasers_hi = (u16)((g_settings.owned_lasers >> 16) & 0xFFFFu);
     for (int i = 0; i < NUM_UPGRADES; i++) {
         data.upgrade_levels[i] = g_settings.upgrade_levels[i];
     }
-    data.checksum = calc_checksum_v6(&data);
+    data.checksum = calc_checksum_v7(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV6); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV7); i++) {
         SRAM_BASE[i] = src[i];
     }
     platform_persist_save();
@@ -552,6 +625,11 @@ void save_format_coins(char* dst, int dst_cap) {
 }
 
 #ifdef PLATFORM_HOST
+void save_reset_all(void) {
+    save_init_defaults();
+    save_write();
+}
+
 /* ── Cheat codes (Android only) ─────────────────────────────────────────── */
 static int cheat_matches(const char* code, const char* want) {
     if (!code) return 0;
@@ -666,20 +744,34 @@ int shop_get_rig_price(WeaponRig rig) {
 
 int shop_get_laser_price(int idx) {
 #ifdef PLATFORM_HOST
+    /* Strictly more expensive as the index climbs. Early crystals are a
+     * real investment; the last few are late-game flex buys. */
     switch (idx) {
-        case 0: return 0;        // starter
-        case 1: return 2500;
-        case 2: return 7500;
-        case 3: return 16000;
-        case 4: return 32000;
-        case 5: return 65000;
-        case 6: return 130000;
-        case 7: return 220000;   // Rainbow
-        case 8: return 80000;
-        case 9: return 150000;
-        case 10: return 240000;
-        case 11: return 600000;  // Omega Prism - final god crystal
-        default: return 999999;
+        case 0:  return 0;
+        case 1:  return 4000;
+        case 2:  return 9000;
+        case 3:  return 18000;
+        case 4:  return 36000;
+        case 5:  return 70000;
+        case 6:  return 120000;
+        case 7:  return 190000;
+        case 8:  return 280000;
+        case 9:  return 400000;
+        case 10: return 560000;
+        case 11: return 780000;
+        case 12: return 1100000;
+        case 13: return 1500000;
+        case 14: return 2100000;
+        case 15: return 2900000;
+        case 16: return 4000000;
+        case 17: return 5500000;
+        case 18: return 7600000;
+        case 19: return 10500000;
+        case 20: return 14500000;
+        case 21: return 20000000;
+        case 22: return 28000000;
+        case 23: return 40000000;
+        default: return 99999999;
     }
 #else
     switch (idx) {
@@ -798,7 +890,7 @@ bool shop_is_rig_owned(WeaponRig rig) {
 
 bool shop_is_laser_owned(int idx) {
     if (idx < 0 || idx >= NUM_LASERS) return false;
-    return (g_settings.owned_lasers & (1 << idx)) != 0;
+    return (g_settings.owned_lasers & (1u << idx)) != 0;
 }
 
 int shop_get_upgrade_level(UpgradeType upg) {

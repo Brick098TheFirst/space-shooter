@@ -40,6 +40,15 @@ static bool s_laser_ready = false;
  * consistent without changing the global Mode 4 palette at runtime. */
 static const u8 s_rainbow_colors[7] = { 70, 50, 66, 62, 54, 58, 78 };
 
+#ifdef PLATFORM_HOST
+/* 24 Android crystals. First 12 keep the original hues so old unlocks
+ * still look like themselves; 12-23 climb into brighter/rarer ramps. */
+static const u8 s_laser_palette[NUM_LASERS] = {
+    21,  24,  28,  27,  26,  62,  116, 120,
+    70,  54,  66,  78,  50,  184, 58,  120,
+    77,  66,  116, 24,  28,  54,  78,  16
+};
+#else
 /* 12 laser colours matching expanded crystal list */
 static const u8 s_laser_palette[NUM_LASERS] = {
     21,  // 0 Ion Cyan - basic weak
@@ -55,6 +64,15 @@ static const u8 s_laser_palette[NUM_LASERS] = {
     66,  //10 Photon Gold
     78   //11 Omega Prism - final god laser
 };
+#endif
+
+bool gfx_laser_is_animated(int laser_idx) {
+    if (laser_idx == LASER_RAINBOW_IDX) return true;
+#ifdef PLATFORM_HOST
+    if (laser_idx == 15 || laser_idx == LASER_FINAL_IDX) return true;
+#endif
+    return false;
+}
 
 const u8* gfx_get_framebuffer(void) {
     return s_back_buffer;
@@ -68,13 +86,9 @@ void gfx_init(void) {
 #endif
     memset(s_back_buffer, PAL_SPACE_BLACK, sizeof(s_back_buffer));
 
-    // Build laser variants. Rainbow (7) and Omega (11) are special animated.
-    const u8 laser_cols[NUM_LASERS] = {
-        21, 24, 28, 27, 26, 62, 116, 120, 70, 54, 66, 78
-    };
-
+    // Recolor the stock bolts from the palette table (rainbow/apex stay animated at draw).
     for (int l = 0; l < NUM_LASERS; l++) {
-        u8 col = laser_cols[l];
+        u8 col = s_laser_palette[l];
         for (int i = 0; i < 4*10; i++) {
             u8 p = spr_laser_standard[i];
             if (p == 21) s_laser_std[l][i] = col;
@@ -195,6 +209,12 @@ IWRAM_CODE void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame) {
     int y0 = y < 0 ? 0 : y;
     int x1 = x + 20 > SCREEN_WIDTH ? SCREEN_WIDTH : x + 20;
     int y1 = y + 16 > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + 16;
+    if (s_clip_on) {
+        if (x0 < s_clip_x0) x0 = s_clip_x0;
+        if (y0 < s_clip_y0) y0 = s_clip_y0;
+        if (x1 > s_clip_x1) x1 = s_clip_x1;
+        if (y1 > s_clip_y1) y1 = s_clip_y1;
+    }
     if (x0 >= x1 || y0 >= y1) return;
 
     const u8 rainbow_accents[7] = { 5, 0, 4, 3, 1, 2, 7 }; // Crimson, Orange, Gold, Mint, Cyan, Violet, Pink
@@ -241,6 +261,59 @@ IWRAM_CODE void gfx_draw_enemy_ship(int x, int y) {
     }
 }
 
+#ifdef PLATFORM_HOST
+/* Remap the stock purple drone (indices 112-120) onto a gold or cyan hull
+ * so the boss cannot be confused with hunters (crimson player ships). */
+IWRAM_CODE void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int anim_frame) {
+    int scale = mini ? 1 : 2;
+    int w = 18, h = 14;
+    int x = cx - (w * scale) / 2;
+    int y = cy - (h * scale) / 2;
+    /* Gold (full) vs electric cyan (mini). Flash blows out to white. */
+    const u8 gold[9]  = { 64, 65, 66, 67, 24, 66, 16, 16, 16 };
+    const u8 cyan[9]  = { 52, 53, 54, 55, 21, 54, 16, 16, 16 };
+    const u8 white[9] = { 16, 16, 16, 16, 16, 16, 16, 16, 16 };
+    const u8* map = flash ? white : (mini ? cyan : gold);
+
+    for (int sy = 0; sy < h; sy++) {
+        for (int sx = 0; sx < w; sx++) {
+            u8 pix = spr_drone[sy * w + sx];
+            if (pix == 0) continue;
+            u8 col = pix;
+            if (pix >= 112 && pix <= 120) col = map[pix - 112];
+            for (int dy = 0; dy < scale; dy++) {
+                int py = y + sy * scale + dy;
+                if ((unsigned)py >= SCREEN_HEIGHT) continue;
+                for (int dx = 0; dx < scale; dx++) {
+                    int px = x + sx * scale + dx;
+                    if ((unsigned)px >= SCREEN_WIDTH) continue;
+                    s_rt[py * SCREEN_WIDTH + px] = col;
+                }
+            }
+        }
+    }
+
+    /* Subtle engine pulse under the hull — 1px flicker, not a strobe. */
+    int pulse = (anim_frame >> 3) & 1;
+    int ey = y + h * scale + pulse;
+    int ew = mini ? 6 : 10;
+    int ex = cx - ew / 2;
+    u8 ecol = flash ? PAL_TEXT_WHITE : (mini ? PAL_TEXT_CYAN : PAL_TEXT_GOLD);
+    gfx_fill_rect(ex, ey, ew, 1, ecol);
+    if (!mini) gfx_fill_rect(ex + 2, ey + 1, ew - 4, 1, ecol);
+
+    /* Thin distinguishing ring so a 1x mini-boss still reads as "boss". */
+    u8 ring = flash ? PAL_TEXT_WHITE : (mini ? PAL_TEXT_CYAN : PAL_TEXT_GOLD);
+    int rw = w * scale + 4;
+    int rh = h * scale + 4;
+    int rx = cx - rw / 2;
+    int ry = cy - rh / 2;
+    if (((anim_frame >> 4) & 1) == 0) {
+        gfx_draw_rect(rx, ry, rw, rh, ring);
+    }
+}
+#endif
+
 /* Draw a complete player-style laser.  Rainbow Laser is deliberately rendered
  * here rather than cached: each coloured edge pixel gets a moving spectrum
  * phase, making several colours visible in the same bolt. */
@@ -255,7 +328,8 @@ IWRAM_CODE void gfx_draw_laser(int center_x, int center_y, bool heavy,
     const u8* src = heavy ? gfx_get_laser_heavy_sprite(laser_idx)
                           : gfx_get_laser_standard_sprite(laser_idx);
 
-    if (laser_idx != 7 && !downward) {
+    bool animated = gfx_laser_is_animated(laser_idx);
+    if (!animated && !downward) {
         gfx_draw_sprite(x, y, w, h, src);
         return;
     }
@@ -263,13 +337,15 @@ IWRAM_CODE void gfx_draw_laser(int center_x, int center_y, bool heavy,
     for (int draw_y = 0; draw_y < h; draw_y++) {
         int py = y + draw_y;
         if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        if (s_clip_on && (py < s_clip_y0 || py >= s_clip_y1)) continue;
         int sy = downward ? (h - 1 - draw_y) : draw_y;
         for (int sx = 0; sx < w; sx++) {
             int px = x + sx;
             if ((unsigned)px >= SCREEN_WIDTH) continue;
+            if (s_clip_on && (px < s_clip_x0 || px >= s_clip_x1)) continue;
             u8 pix = src[sy * w + sx];
             if (pix == 0) continue;
-            if (laser_idx == 7 && pix != PAL_TEXT_WHITE) {
+            if (animated && pix != PAL_TEXT_WHITE) {
                 int phase = (anim_frame >> 2) + sy * 2 + sx;
                 pix = s_rainbow_colors[phase % 7];
             }

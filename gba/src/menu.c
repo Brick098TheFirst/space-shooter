@@ -37,10 +37,17 @@ static bool s_tap_pending = false;
 /* Raised when the player activates the Settings -> CODES row; drained by the
  * Android layer which opens the system text dialog. */
 static int s_code_request = 0;
+static int s_erase_request = 0;
 
 int menu_take_code_request(void) {
     int r = s_code_request;
     s_code_request = 0;
+    return r;
+}
+
+int menu_take_erase_request(void) {
+    int r = s_erase_request;
+    s_erase_request = 0;
     return r;
 }
 #endif
@@ -279,8 +286,17 @@ static void hangar_select_item(int idx) {
 
 static void format_price(char* dst, int price) {
     char tmp[12];
+#ifdef PLATFORM_HOST
+    if (price >= 1000000) {
+        int m = price / 1000000;
+        int tenth = (price % 1000000) / 100000;
+        if (tenth && m < 100) siprintf(tmp, "%d.%dM", m, tenth);
+        else siprintf(tmp, "%dM", m);
+    } else if (price >= 1000) {
+#else
     if (price >= 1000000) siprintf(tmp, "%dM", price / 1000000);
     else if (price >= 1000) {
+#endif
         if (price % 1000 == 0) siprintf(tmp, "%dk", price / 1000);
         else siprintf(tmp, "%d.%dk", price / 1000, (price % 1000) / 100);
     } else siprintf(tmp, "%dc", price);
@@ -566,14 +582,20 @@ static void update_controls(void) {
 
 // ── SETTINGS screen (replaces credits) ────────────────────────────────
 #ifdef PLATFORM_HOST
-/* Android gets two extra rows: haptics and the cheat-code entry. */
+/* Android extra rows: haptics, cheat-code entry, wipe-all-data. */
 #define OPT_ROW_HAPTICS 4
 #define OPT_ROW_CODES   5
+#define OPT_ROW_ERASE   6
+#define OPT_ROW_H       16
+#define OPT_ROW_Y0      22
+#else
+#define OPT_ROW_H       20
+#define OPT_ROW_Y0      24
 #endif
 
 static int options_row_count(void) {
 #ifdef PLATFORM_HOST
-    return 6; // + haptics, codes (Android only)
+    return 7; // + haptics, codes, erase (Android only)
 #else
     return 4;
 #endif
@@ -600,6 +622,7 @@ static void options_cycle(int row) {
 #ifdef PLATFORM_HOST
         case OPT_ROW_HAPTICS: g_settings.haptics = !g_settings.haptics; break;
         case OPT_ROW_CODES: s_code_request = 1; return; // opens the Android dialog; nothing to save
+        case OPT_ROW_ERASE: s_erase_request = 1; return; // confirm dialog in Kotlin
 #endif
         default: break;
     }
@@ -637,12 +660,17 @@ static void update_options(void) {
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
         for (int i = 0; i < count; i++) {
-            if (in_rect(tx, ty, 8, 24 + i * 20, SCREEN_WIDTH - 16, 18)) {
+            if (in_rect(tx, ty, 8, OPT_ROW_Y0 + i * OPT_ROW_H, SCREEN_WIDTH - 16, OPT_ROW_H - 2)) {
 #ifdef PLATFORM_HOST
                 if (i == OPT_ROW_CODES) {
                     // Cheat codes: a single tap opens the native text dialog.
                     s_opt_selected = i;
                     s_code_request = 1;
+                    return;
+                }
+                if (i == OPT_ROW_ERASE) {
+                    s_opt_selected = i;
+                    s_erase_request = 1;
                     return;
                 }
 #endif
@@ -829,6 +857,9 @@ static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx) {
 static void draw_ship_preview_dynamic(int card_x, int card_y, int card_w) {
     int ship_x = card_x + (card_w - 20) / 2;
     int ship_y = card_y + 25;
+#ifdef PLATFORM_HOST
+    ship_y += ((s_anim_frame >> 4) & 1); /* 1px idle bob */
+#endif
     int accent = g_settings.accent_index;
     if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
     gfx_draw_ship(ship_x, ship_y, accent, s_anim_frame);
@@ -908,7 +939,11 @@ static void render_hangar_dynamic(void) {
         if (item_idx < 0 || item_idx >= count) continue;
         int row_y = hangar_list_top() + item_idx * LIST_ROW_H - off;
         bool is_sel = (item_idx == selected);
+#ifdef PLATFORM_HOST
+        u8 border = is_sel ? (((s_anim_frame >> 4) & 1) ? PAL_TEXT_WHITE : PAL_TEXT_CYAN) : 20;
+#else
         u8 border = is_sel ? PAL_TEXT_CYAN : 20;
+#endif
         u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
         gfx_draw_glass_card(6, row_y, list_w - 4, 19, border, bg);
         char name_buf[16] = {0}; char badge_buf[12] = {0}; u8 badge_col = PAL_TEXT_GOLD;
@@ -992,13 +1027,18 @@ static void render_hangar_dynamic(void) {
         case 3: full_name = gfx_get_laser_name(selected); desc1 = gfx_get_laser_desc(selected); desc2 = "Laser crystal core"; is_owned = shop_is_laser_owned(selected); is_equipped = (g_settings.laser_index == selected); item_price = shop_get_laser_price(selected); break;
     }
 
-    gfx_draw_text_centered(right_x, 73, right_w, full_name, PAL_TEXT_WHITE);
+#ifdef PLATFORM_HOST
+    int name_y = 80, status_y = 89, desc1_y = 98, desc2_y = 107;
+#else
+    int name_y = 73, status_y = 83, desc1_y = 94, desc2_y = 104;
+#endif
+    gfx_draw_text_centered(right_x, name_y, right_w, full_name, PAL_TEXT_WHITE);
     if (is_equipped) { siprintf(status_buf, "[EQUIPPED]"); status_col = PAL_TEXT_GREEN; }
     else if (is_owned) { siprintf(status_buf, "[OWNED]"); status_col = PAL_TEXT_CYAN; }
     else { char pbuf[16]; format_price(pbuf, item_price); siprintf(status_buf, "COST: %s", pbuf); status_col = PAL_TEXT_GOLD; }
-    gfx_draw_text_centered(right_x, 83, right_w, status_buf, status_col);
-    gfx_draw_text_centered(right_x, 94, right_w, desc1, PAL_TEXT_CYAN);
-    gfx_draw_text_centered(right_x, 104, right_w, desc2, 17);
+    gfx_draw_text_centered(right_x, status_y, right_w, status_buf, status_col);
+    gfx_draw_text_centered(right_x, desc1_y, right_w, desc1, PAL_TEXT_CYAN);
+    gfx_draw_text_centered(right_x, desc2_y, right_w, desc2, 17);
 
     int btn_w = right_w - 8;
     int btn_x = right_x + 4;
@@ -1211,6 +1251,7 @@ static const char* options_label(int row) {
 #ifdef PLATFORM_HOST
         case OPT_ROW_HAPTICS: return "HAPTICS";
         case OPT_ROW_CODES:   return "CODES";
+        case OPT_ROW_ERASE:   return "ERASE DATA";
 #endif
         default: return "";
     }
@@ -1231,11 +1272,15 @@ static void render_options_dynamic(void) {
     menu_draw_base();
     const int count = options_row_count();
     for (int i = 0; i < count; i++) {
-        int row_y = 24 + i * 20;
+        int row_y = OPT_ROW_Y0 + i * OPT_ROW_H;
         bool sel = (i == s_opt_selected);
+#ifdef PLATFORM_HOST
+        u8 border = sel ? (((s_anim_frame >> 4) & 1) ? PAL_TEXT_WHITE : PAL_TEXT_CYAN) : 20;
+#else
         u8 border = sel ? PAL_TEXT_CYAN : 20;
+#endif
         u8 bg = sel ? PAL_BTN_HOVER : PAL_BTN_BG;
-        gfx_draw_glass_card(8, row_y, SCREEN_WIDTH - 16, 18, border, bg);
+        gfx_draw_glass_card(8, row_y, SCREEN_WIDTH - 16, OPT_ROW_H - 2, border, bg);
 
         char val[16];
         const char* value = "";
@@ -1247,15 +1292,16 @@ static void render_options_dynamic(void) {
 #ifdef PLATFORM_HOST
             case OPT_ROW_HAPTICS: value = g_settings.haptics ? "ON" : "OFF"; break;
             case OPT_ROW_CODES:   value = "ENTER"; break;
+            case OPT_ROW_ERASE:   value = "RESET"; break;
 #endif
             default: break;
         }
 
         u8 label_col = sel ? PAL_TEXT_WHITE : PAL_TEXT_CYAN;
-        gfx_draw_text(14, row_y + 6, options_label(i), label_col);
+        gfx_draw_text(14, row_y + 4, options_label(i), label_col);
         int vx = SCREEN_WIDTH - 14 - 6 - (int)strlen(value) * 6;
-        gfx_draw_text(vx, row_y + 6, value, PAL_TEXT_GOLD);
-        if (sel) gfx_draw_char(8, row_y + 6, '>', PAL_TEXT_CYAN);
+        gfx_draw_text(vx, row_y + 4, value, PAL_TEXT_GOLD);
+        if (sel) gfx_draw_char(8, row_y + 4, '>', PAL_TEXT_CYAN);
     }
 }
 

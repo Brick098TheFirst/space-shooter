@@ -39,7 +39,17 @@ typedef u32 coin_t;
 #define NUM_ACCENTS 9
 #define NUM_TRAILS 8
 #define NUM_RIGS 8
+#ifdef PLATFORM_HOST
+/* Android hangar: 24 crystals, strictly stronger/pricier as the index climbs.
+ * Bits 0-11 keep the original 12 unlocks so old saves still make sense. */
+#define NUM_LASERS 24
+#define LASER_RAINBOW_IDX 7
+#define LASER_FINAL_IDX   23
+#else
 #define NUM_LASERS 12
+#define LASER_RAINBOW_IDX 7
+#define LASER_FINAL_IDX   11
+#endif
 #define NUM_UPGRADES 8
 #define UPG_MAX_LEVEL 5
 
@@ -104,8 +114,8 @@ typedef struct {
     coin_t coins;
     u16 owned_accents;  // bitmask for 9 paints
     u16 owned_trails;   // bitmask for 8 trails
-    u16 owned_rigs;     // bitmask for 6 rigs
-    u16 owned_lasers;   // bitmask for 8 lasers
+    u16 owned_rigs;     // bitmask for 8 rigs
+    u32 owned_lasers;   // bitmask (12 on GBA, 24 on Android)
     u8  upgrade_levels[NUM_UPGRADES]; // 0..3 for each upgrade
 } GameSettings;
 

@@ -60,7 +60,9 @@ Play opens a **mode select** on **both** Android and GBA:
 - **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
 - **Overdrive** — 90-second score rush with denser random spawns.
 
-The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses) and a **CODES** row — tap it to open the cheat-code dialog (native Android text input). Known code: **`GIMMEMONEY`** tops your coin balance up to **$999,000,000,000,000** (999 trillion — the coin counter is 64-bit on Android and the save file upgrades to the V6 layout automatically). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
+The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses), a **CODES** row — tap it to open the cheat-code dialog (native Android text input) — and **ERASE DATA** to wipe the save after a confirm dialog. Known code: **`GIMMEMONEY`** tops your coin balance up to **$999,000,000,000,000** (999 trillion — the coin counter is 64-bit on Android and the save file upgrades to the V7 layout automatically). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
+
+Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fire, B/X/LB beam, Start pause). The hangar has **24 laser crystals** that get stronger and more expensive as they go up, with a working live laser preview. Wave bosses use the mini-drone sprite in a distinct gold/cyan paint so they don't look like hunters.
 
 ### Android-only gameplay differences
 
