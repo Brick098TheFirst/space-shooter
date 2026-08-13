@@ -397,6 +397,21 @@ void save_write(void) {
 
 // ── Shop Pricing ────────────────────────────────────────────────────────
 int shop_get_accent_price(int idx) {
+#ifdef PLATFORM_HOST
+    // Android: cosmetics are pricier so they feel like a reward.
+    switch (idx) {
+        case 0: return 1500;
+        case 1: return 0;
+        case 2: return 5500;
+        case 3: return 12000;
+        case 4: return 28000;
+        case 5: return 60000;
+        case 6: return 130000;
+        case 7: return 260000;
+        case 8: return 1500000;
+        default: return 9999999;
+    }
+#else
     switch (idx) {
         case 0: return 800;     // Solar Orange
         case 1: return 0;       // Ion Cyan (Starter)
@@ -409,9 +424,23 @@ int shop_get_accent_price(int idx) {
         case 8: return 1000000; // Rainbow Prism
         default: return 9999999;
     }
+#endif
 }
 
 int shop_get_trail_price(int idx) {
+#ifdef PLATFORM_HOST
+    switch (idx) {
+        case 0: return 1800;
+        case 1: return 0;
+        case 2: return 6000;
+        case 3: return 14000;
+        case 4: return 32000;
+        case 5: return 70000;
+        case 6: return 140000;
+        case 7: return 280000;
+        default: return 999999;
+    }
+#else
     switch (idx) {
         case 0: return 1000;    // Ember Fire
         case 1: return 0;       // Ion Cyan (Starter)
@@ -423,9 +452,24 @@ int shop_get_trail_price(int idx) {
         case 7: return 130000;  // Rainbow Trail
         default: return 999999;
     }
+#endif
 }
 
 int shop_get_rig_price(WeaponRig rig) {
+#ifdef PLATFORM_HOST
+    // Android: weapons are an investment. Early cheap, endgame costs real grind.
+    switch (rig) {
+        case WEAPON_SINGLE:  return 0;        // starter
+        case WEAPON_TWIN:    return 1200;
+        case WEAPON_SPREAD:  return 5500;
+        case WEAPON_FOCUSED: return 14000;
+        case WEAPON_TRIPLE:  return 32000;
+        case WEAPON_PLASMA:  return 70000;
+        case WEAPON_QUANTUM: return 150000;
+        case WEAPON_NOVA:    return 400000;
+        default: return 999999;
+    }
+#else
     switch (rig) {
         case WEAPON_SINGLE:  return 0;       // Single weak starter
         case WEAPON_TWIN:    return 500;     // Twin
@@ -437,9 +481,27 @@ int shop_get_rig_price(WeaponRig rig) {
         case WEAPON_NOVA:    return 150000;  // Nova final god
         default: return 999999;
     }
+#endif
 }
 
 int shop_get_laser_price(int idx) {
+#ifdef PLATFORM_HOST
+    switch (idx) {
+        case 0: return 0;        // starter
+        case 1: return 2500;
+        case 2: return 7500;
+        case 3: return 16000;
+        case 4: return 32000;
+        case 5: return 65000;
+        case 6: return 130000;
+        case 7: return 220000;   // Rainbow
+        case 8: return 80000;
+        case 9: return 150000;
+        case 10: return 240000;
+        case 11: return 600000;  // Omega Prism - final god crystal
+        default: return 999999;
+    }
+#else
     switch (idx) {
         case 0: return 0;       // Ion Basic starter weak
         case 1: return 1200;    // Solar Gold
@@ -455,11 +517,52 @@ int shop_get_laser_price(int idx) {
         case 11: return 250000; // Omega Prism final god
         default: return 999999;
     }
+#endif
 }
 
-// New upgrade pricing: 5 levels (0->1,1->2,2->3,3->4,4->5)
+// Upgrade pricing: 5 levels (0->1,1->2,2->3,3->4,4->5)
 int shop_get_upgrade_price(UpgradeType upg, int level) {
     if (level < 0 || level >= UPG_MAX_LEVEL) return 999999;
+#ifdef PLATFORM_HOST
+    // Android: upgrades are noticeably more expensive, matching the slower
+    // early-game damage progression so players can't buy the win too fast.
+    switch (upg) {
+        case UPG_ENGINE: {
+            const int p[5] = { 1500, 5000, 14000, 36000, 80000 };
+            return p[level];
+        }
+        case UPG_FIRE_RATE: {
+            const int p[5] = { 2000, 6000, 16000, 40000, 90000 };
+            return p[level];
+        }
+        case UPG_DAMAGE: {
+            const int p[5] = { 2500, 7500, 20000, 50000, 110000 };
+            return p[level];
+        }
+        case UPG_SHIELD: {
+            const int p[5] = { 2000, 6000, 16000, 42000, 95000 };
+            return p[level];
+        }
+        case UPG_HULL: {
+            const int p[5] = { 2000, 6000, 16000, 42000, 95000 };
+            return p[level];
+        }
+        case UPG_DASH: {
+            const int p[5] = { 1800, 5500, 15000, 38000, 85000 };
+            return p[level];
+        }
+        case UPG_SCAVENGER: {
+            // Coin multiplier upgrade (magnet removed on Android)
+            const int p[5] = { 1500, 5000, 14000, 36000, 80000 };
+            return p[level];
+        }
+        case UPG_OVERDRIVE: {
+            const int p[5] = { 1800, 5500, 14000, 36000, 80000 };
+            return p[level];
+        }
+        default: return 999999;
+    }
+#else
     switch (upg) {
         case UPG_ENGINE: {
             const int p[5] = { 800, 2500, 7000, 18000, 40000 };
@@ -495,6 +598,7 @@ int shop_get_upgrade_price(UpgradeType upg, int level) {
         }
         default: return 999999;
     }
+#endif
 }
 
 bool shop_is_accent_owned(int idx) {
@@ -623,6 +727,15 @@ const char* shop_get_upgrade_name(UpgradeType upg) {
 const char* shop_get_upgrade_desc_line1(UpgradeType upg) {
     switch (upg) {
         case UPG_ENGINE:    return "Move speed 0.7->2x";
+#ifdef PLATFORM_HOST
+        case UPG_FIRE_RATE: return "Only way to shoot faster";
+        case UPG_DAMAGE:    return "+1 damage per lvl";
+        case UPG_SHIELD:    return "More shield slots";
+        case UPG_HULL:      return "+1 life per lvl";
+        case UPG_DASH:      return "+Beam damage / lvl";
+        case UPG_SCAVENGER: return "Coin multiplier only";
+        case UPG_OVERDRIVE: return "Longer rapid fire";
+#else
         case UPG_FIRE_RATE: return "2/sec -> 10/sec";
         case UPG_DAMAGE:    return "+1 damage per lvl";
         case UPG_SHIELD:    return "More shield slots";
@@ -630,6 +743,7 @@ const char* shop_get_upgrade_desc_line1(UpgradeType upg) {
         case UPG_DASH:      return "+Beam damage / lvl";
         case UPG_SCAVENGER: return "More coins + magnet";
         case UPG_OVERDRIVE: return "Longer rapid fire";
+#endif
         default:            return "";
     }
 }
@@ -644,12 +758,21 @@ const char* shop_get_upgrade_desc_line2(UpgradeType upg, int level) {
             if (level == 4) return "Lv4 1.56x v-fast";
             return "MAX 2.0x Speed!";
         case UPG_FIRE_RATE:
+#ifdef PLATFORM_HOST
+            if (level == 0) return "Lv0 ~2/sec";
+            if (level == 1) return "Lv1 ~2.5/sec";
+            if (level == 2) return "Lv2 ~3/sec";
+            if (level == 3) return "Lv3 ~3.7/sec";
+            if (level == 4) return "Lv4 ~4.5/sec";
+            return "MAX ~5.7/sec!";
+#else
             if (level == 0) return "Lv0 2 shots/sec";
             if (level == 1) return "Lv1 ~3/sec";
             if (level == 2) return "Lv2 ~4/sec";
             if (level == 3) return "Lv3 ~6/sec";
             if (level == 4) return "Lv4 ~8/sec";
             return "MAX 10+/sec!";
+#endif
         case UPG_DAMAGE:
             if (level == 0) return "+0 dmg base";
             if (level == 1) return "+1 all weapons";
@@ -679,12 +802,21 @@ const char* shop_get_upgrade_desc_line2(UpgradeType upg, int level) {
             if (level == 4) return "Beam dmg 2.00x";
             return "MAX Beam dmg 2.25x";
         case UPG_SCAVENGER:
+#ifdef PLATFORM_HOST
+            if (level == 0) return "1x coins";
+            if (level == 1) return "1.35x coins";
+            if (level == 2) return "1.70x coins";
+            if (level == 3) return "2.05x coins";
+            if (level == 4) return "2.40x coins";
+            return "MAX 2.75x coins";
+#else
             if (level == 0) return "No magnet 1x $";
             if (level == 1) return "+35% $ small mag";
             if (level == 2) return "+70% $ med mag";
             if (level == 3) return "+105% $ big mag";
             if (level == 4) return "+140% $ huge mag";
             return "MAX +175% & pull";
+#endif
         case UPG_OVERDRIVE:
             if (level == 0) return "Rapid 8 sec";
             if (level == 1) return "Rapid 11 sec";
