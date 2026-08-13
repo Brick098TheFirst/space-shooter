@@ -205,7 +205,7 @@ void save_load(void) {
         g_settings.music_volume = d5.music_volume <= 100 ? d5.music_volume : 80;
         g_settings.sfx_volume = d5.sfx_volume <= 100 ? d5.sfx_volume : 80;
         g_settings.screen_shake = (d5.screen_shake != 0);
-        g_settings.tilt_steer = (d5.tilt_steer != 0);
+        g_settings.tilt_steer = false; // gyro removed
         g_settings.haptics = (d5.haptics != 0);
         if (d5.accent_index < NUM_ACCENTS) g_settings.accent_index = d5.accent_index;
         if (d5.trail_index < NUM_TRAILS) g_settings.trail_index = d5.trail_index;
@@ -608,28 +608,28 @@ bool shop_try_purchase_upgrade(UpgradeType upg) {
 
 const char* shop_get_upgrade_name(UpgradeType upg) {
     switch (upg) {
-        case UPG_ENGINE:    return "Ion Engine";
+        case UPG_ENGINE:    return "Speed";
         case UPG_FIRE_RATE: return "Fire Rate";
-        case UPG_DAMAGE:    return "Plasma Core";
-        case UPG_SHIELD:    return "Shield Battery";
-        case UPG_HULL:      return "Hull Plating";
-        case UPG_DASH:      return "Beam Core";
-        case UPG_SCAVENGER: return "Graviton Magnet";
-        case UPG_OVERDRIVE: return "Overdrive Unit";
-        default:            return "Unknown Tech";
+        case UPG_DAMAGE:    return "Damage";
+        case UPG_SHIELD:    return "Shield";
+        case UPG_HULL:      return "Lives";
+        case UPG_DASH:      return "Beam";
+        case UPG_SCAVENGER: return "Coins";
+        case UPG_OVERDRIVE: return "Rapid";
+        default:            return "Upgrade";
     }
 }
 
 const char* shop_get_upgrade_desc_line1(UpgradeType upg) {
     switch (upg) {
-        case UPG_ENGINE:    return "Ship speed 0.7->2x";
+        case UPG_ENGINE:    return "Move speed 0.7->2x";
         case UPG_FIRE_RATE: return "2/sec -> 10/sec";
-        case UPG_DAMAGE:    return "+1 dmg per lvl";
-        case UPG_SHIELD:    return "+Shield cap & start";
-        case UPG_HULL:      return "+Extra life per lvl";
-        case UPG_DASH:      return "+Beam dmg per lvl";
-        case UPG_SCAVENGER: return "+Coins & magnet";
-        case UPG_OVERDRIVE: return "+Rapid duration";
+        case UPG_DAMAGE:    return "+1 damage per lvl";
+        case UPG_SHIELD:    return "More shield slots";
+        case UPG_HULL:      return "+1 life per lvl";
+        case UPG_DASH:      return "+Beam damage / lvl";
+        case UPG_SCAVENGER: return "More coins + magnet";
+        case UPG_OVERDRIVE: return "Longer rapid fire";
         default:            return "";
     }
 }

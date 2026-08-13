@@ -44,7 +44,6 @@ object NativeGame {
     external fun nativeLoadSave(data: ByteArray)
     external fun nativeGetSave(): ByteArray
     external fun nativeFlushSave()
-    external fun nativeGetTilt(): Int
     external fun nativeGetHaptics(): Int
     external fun nativeTakeHaptics(out: IntArray): Int
 }

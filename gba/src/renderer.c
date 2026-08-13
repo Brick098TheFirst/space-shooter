@@ -509,9 +509,9 @@ const char* gfx_get_laser_desc(int laser_idx) {
 
 const char* gfx_get_diff_name(Difficulty diff) {
     switch (diff) {
-        case DIFF_CADET: return "Cadet";
-        case DIFF_ACE:   return "Ace";
-        default:         return "Pilot";
+        case DIFF_CADET: return "Easy";
+        case DIFF_ACE:   return "Hard";
+        default:         return "Medium";
     }
 }
 

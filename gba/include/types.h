@@ -40,14 +40,14 @@ typedef enum {
 } WeaponRig;
 
 typedef enum {
-    UPG_ENGINE      = 0, // ship move speed: 0.70x .. 2.00x
-    UPG_FIRE_RATE   = 1, // shoot interval: 2/sec .. 10/sec
-    UPG_DAMAGE      = 2, // bullet damage
-    UPG_SHIELD      = 3, // shield cap
-    UPG_HULL        = 4, // extra lives
-    UPG_DASH        = 5, // Beam Core: big laser damage (+25%/lv)
-    UPG_SCAVENGER   = 6, // coin bonus + magnet
-    UPG_OVERDRIVE   = 7  // rapid & powerup duration
+    UPG_ENGINE      = 0, // Speed
+    UPG_FIRE_RATE   = 1, // Fire Rate
+    UPG_DAMAGE      = 2, // Damage
+    UPG_SHIELD      = 3, // Shield
+    UPG_HULL        = 4, // Lives
+    UPG_DASH        = 5, // Beam damage (+25%/lv)
+    UPG_SCAVENGER   = 6, // Coins + magnet
+    UPG_OVERDRIVE   = 7  // Rapid duration
 } UpgradeType;
 
 typedef enum {
@@ -73,7 +73,7 @@ typedef struct {
     int music_volume; // 0..100
     int sfx_volume;   // 0..100
     bool screen_shake;
-    bool tilt_steer;  // Android only: accelerometer steering
+    bool tilt_steer;  // unused (gyro removed); kept for save layout
     bool haptics;     // Android only: vibration feedback
     int accent_index; // 0..8
     int trail_index;  // 0..7
