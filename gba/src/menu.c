@@ -415,7 +415,7 @@ static void update_controls(void) {
 // ── SETTINGS screen (replaces credits) ────────────────────────────────
 static int options_row_count(void) {
 #ifdef PLATFORM_HOST
-    return 6; // + tilt steer + haptics (Android only)
+    return 5; // + haptics (Android only)
 #else
     return 4;
 #endif
@@ -440,8 +440,7 @@ static void options_cycle(int row) {
             break;
         case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
 #ifdef PLATFORM_HOST
-        case 4: g_settings.tilt_steer = !g_settings.tilt_steer; break;
-        case 5: g_settings.haptics = !g_settings.haptics; break;
+        case 4: g_settings.haptics = !g_settings.haptics; break;
 #endif
         default: break;
     }
@@ -467,8 +466,7 @@ static void options_step(int row, int dir) {
         }
         case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
 #ifdef PLATFORM_HOST
-        case 4: g_settings.tilt_steer = !g_settings.tilt_steer; break;
-        case 5: g_settings.haptics = !g_settings.haptics; break;
+        case 4: g_settings.haptics = !g_settings.haptics; break;
 #endif
         default: break;
     }
@@ -930,12 +928,12 @@ static void render_upgrades_dynamic(void) {
     // Limits info
     const char* limit_info = "";
     switch (upg) {
-        case UPG_ENGINE: limit_info = "Max 2x speed!"; break;
-        case UPG_FIRE_RATE: limit_info = "Start 2/sec MAX 10/sec"; break;
-        case UPG_DAMAGE: limit_info = "Start 1dmg Max 6dmg+"; break;
-        case UPG_SHIELD: limit_info = "Cap 6 shields"; break;
-        case UPG_HULL: limit_info = "Cap 7 lives - hard start 2"; break;
-        case UPG_DASH: limit_info = "Beam +25% dmg per lv"; break;
+        case UPG_ENGINE: limit_info = "Max 2x speed"; break;
+        case UPG_FIRE_RATE: limit_info = "2/sec up to 10/sec"; break;
+        case UPG_DAMAGE: limit_info = "Start 1, max +5"; break;
+        case UPG_SHIELD: limit_info = "Up to 6 shields"; break;
+        case UPG_HULL: limit_info = "Up to 7 lives"; break;
+        case UPG_DASH: limit_info = "Beam +25% per lv"; break;
         case UPG_SCAVENGER: limit_info = "+275% coins max"; break;
         case UPG_OVERDRIVE: limit_info = "8s -> 26s rapid"; break;
         default: break;
@@ -991,20 +989,20 @@ static void render_controls_static(void) {
     gfx_draw_text(12, 24, "GBA CONTROLS", PAL_TEXT_CYAN);
     gfx_draw_text(12, 36, "D-PAD: Move ship", PAL_TEXT_WHITE);
     gfx_draw_text(12, 48, "A: Fire lasers", PAL_TEXT_WHITE);
-    gfx_draw_text(12, 60, "B: HOLD 3s = BEAM!", PAL_TEXT_GOLD);
+    gfx_draw_text(12, 60, "B: HOLD 2s = BEAM!", PAL_TEXT_GOLD);
     gfx_draw_text(12, 72, "START: Pause", PAL_TEXT_WHITE);
     gfx_draw_text(12, 84, "SELECT: Reset", PAL_TEXT_WHITE);
     gfx_draw_text(12, 100, "Starter: Slow 0.7x", 17);
     gfx_draw_text(12, 110, "2 bullets/sec only!", 17);
     gfx_draw_glass_card(right_x, 20, right_w, 120, PAL_BTN_BORDER, 14);
     gfx_draw_text(right_x + 4, 24, "UPGRADE GUIDE", PAL_TEXT_CYAN);
-    gfx_draw_text(right_x + 4, 36, "Engine: 0.7x->2x", PAL_TEXT_WHITE);
+    gfx_draw_text(right_x + 4, 36, "Speed: 0.7x->2x", PAL_TEXT_WHITE);
     gfx_draw_text(right_x + 4, 48, "Fire: 2/s->10/s", PAL_TEXT_GOLD);
     gfx_draw_text(right_x + 4, 60, "Hold B: MEGA BEAM", PAL_TEXT_GREEN);
     gfx_draw_text(right_x + 4, 72, "Final Nova = GOD!", PAL_TEXT_GOLD);
-    gfx_draw_text(right_x + 4, 86, "Wave4 = HARD!", PAL_TEXT_RED);
-    gfx_draw_text(right_x + 4, 98, "Beam Core: +25%/lv", PAL_TEXT_CYAN);
-    gfx_draw_text(right_x + 4, 110, "Small rocks = $", PAL_TEXT_WHITE);
+    gfx_draw_text(right_x + 4, 86, "Later waves HARD!", PAL_TEXT_RED);
+    gfx_draw_text(right_x + 4, 98, "Beam: +25% dmg/lv", PAL_TEXT_CYAN);
+    gfx_draw_text(right_x + 4, 110, "15x combo = $$$", PAL_TEXT_WHITE);
     gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
 }
 static void render_controls_dynamic(void) { menu_draw_base(); }
@@ -1017,8 +1015,7 @@ static const char* options_label(int row) {
         case 2: return "SFX";
         case 3: return "SCREEN SHAKE";
 #ifdef PLATFORM_HOST
-        case 4: return "TILT STEER";
-        case 5: return "HAPTICS";
+        case 4: return "HAPTICS";
 #endif
         default: return "";
     }
@@ -1053,8 +1050,7 @@ static void render_options_dynamic(void) {
             case 2: siprintf(val, "%d%%", g_settings.sfx_volume); value = val; break;
             case 3: value = g_settings.screen_shake ? "ON" : "OFF"; break;
 #ifdef PLATFORM_HOST
-            case 4: value = g_settings.tilt_steer ? "ON" : "OFF"; break;
-            case 5: value = g_settings.haptics ? "ON" : "OFF"; break;
+            case 4: value = g_settings.haptics ? "ON" : "OFF"; break;
 #endif
             default: break;
         }

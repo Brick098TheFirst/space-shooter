@@ -109,7 +109,7 @@ static int get_weapon_base_damage(WeaponRig rig) {
 }
 
 /* Big laser beam damage = exactly what your current laser does per bullet,
- * divided by ten per tick (e.g. 1 dmg -> 0.1 dmg/frame).  Beam Core
+ * divided by ten per tick (e.g. 1 dmg -> 0.1 dmg/frame).  Beam
  * upgrade (UPG_DASH) boosts it +25% per level. */
 static int get_beam_damage(void) {
     int dmg = get_weapon_base_damage(g_settings.weapon_rig)
@@ -124,13 +124,13 @@ static int get_beam_damage(void) {
     return dmg;
 }
 
-/* Big laser timing: 3s charge, 3s beam. Ticks run at 90/s on the Android
+/* Big laser timing: 2s charge, 3s beam. Ticks run at 90/s on the Android
  * host and 120/s on GBA (2 sim ticks per 60fps frame). */
 #ifdef PLATFORM_HOST
-#define BEAM_CHARGE_TICKS (3 * 90)
+#define BEAM_CHARGE_TICKS (2 * 90)
 #define BEAM_DURATION_TICKS (3 * 90)
 #else
-#define BEAM_CHARGE_TICKS (3 * 120)
+#define BEAM_CHARGE_TICKS (2 * 120)
 #define BEAM_DURATION_TICKS (3 * 120)
 #endif
 
@@ -141,8 +141,8 @@ static int asteroid_speed_mult(AsteroidType type) {
         case AST_LARGE:            return 179; // 0.70x slow
         case AST_MED_A:
         case AST_MED_B:            return 256; // 1.00x current speed
-        case AST_SMALL:            return 460; // 1.80x very fast
-        default:                   return 512; // tiny 2.00x
+        case AST_SMALL:            return 666; // 2.60x very fast
+        default:                   return 768; // tiny 3.00x
     }
 }
 
@@ -185,6 +185,18 @@ static int get_max_combo_timer(void) {
     int fr = get_fire_rate_level();
     return 140 + fr * 12; // 140..200
 }
+
+/* Combo used to multiply coins 1:1 (x15 = 15x cash) which printed money.
+ * Soft ramp for most of the chain, then a real payday at max 15x. */
+static int combo_coin_pct(int combo) {
+    if (combo <= 1) return 100;
+    if (combo >= 15) return 450; // 4.5x jackpot once you lock 15x
+    // combo 2..14: +15% per step -> 115% .. 295%  (was 200%..1400%)
+    return 100 + (combo - 1) * 15;
+}
+
+static int s_wave_reinforcements = 0;
+static bool s_combo15_bonus = false;
 
 IWRAM_CODE static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life) {
     for (int i = 0; i < MAX_PARTICLES; i++) {
@@ -280,6 +292,11 @@ static void award_score(int base_pts) {
     int max_combo = get_max_combo_cap();
     if (g_game.combo < max_combo) g_game.combo++;
     g_game.combo_timer = get_max_combo_timer();
+    // Extra lump sum the first time a chain hits 15x.
+    if (g_game.combo >= 15 && !s_combo15_bonus) {
+        s_combo15_bonus = true;
+        award_coins(75);
+    }
 }
 
 static int coins_for_asteroid(AsteroidType type) {
@@ -316,6 +333,7 @@ static void damage_player(void) {
     }
     g_game.combo = 1;
     g_game.combo_timer = 0;
+    s_combo15_bonus = false;
     if (g_settings.screen_shake) g_game.shake_timer = 18;
 }
 
@@ -360,10 +378,13 @@ static void destroy_asteroid(int idx, bool award) {
     trigger_explosion(ax, ay);
 
     if (award) {
-        int combo = g_game.combo; // combo multiplies coins per kill
+        int combo = g_game.combo; // soft combo cash; jackpot at 15x
         int pts = (t == AST_LARGE) ? 60 : ((t == AST_MED_A || t == AST_MED_B) ? 35 : 20);
         award_score(pts);
-        award_coins(coins_for_asteroid(t) * combo);
+        award_coins((coins_for_asteroid(t) * combo_coin_pct(combo)) / 100);
+#ifdef PLATFORM_HOST
+        platform_queue_haptic(HAPTIC_KILL);
+#endif
         int mult = get_diff_speed_mult() + g_game.wave * 12;
         if (t == AST_LARGE) {
             int spd = ((160 * mult) >> 8) * asteroid_speed_mult(AST_MED_A) >> 8;
@@ -387,7 +408,10 @@ static void destroy_drone(int idx, bool award) {
     if (award) {
         int combo = g_game.combo;
         award_score(120);
-        award_coins(45 * combo);
+        award_coins((45 * combo_coin_pct(combo)) / 100);
+#ifdef PLATFORM_HOST
+        platform_queue_haptic(HAPTIC_KILL);
+#endif
         try_spawn_powerup(dx, dy, 10);
     }
 }
@@ -454,9 +478,9 @@ static void spawn_continuous_threat(void) {
     int threat = current_threat();
     int ast_n = count_active_asteroids();
     int dr_n = count_active_drones();
-    int ast_cap = 6 + threat / 2;
-    if (g_game.mode == GAME_MODE_OVERDRIVE) ast_cap += 3;
-    if (ast_cap > 20) ast_cap = 20;
+    int ast_cap = 6 + threat;
+    if (g_game.mode == GAME_MODE_OVERDRIVE) ast_cap += 4;
+    if (ast_cap > MAX_ASTEROIDS - 12) ast_cap = MAX_ASTEROIDS - 12;
     int dr_cap = 1 + threat / 3;
     if (g_game.mode == GAME_MODE_OVERDRIVE) dr_cap++;
     if (dr_cap > MAX_DRONES) dr_cap = MAX_DRONES;
@@ -512,9 +536,9 @@ static void update_continuous_modes(void) {
     if (g_game.spawn_timer <= 0) {
         spawn_continuous_threat();
         int threat = current_threat();
-        int cd = 52 - threat * 2;
-        if (g_game.mode == GAME_MODE_OVERDRIVE) cd -= 14;
-        if (cd < 12) cd = 12;
+        int cd = 48 - threat * 3;
+        if (g_game.mode == GAME_MODE_OVERDRIVE) cd -= 16;
+        if (cd < 8) cd = 8;
         g_game.spawn_timer = cd;
     }
 }
@@ -528,12 +552,19 @@ static void begin_wave(void) {
         award_coins(g_game.wave * 30);
     }
 
-    int diff_extra = (g_settings.difficulty == DIFF_ACE) ? 3 : (g_settings.difficulty == DIFF_CADET ? -1 : 0);
-    // Wave 1: ~4 asteroids, Wave 2: 6-7, Wave 3: 9-10, Wave 4: 12-14, Wave 5+: 16-22
-    int ast_count = 4 + g_game.wave * 2 + (g_game.wave > 2 ? g_game.wave : 0);
+    int diff_extra = (g_settings.difficulty == DIFF_ACE) ? 4 : (g_settings.difficulty == DIFF_CADET ? -1 : 0);
+    // Wave 1: ~8, Wave 3: ~18, Wave 5: ~28, Wave 8+: packed field
+    int ast_count = 5 + g_game.wave * 3;
+    if (g_game.wave >= 3) ast_count += (g_game.wave - 2) * 2;
     ast_count += diff_extra;
     if (ast_count < 3) ast_count = 3;
-    if (ast_count > 22) ast_count = 22;
+    if (ast_count > MAX_ASTEROIDS - 14) ast_count = MAX_ASTEROIDS - 14;
+
+    s_wave_reinforcements = 0;
+    if (g_game.wave >= 3) {
+        s_wave_reinforcements = (g_game.wave - 2) * 4 + g_game.wave;
+    }
+    g_game.spawn_timer = 48;
 
     int diff_mult = get_diff_speed_mult();
     // Add wave scaling to speed: each wave + ~7% faster
@@ -739,6 +770,8 @@ void game_start(void) {
 
     g_game.player.invulnerable_timer = 90;
     g_game.combo = 1;
+    s_combo15_bonus = false;
+    s_wave_reinforcements = 0;
     s_game_frame = 0;
     s_game_static_valid = false;
 
@@ -805,7 +838,10 @@ static void game_update_tick(void) {
 
     if (g_game.combo_timer > 0) {
         g_game.combo_timer--;
-        if (g_game.combo_timer == 0) g_game.combo = 1;
+        if (g_game.combo_timer == 0) {
+            g_game.combo = 1;
+            s_combo15_bonus = false;
+        }
     }
 
     if (g_game.player.fire_cooldown > 0) g_game.player.fire_cooldown--;
@@ -841,7 +877,7 @@ static void game_update_tick(void) {
         if ((rand() & 1) == 0) emit_engine_particle();
     }
 
-    // ── Big laser: hold B/R/L for 3s to charge, then a piercing beam
+    // ── Big laser: hold B/R/L for 2s to charge, then a piercing beam
     //    fires for 3s (Undertale yellow-soul style). ──────────────────
     bool beam_held = key_is_down(KEY_B) || key_is_down(KEY_R) || key_is_down(KEY_L);
     if (!g_game.beam_active) {
@@ -1133,6 +1169,25 @@ static void game_update_tick(void) {
         for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) active_enemies++;
         for (int i = 0; i < MAX_DRONES; i++) if (g_game.drones[i].active) active_enemies++;
 
+        // Later waves keep dumping extra rocks so the field stays packed.
+        if (s_wave_reinforcements > 0 && active_enemies > 0) {
+            g_game.spawn_timer--;
+            if (g_game.spawn_timer <= 0) {
+                int ast_n = count_active_asteroids();
+                int cap = MAX_ASTEROIDS - 12;
+                int extra = 1 + g_game.wave / 5;
+                if (extra > s_wave_reinforcements) extra = s_wave_reinforcements;
+                for (int n = 0; n < extra && ast_n < cap; n++) {
+                    spawn_random_asteroid();
+                    ast_n++;
+                    s_wave_reinforcements--;
+                }
+                int cd = 52 - g_game.wave * 3;
+                if (cd < 16) cd = 16;
+                g_game.spawn_timer = cd;
+            }
+        }
+
         if (active_enemies == 0) {
             g_game.intermission_timer--;
             if (g_game.intermission_timer <= 0) {
@@ -1198,15 +1253,16 @@ void game_draw(void) {
         }
     }
 
-    // Big laser: faint aim line while charging, then a full-column beam
+    // Big laser: faint aim line while charging, then a full-height beam
+    // that reaches the top of the screen (and the bottom).
     int beam_bx = FROM_FIXED(g_game.player.x) + ox;
     if (g_game.beam_active) {
         u8 beam_col = gfx_get_laser_color(g_settings.laser_index);
         int bw = ((s_game_frame & 3) == 0) ? 10 : 8; // subtle flicker
-        gfx_fill_rect(beam_bx - bw / 2, 20, bw, SCREEN_HEIGHT - 24, beam_col);
-        gfx_fill_rect(beam_bx - 1, 20, 2, SCREEN_HEIGHT - 24, PAL_TEXT_WHITE);
+        gfx_fill_rect(beam_bx - bw / 2, 0, bw, SCREEN_HEIGHT, beam_col);
+        gfx_fill_rect(beam_bx - 1, 0, 2, SCREEN_HEIGHT, PAL_TEXT_WHITE);
     } else if (g_game.beam_charge > 0) {
-        gfx_fill_rect(beam_bx - 1, 20, 2, SCREEN_HEIGHT - 24, 15);
+        gfx_fill_rect(beam_bx - 1, 0, 2, SCREEN_HEIGHT, 15);
     }
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
@@ -1292,7 +1348,7 @@ void game_draw(void) {
 
     if (g_game.combo > 1) {
         siprintf(buf, "x%d", g_game.combo);
-        u8 acc = gfx_get_accent_color(g_settings.accent_index);
+        u8 acc = (g_game.combo >= 15) ? PAL_TEXT_GOLD : gfx_get_accent_color(g_settings.accent_index);
         gfx_draw_text(6, 20, buf, acc);
         int max_comb_t = get_max_combo_timer();
         gfx_draw_progress_bar(20, 22, 42, 4, g_game.combo_timer, max_comb_t, acc, 18);

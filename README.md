@@ -20,14 +20,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   - **8 Engine Trails** (Ember Fire 1,000c, Ion Cyan [Starter 0c], Nova Purple 3,200c, Aurora Mint 7,000c, Solar Gold 16,000c, Crimson Flame 35,000c, Void Shadow 70,000c, animated **Rainbow Trail** 130,000c)
   - **6 Weapon Rigs** (Twin Cannons [Starter 0c], Spread Cannon 2,500c, Focused Beam 7,500c, Triple Blaster 20,000c, Plasma Wave 50,000c, Quantum Core 100,000c)
   - **8 Laser Crystals** (Ion Cyan [0c], Solar Gold 1,800c, Nebula Violet 4,500c, Toxic Mint 9,500c, Crimson Fury 22,000c, Emerald Surge 48,000c, Void Shadow 85,000c, animated **Rainbow Laser** 150,000c)
-  - **7 Multi-Tier Tech Tree Upgrades (3 Levels Each):** Level 1 tech costs 50,000–65,000c, Level 2 costs 115,000–160,000c, and Level 3 costs 265,000–375,000c.
-    - **Shield Battery:** Increases starting and maximum shield capacity (up to 6 shields).
-    - **Reinforced Hull:** Nanite plating grants extra starting lives (up to 6 lives).
-    - **Hyper Thrusters:** Increases flight agility and cuts Dash cooldown in half.
-    - **Coin Scavenger:** Boosts coin drops (+105% at Lv3) with Graviton magnetic pull on pickups.
-    - **Plasma Reactor:** Overcharges reactor for heavier projectile damage across all weapon rigs.
-    - **Overdrive Unit:** Extends Rapid Fire powerup duration up to 20 seconds.
-    - **Combo Matrix:** Extends combo timer window and boosts max combo multiplier up to ×20.
+  - **8 Plain Stat Upgrades (5 Levels Each):** Speed, Fire Rate, Damage, Shield, Lives, Beam, Coins, Rapid. Names are the stat — no hull/reactor flavor text.
 - **Spacious & Polished Shop UI:**
   - Tabbed category navigation (`PAINTS`, `TRAILS`, `WEAPON`, `LASERS`, `TECH`) with `L` and `R` triggers or D-pad.
   - Scrolling 5-item catalog panel with status badges (`[EQ]`, `OWN`, `Lv1/3`, `MAX`, price).
@@ -37,10 +30,10 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
-- **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for 3 seconds to charge a full-screen piercing beam that fires for 3 seconds. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
-- **Settings Screen:** Difficulty (Cadet/Pilot/Ace), Music & SFX volume, and Screen Shake — plus **Android-only** Tilt Steering (accelerometer controls the ship) and Haptics (vibration feedback) toggles. Persisted in the save file.
-- **Combo Coins:** Your combo multiplier now multiplies the coins you earn per kill — chain kills to farm the shop faster.
-- **Rock Physics Overhaul:** Big rocks drift slow, medium rocks keep their classic speed, and small/tiny rocks scream past very fast. Small rocks only appear once — when they fall off-screen they're gone for good (no more endless respawn wrap), so waves end cleanly. Destroying those fast little rocks pays out big coins (30c each, before combo).
+- **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for **2 seconds** to charge a full-screen piercing beam that fires for 3 seconds and reaches the top of the screen. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
+- **Settings Screen:** Difficulty (**Easy / Medium / Hard**), Music & SFX volume, and Screen Shake — plus an **Android-only Haptics** (vibration feedback) toggle. Persisted in the save file. Gyro / tilt steering has been removed.
+- **Combo Coins:** Combo still multiplies coins, but the curve is much softer so a long chain is not a money printer. Locking **15x** is the payday (4.5x coins plus a lump bonus).
+- **Rock Physics Overhaul:** Big rocks drift slow, medium rocks keep their classic speed, and small/tiny rocks scream past even faster. Later waves spawn a lot more rocks (and keep reinforcing the field) so it gets really difficult. Small rocks only appear once — when they fall off-screen they're gone for good (no more endless respawn wrap), so waves end cleanly.
 
 ### GBA Controls
 
@@ -48,7 +41,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 |---|---|---|---|
 | Move Ship / Navigate | **D-Pad** | `WASD` or Arrow keys | Left Stick or D-Pad |
 | Fire / Buy / Equip | **A** | `Space`, `Z`, or `J` | `A` or `Right Trigger` |
-| Beam (hold 3s) / Back | **B** | `Shift`, `X`, or `K` | `X`, `B`, or `Right Bumper` |
+| Beam (hold 2s) / Back | **B** | `Shift`, `X`, or `K` | `X`, `B`, or `Right Bumper` |
 | Shop Tab Switch | **L** / **R** | `Q` / `E` or `Left/Right` | `LB` / `RB` or `Left/Right` |
 | Pause / Menu | **START** | `Enter` or `P` | `Start` / Menu |
 | Options / Reset | **SELECT** | `Backspace` or `Tab` | `Back` / View |
@@ -65,7 +58,7 @@ Android Play opens a **mode select** (GBA stays on classic waves):
 - **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
 - **Overdrive** — 90-second score rush with denser random spawns.
 
-The Settings screen (Main Menu → Settings) adds **Tilt Steering** (hold the phone like a steering wheel — the accelerometer moves the ship whenever the thumb stick is idle) and **Haptics** (vibration on hits, beam charge-up, and beam fire). The big-laser button replaces DASH on the touch pad.
+The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses). Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
 
 `cd android && ./gradlew assembleDebug` — see `android/README.md`.
 

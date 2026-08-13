@@ -3,7 +3,7 @@
 
 #include "types.h"
 
-#define MAX_ASTEROIDS 28
+#define MAX_ASTEROIDS 48
 #define MAX_BULLETS 64
 #define MAX_DRONES 8
 #define MAX_POWERUPS 6
@@ -130,7 +130,7 @@ typedef struct {
     int overdrive_timer;
     bool time_up;
 
-    // Big laser (replaces dash): hold to charge 3s, then a piercing beam
+    // Big laser (replaces dash): hold to charge 2s, then a piercing beam
     // fires for 3s dealing (current laser damage / 10) every tick.
     int beam_charge; // ticks accumulated while charging
     int beam_timer;  // ticks remaining while beam is live

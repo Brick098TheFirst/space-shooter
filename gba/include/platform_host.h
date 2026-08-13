@@ -69,6 +69,7 @@ void gfx_present_argb8888(u32* dst);
 #define HAPTIC_HIT    0 // player took damage
 #define HAPTIC_CHARGE 1 // big laser finished charging
 #define HAPTIC_BEAM   2 // big laser fired
+#define HAPTIC_KILL   3 // rock / hunter destroyed
 void platform_queue_haptic(int type);
 int platform_take_haptics(int* out, int max);
 

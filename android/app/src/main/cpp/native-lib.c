@@ -140,12 +140,6 @@ Java_com_brick_spaceshooter_NativeGame_nativeFlushSave(JNIEnv* env, jclass clazz
 }
 
 JNIEXPORT jint JNICALL
-Java_com_brick_spaceshooter_NativeGame_nativeGetTilt(JNIEnv* env, jclass clazz) {
-    (void)env; (void)clazz;
-    return g_settings.tilt_steer ? 1 : 0;
-}
-
-JNIEXPORT jint JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeGetHaptics(JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
     return g_settings.haptics ? 1 : 0;

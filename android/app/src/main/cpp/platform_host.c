@@ -17,6 +17,8 @@ static int s_haptic_count = 0;
 
 void platform_queue_haptic(int type) {
     if (s_haptic_count >= HAPTIC_QUEUE_MAX) return;
+    /* Don't flood the vibrator when the beam shreds a packed field. */
+    if (type == HAPTIC_KILL && s_haptic_count > 0) return;
     s_haptic_queue[(s_haptic_head + s_haptic_count) % HAPTIC_QUEUE_MAX] = type;
     s_haptic_count++;
 }
