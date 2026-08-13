@@ -27,8 +27,11 @@ static GameMode s_game_mode = GAME_MODE_WAVES;
 #define OVERDRIVE_DURATION (90 * OVERDRIVE_TICK_RATE)
 
 void game_set_mode(GameMode mode) {
-    if (mode < GAME_MODE_WAVES || mode > GAME_MODE_OVERDRIVE) mode = GAME_MODE_WAVES;
-    s_game_mode = mode;
+    /* Compare as int: GameMode may be an unsigned underlying type, which makes
+     * `mode < GAME_MODE_WAVES` a tautology and trips -Wtype-limits. */
+    int m = (int)mode;
+    if (m < (int)GAME_MODE_WAVES || m > (int)GAME_MODE_OVERDRIVE) m = (int)GAME_MODE_WAVES;
+    s_game_mode = (GameMode)m;
 }
 
 GameMode game_get_mode(void) {
@@ -36,9 +39,12 @@ GameMode game_get_mode(void) {
 }
 
 static void finish_run(bool time_up);
-#ifdef PLATFORM_HOST
 static void spawn_boss(void);
-#endif
+
+/* Boss waves: every 10th wave in the classic WAVES mode on both platforms. */
+static inline bool is_boss_wave(int wave) {
+    return (wave % 10) == 0;
+}
 
 #define FIXED_ONE 256
 #define TO_FIXED(n) ((n) * 256)
@@ -98,6 +104,12 @@ static int get_damage_bonus(void) {
     return lv; // 0 .. 5 extra damage
 }
 
+/* True endgame build: NOVA rig + OMEGA crystal (laser 11). Shared by both
+ * platforms so boss HP scaling reads the same on GBA and Android. */
+static bool is_oneshot_build(void) {
+    return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11);
+}
+
 #ifdef PLATFORM_HOST
 /* Android damage ladder: early lasers are TINY damage, final rig+omega is a true
  * one-shot nuke. Lower tiers are deliberately weak so players feel real power
@@ -107,12 +119,6 @@ static int get_laser_bonus(void) {
     int idx = g_settings.laser_index;
     if (idx < 0 || idx >= 12) return 0;
     return bonus[idx];
-}
-
-/* True one-shot threshold: only NOVA + OMEGA crystal (laser 11) oneshots.
- * All other rig/crystal combos must chip away. */
-static bool is_oneshot_build(void) {
-    return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11);
 }
 
 /* Returns true for rigs at the "god tier" that pierce everything without one-shot */
@@ -199,10 +205,20 @@ static int get_beam_damage(void) {
 #ifdef PLATFORM_HOST
 #define BEAM_CHARGE_TICKS (2 * 90)
 #define BEAM_DURATION_TICKS (3 * 90)
+/* Beam ticks 90/s; divide dmg so a 5HP big rock at base gear takes ~1s of
+ * sustained beam, while the oneshot build melts instantly. */
+#define BEAM_DMG_DIVISOR 45
+#define BEAM_DMG_ROUND   22
 #else
 #define BEAM_CHARGE_TICKS (2 * 120)
 #define BEAM_DURATION_TICKS (3 * 120)
+#define BEAM_DMG_DIVISOR 10
+#define BEAM_DMG_ROUND   5
 #endif
+
+/* Per-tick beam damage in 8.8 fixed point, normalized for the platform's
+ * simulation rate so the beam feels the same on both. */
+#define BEAM_TICK_DAMAGE() (((get_beam_damage() << 8) + BEAM_DMG_ROUND) / BEAM_DMG_DIVISOR)
 
 /* Rock speeds: big rocks drift slow, medium keep current speed, small/tiny
  * scream past. 256 = 1.0x. */
@@ -383,9 +399,7 @@ static void damage_player(void) {
     if (g_game.player.invulnerable_timer > 0) return;
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
-#ifdef PLATFORM_HOST
     platform_queue_haptic(HAPTIC_HIT);
-#endif
 
     if (g_game.player.shield_charges > 0) {
         g_game.player.shield_charges--;
@@ -463,9 +477,7 @@ static void destroy_asteroid(int idx, bool award) {
         int pts = (t == AST_LARGE) ? 60 : ((t == AST_MED_A || t == AST_MED_B) ? 35 : 20);
         award_score(pts);
         award_coins((coins_for_asteroid(t) * combo_coin_pct(combo)) / 100);
-#ifdef PLATFORM_HOST
         platform_queue_haptic(HAPTIC_KILL);
-#endif
         int mult = get_diff_speed_mult() + g_game.wave * 12;
         if (t == AST_LARGE) {
 #ifdef PLATFORM_HOST
@@ -528,9 +540,7 @@ static void destroy_drone(int idx, bool award) {
         int combo = g_game.combo;
         award_score(120);
         award_coins((45 * combo_coin_pct(combo)) / 100);
-#ifdef PLATFORM_HOST
         platform_queue_haptic(HAPTIC_KILL);
-#endif
         try_spawn_powerup(dx, dy, 10);
     }
 }
@@ -675,10 +685,9 @@ static void begin_wave(void) {
         award_coins(g_game.wave * 30);
     }
 
-#ifdef PLATFORM_HOST
-    /* Every 10th wave = BOSS WAVE (Android only). Don't spawn the normal
-     * asteroid/drone horde; clear the field and spawn the boss instead. */
-    if (g_game.mode == GAME_MODE_WAVES && (g_game.wave % 10) == 0) {
+    /* Every 10th wave = BOSS WAVE. Don't spawn the normal asteroid/drone
+     * horde; clear the field and spawn the boss instead. */
+    if (g_game.mode == GAME_MODE_WAVES && is_boss_wave(g_game.wave)) {
         // Wipe existing threats so the boss fight feels clean.
         for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
         for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
@@ -689,7 +698,6 @@ static void begin_wave(void) {
         spawn_boss();
         return;
     }
-#endif
 
     int diff_extra = (g_settings.difficulty == DIFF_ACE) ? 4 : (g_settings.difficulty == DIFF_CADET ? -1 : 0);
     // Wave 1: ~8, Wave 3: ~18, Wave 5: ~28, Wave 8+: packed field
@@ -791,7 +799,6 @@ static bool add_enemy_bullet(int x, int y, int vx, int vy) {
     return false;
 }
 
-#ifdef PLATFORM_HOST
 /* Boss bullets: separate array so they don't compete with player/drone shots */
 static bool add_boss_bullet(int x, int y, int vx, int vy, int heavy) {
     for (int i = 0; i < MAX_BOSS_BULLETS; i++) {
@@ -822,10 +829,18 @@ static int boss_max_hp(void) {
     // Bosses appear at wave 10, 20, 30... scale HP with boss number (wave/10)
     int boss_tier = (g_game.wave > 0) ? (g_game.wave / 10) : 1;
     if (boss_tier < 1) boss_tier = 1;
+#ifdef PLATFORM_HOST
     // Tuned so starter gun takes ~60 hits first boss, god-rig ~8-10. Later bosses
     // grow tougher.
     int hp = (60 + base_dmg * 12) * boss_tier;
     if (is_oneshot_build()) hp = 25 * boss_tier;
+#else
+    /* GBA fires noticeably faster per rig than the Android host (per-rig
+     * cooldowns rather than a flat 28 ticks, at 120 sim ticks/sec), so the
+     * pool is a bit deeper to keep the fight at a comparable length. */
+    int hp = (80 + base_dmg * 16) * boss_tier;
+    if (is_oneshot_build()) hp = 40 * boss_tier;
+#endif
     return hp;
 }
 
@@ -867,12 +882,27 @@ static void boss_fire_burst(int n, int speed_fixed) {
     }
 }
 
+#ifndef PLATFORM_HOST
+/* Integer square root (Newton). Keeps the aimed spread identical on GBA,
+ * which has no FPU — software doubles here would be very expensive. */
+static u32 isqrt32(u32 v) {
+    if (v == 0) return 0;
+    u32 x = v, y = (x + 1) >> 1;
+    while (y < x) {
+        x = y;
+        y = (x + v / x) >> 1;
+    }
+    return x;
+}
+#endif
+
 static void boss_fire_spread_at_player(int speed_fixed) {
     int bx = FROM_FIXED(g_game.boss.x);
     int by = FROM_FIXED(g_game.boss.y) + 14;
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
     int dx = px - bx, dy = py - by;
+#ifdef PLATFORM_HOST
     double mag = hypot((double)dx, (double)dy);
     if (mag < 1.0) mag = 1.0;
     // speed_fixed is 8.8 fixed pixels/tick (e.g. TO_FIXED(4) = 4 pixels/tick)
@@ -890,8 +920,24 @@ static void boss_fire_spread_at_player(int speed_fixed) {
         add_boss_bullet(TO_FIXED(bx), TO_FIXED(by),
                         (int)(vxd * 256.0), (int)(vyd * 256.0), k == 0);
     }
-}
+#else
+    /* Same aimed 3-way spread in pure 8.8 fixed point: the GBA has no FPU and
+     * software doubles in the boss fire path would blow the frame budget. */
+    int mag = (int)isqrt32((u32)(dx * dx + dy * dy));
+    if (mag < 1) mag = 1;
+    int ndx = (dx * 256) / mag; // 8.8 unit vector
+    int ndy = (dy * 256) / mag;
+    for (int k = -1; k <= 1; k++) {
+        int vxd = ndx + k * 64; // +/-0.25 in 8.8
+        int vyd = ndy;
+        int vmag = (int)isqrt32((u32)(vxd * vxd + vyd * vyd));
+        if (vmag < 3) vmag = 3;
+        int vx = (vxd * speed_fixed) / vmag;
+        int vy = (vyd * speed_fixed) / vmag;
+        add_boss_bullet(TO_FIXED(bx), TO_FIXED(by), vx, vy, k == 0);
+    }
 #endif
+}
 
 /* ── Weapon system ──────────────────────────────────────────────────── */
 #ifdef PLATFORM_HOST
@@ -925,7 +971,8 @@ static void fire_player_weapon(void) {
     int dmg_bonus = get_damage_bonus() + get_laser_bonus();
     // Omega and Rainbow add extra pierce
     bool is_omega = (g_settings.laser_index == 11);
-    bool is_rainbow = (g_settings.laser_index == 7);
+    /* Rainbow crystal is purely a visual variant (see gfx_draw_laser), so it
+     * intentionally has no effect on the damage/cooldown maths here. */
 
     WeaponRig rig = g_settings.weapon_rig;
     int base_cd = get_weapon_base_cooldown(rig);
@@ -1154,14 +1201,10 @@ static void game_update_tick(void) {
             if (g_game.beam_charge < BEAM_CHARGE_TICKS) {
                 g_game.beam_charge++;
                 if (g_game.beam_charge >= BEAM_CHARGE_TICKS) {
-#ifdef PLATFORM_HOST
                     platform_queue_haptic(HAPTIC_CHARGE);
-#endif
                     g_game.beam_active = true;
                     g_game.beam_timer = BEAM_DURATION_TICKS;
-#ifdef PLATFORM_HOST
                     platform_queue_haptic(HAPTIC_BEAM);
-#endif
                     audio_play_sfx(SFX_LASER);
                 }
             }
@@ -1194,8 +1237,7 @@ static void game_update_tick(void) {
         }
     }
 
-#ifdef PLATFORM_HOST
-    // Boss bullets (Android only)
+    // Boss bullets
     for (int i = 0; i < MAX_BOSS_BULLETS; i++) {
         if (g_game.boss_bullets[i].active) {
             g_game.boss_bullets[i].x += g_game.boss_bullets[i].vx;
@@ -1209,7 +1251,6 @@ static void game_update_tick(void) {
             }
         }
     }
-#endif
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (g_game.asteroids[i].active) {
@@ -1313,8 +1354,7 @@ static void game_update_tick(void) {
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
 
-#ifdef PLATFORM_HOST
-    /* ── Boss AI (Android only) ──────────────────────────────────── */
+    /* ── Boss AI ─────────────────────────────────────────────────── */
     if (g_game.boss_active && g_game.boss.active) {
         Boss* b = &g_game.boss;
         if (b->flash_timer > 0) b->flash_timer--;
@@ -1491,7 +1531,7 @@ static void game_update_tick(void) {
         if (g_game.beam_active) {
             int pbx = FROM_FIXED(g_game.player.x);
             if (boss_cx + boss_r >= pbx - 6 && boss_cx - boss_r <= pbx + 6) {
-                int beam_dmg = ((get_beam_damage() << 8) + 22) / 45;
+                int beam_dmg = BEAM_TICK_DAMAGE();
                 b->hp_frac += beam_dmg * 2;
                 while (b->hp_frac >= 256) {
                     b->hp_frac -= 256;
@@ -1514,10 +1554,8 @@ static void game_update_tick(void) {
             }
         }
     }
-#endif
 
-#ifdef PLATFORM_HOST
-    // Boss bullets vs player (Android only)
+    // Boss bullets vs player
     for (int bb = 0; bb < MAX_BOSS_BULLETS; bb++) {
         if (!g_game.boss_bullets[bb].active) continue;
         int bbx = FROM_FIXED(g_game.boss_bullets[bb].x);
@@ -1531,7 +1569,6 @@ static void game_update_tick(void) {
             }
         }
     }
-#endif
 
     for (int b = 0; b < MAX_BULLETS; b++) {
         if (!g_game.bullets[b].active) continue;
@@ -1611,13 +1648,7 @@ static void game_update_tick(void) {
     //    laser_damage/10 per tick (fractional HP accumulates). ─────────
     if (g_game.beam_active) {
         int bx = FROM_FIXED(g_game.player.x);
-#ifdef PLATFORM_HOST
-        /* Beam ticks 90/s; divide dmg so a 5HP big rock at base gear takes ~1s
-         * of sustained beam, while the oneshot build melts instantly. */
-        int beam_dmg = ((get_beam_damage() << 8) + 22) / 45; // 8.8 fixed
-#else
-        int beam_dmg = ((get_beam_damage() << 8) + 5) / 10; // 8.8 fixed
-#endif
+        int beam_dmg = BEAM_TICK_DAMAGE(); // 8.8 fixed
         for (int a = 0; a < MAX_ASTEROIDS; a++) {
             Asteroid* ast = &g_game.asteroids[a];
             if (!ast->active) continue;
@@ -1701,17 +1732,11 @@ static void game_update_tick(void) {
         int active_enemies = 0;
         for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) active_enemies++;
         for (int i = 0; i < MAX_DRONES; i++) if (g_game.drones[i].active) active_enemies++;
-#ifdef PLATFORM_HOST
         if (g_game.boss_active && g_game.boss.active) active_enemies++;
-#endif
 
         // Later waves keep dumping extra rocks so the field stays packed.
-#ifdef PLATFORM_HOST
         // Don't spawn extra asteroids during a boss fight (handled in boss AI)
         bool boss_fight = g_game.boss_active && g_game.boss.active;
-#else
-        bool boss_fight = false;
-#endif
         if (s_wave_reinforcements > 0 && active_enemies > 0 && !boss_fight) {
             g_game.spawn_timer--;
             if (g_game.spawn_timer <= 0) {
@@ -1925,21 +1950,17 @@ void game_draw(void) {
         } else if (g_game.mode == GAME_MODE_OVERDRIVE) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "OVERDRIVE", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "90 SECONDS", PAL_TEXT_CYAN);
-#ifdef PLATFORM_HOST
-        } else if ((g_game.wave % 10) == 0) {
+        } else if (is_boss_wave(g_game.wave)) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "!! BOSS !!", PAL_TEXT_RED);
             gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_GOLD);
-        } else
-#endif
-        {
+        } else {
             siprintf(buf, "WAVE %02d", g_game.wave);
             gfx_draw_text_centered(bx, by + 4, banner_w, buf, PAL_TEXT_WHITE);
             gfx_draw_text_centered(bx, by + 13, banner_w, "GET READY!", PAL_TEXT_CYAN);
         }
     }
 
-#ifdef PLATFORM_HOST
-    // ── Boss rendering (Android only) ───────────────────────────────
+    // ── Boss rendering ──────────────────────────────────────────────
     if (g_game.boss_active && g_game.boss.active) {
         int bxi = FROM_FIXED(g_game.boss.x) + ox;
         int byi = FROM_FIXED(g_game.boss.y) + oy;
@@ -1985,7 +2006,15 @@ void game_draw(void) {
         int bar_y = 22;
         gfx_fill_rect(bar_x - 1, bar_y - 1, bar_w + 2, 7, PAL_TEXT_WHITE);
         gfx_fill_rect(bar_x, bar_y, bar_w, 5, PAL_BTN_BG);
+#ifdef PLATFORM_HOST
         int hp_w = (int)(bar_w * (float)g_game.boss.hp / (float)g_game.boss.hp_max);
+#else
+        /* Integer math: the GBA has no FPU, so software floats in the HUD
+         * path would cost real frame time. */
+        int hp_max = g_game.boss.hp_max > 0 ? g_game.boss.hp_max : 1;
+        int hp_now = g_game.boss.hp > 0 ? g_game.boss.hp : 0;
+        int hp_w = (int)(((s32)bar_w * hp_now) / hp_max);
+#endif
         if (hp_w < 0) hp_w = 0;
         if (hp_w > bar_w) hp_w = bar_w;
         gfx_fill_rect(bar_x, bar_y, hp_w, 5, PAL_TEXT_RED);
@@ -2002,6 +2031,5 @@ void game_draw(void) {
             gfx_draw_laser(bx, by, heavy, c, s_game_frame, true);
         }
     }
-#endif
 }
 

@@ -6,7 +6,13 @@
 #define MAX_ASTEROIDS 48
 #define MAX_BULLETS 96
 #define MAX_DRONES 8
+/* Boss bullet budget. The GBA has to render every live bullet from a plain
+ * Mode 4 software blitter twice per frame, so it gets a smaller pool. */
+#ifdef PLATFORM_HOST
 #define MAX_BOSS_BULLETS 48
+#else
+#define MAX_BOSS_BULLETS 28
+#endif
 #define MAX_POWERUPS 6
 #define MAX_PARTICLES 64
 #define MAX_EXPLOSIONS 16
@@ -73,8 +79,7 @@ typedef struct {
     bool active;
 } Drone;
 
-#ifdef PLATFORM_HOST
-/* Android-only boss ship (wave 10, 20, 30...) */
+/* Boss ship (wave 10, 20, 30...). Shared by Android and GBA. */
 typedef enum {
     BOSS_IDLE,
     BOSS_SWEEP,        // side-to-side sweep firing straight down
@@ -103,7 +108,6 @@ typedef struct {
     int fire_state;
     int sweep_dir;
 } Boss;
-#endif
 
 typedef enum {
     PWR_SHIELD,
@@ -143,12 +147,10 @@ typedef struct {
     Asteroid asteroids[MAX_ASTEROIDS];
     Bullet bullets[MAX_BULLETS];
     Drone drones[MAX_DRONES];
-#ifdef PLATFORM_HOST
     Boss boss;
     Bullet boss_bullets[MAX_BOSS_BULLETS];
     bool boss_active;
     int boss_hit_flash;
-#endif
     Powerup powerups[MAX_POWERUPS];
     Particle particles[MAX_PARTICLES];
     Explosion explosions[MAX_EXPLOSIONS];
