@@ -5,6 +5,19 @@
 volatile u8 platform_sram[PLATFORM_SRAM_SIZE];
 volatile u16 REG_VCOUNT = 0;
 
+/* Adaptive widescreen width (see platform_host.h). */
+static int s_host_w = HOST_SCREEN_W_DEFAULT;
+
+int host_screen_width(void) { return s_host_w; }
+
+int host_set_screen_width(int w) {
+    if (w < HOST_SCREEN_W_MIN) w = HOST_SCREEN_W_MIN;
+    if (w > HOST_SCREEN_W_MAX) w = HOST_SCREEN_W_MAX;
+    if (w == s_host_w) return 0;
+    s_host_w = w;
+    return 1;
+}
+
 static u16 s_keys_in = 0;
 static u16 s_keys_held = 0;
 static u16 s_keys_prev = 0;

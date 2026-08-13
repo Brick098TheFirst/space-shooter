@@ -33,6 +33,24 @@ static int s_tap_x = -1;
 static int s_tap_y = -1;
 static bool s_tap_pending = false;
 
+#ifdef PLATFORM_HOST
+/* Raised when the player activates the Settings -> CODES row; drained by the
+ * Android layer which opens the system text dialog. */
+static int s_code_request = 0;
+
+int menu_take_code_request(void) {
+    int r = s_code_request;
+    s_code_request = 0;
+    return r;
+}
+#endif
+
+static void menu_static_invalidate(void);
+
+void menu_request_full_redraw(void) {
+    menu_static_invalidate();
+}
+
 static int shop_get_category_count(int cat);
 
 // ── Smooth scroll (Android host only) ──────────────────────────────────
@@ -43,6 +61,17 @@ static int shop_get_category_count(int cat);
 
 static int hangar_list_top(void) { return 34; }   // first row baseline (game px)
 static int upgrades_list_top(void) { return 21; }
+
+/* Rows listed on the Upgrades screen. On Android the rapid-fire powerup no
+ * longer drops, so the "Rapid" duration tech (UPG_OVERDRIVE, the last entry)
+ * would be a dead purchase — it is hidden. It stays in the save data. */
+static int upgrades_row_count(void) {
+#ifdef PLATFORM_HOST
+    return NUM_UPGRADES - 1;
+#else
+    return NUM_UPGRADES;
+#endif
+}
 
 #ifdef PLATFORM_HOST
 static float s_shop_scroll_px = 0;
@@ -56,8 +85,9 @@ static int shop_max_scroll(void) {
     int max_i = count - 5; if (max_i < 0) max_i = 0;
     return max_i * LIST_ROW_H;
 }
+
 static int upg_max_scroll(void) {
-    int max_i = NUM_UPGRADES - 5; if (max_i < 0) max_i = 0;
+    int max_i = upgrades_row_count() - 5; if (max_i < 0) max_i = 0;
     return max_i * LIST_ROW_H;
 }
 
@@ -450,7 +480,7 @@ static void upgrades_activate(void) {
 // ── NEW UPGRADES SCREEN (replaces settings) ───────────────────────────
 static void update_upgrades(void) {
     if (s_shop_msg_timer > 0) s_shop_msg_timer--;
-    const int count = NUM_UPGRADES; // 8
+    const int count = upgrades_row_count(); // 8 on GBA, 7 on Android (no Rapid)
 
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
@@ -535,9 +565,15 @@ static void update_controls(void) {
 }
 
 // ── SETTINGS screen (replaces credits) ────────────────────────────────
+#ifdef PLATFORM_HOST
+/* Android gets two extra rows: haptics and the cheat-code entry. */
+#define OPT_ROW_HAPTICS 4
+#define OPT_ROW_CODES   5
+#endif
+
 static int options_row_count(void) {
 #ifdef PLATFORM_HOST
-    return 5; // + haptics (Android only)
+    return 6; // + haptics, codes (Android only)
 #else
     return 4;
 #endif
@@ -562,7 +598,8 @@ static void options_cycle(int row) {
             break;
         case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
 #ifdef PLATFORM_HOST
-        case 4: g_settings.haptics = !g_settings.haptics; break;
+        case OPT_ROW_HAPTICS: g_settings.haptics = !g_settings.haptics; break;
+        case OPT_ROW_CODES: s_code_request = 1; return; // opens the Android dialog; nothing to save
 #endif
         default: break;
     }
@@ -588,7 +625,7 @@ static void options_step(int row, int dir) {
         }
         case 3: g_settings.screen_shake = !g_settings.screen_shake; break;
 #ifdef PLATFORM_HOST
-        case 4: g_settings.haptics = !g_settings.haptics; break;
+        case OPT_ROW_HAPTICS: g_settings.haptics = !g_settings.haptics; break;
 #endif
         default: break;
     }
@@ -601,6 +638,14 @@ static void update_options(void) {
     if (consume_tap(&tx, &ty)) {
         for (int i = 0; i < count; i++) {
             if (in_rect(tx, ty, 8, 24 + i * 20, SCREEN_WIDTH - 16, 18)) {
+#ifdef PLATFORM_HOST
+                if (i == OPT_ROW_CODES) {
+                    // Cheat codes: a single tap opens the native text dialog.
+                    s_opt_selected = i;
+                    s_code_request = 1;
+                    return;
+                }
+#endif
                 if (s_opt_selected == i) options_cycle(i);
                 else s_opt_selected = i;
                 return;
@@ -762,7 +807,7 @@ static void draw_ship_preview_static(int card_x, int card_y, int card_w, int car
     gfx_draw_text(card_x + 6, card_y + 79, "LASER", PAL_TEXT_CYAN);
     gfx_draw_text(card_x + 36, card_y + 79, gfx_get_laser_name(g_settings.laser_index), PAL_TEXT_WHITE);
     gfx_draw_text(card_x + 6, card_y + 89, "COINS", PAL_TEXT_GOLD);
-    char buf[16]; siprintf(buf, "%u", (unsigned int)g_settings.coins);
+    char buf[24]; save_format_coins(buf, sizeof(buf));
     gfx_draw_text(card_x + 36, card_y + 89, buf, PAL_TEXT_WHITE);
     gfx_draw_text(card_x + 6, card_y + 99, "BEST", PAL_TEXT_GOLD);
     siprintf(buf, "%06u", (unsigned int)g_settings.high_score);
@@ -820,7 +865,8 @@ static void render_main_menu_dynamic(void) {
 static void render_hangar_static(void) {
     starfield_draw_base(0, 0);
     gfx_draw_text(6, 4, "UPGRADE HANGAR", PAL_TEXT_CYAN);
-    char coin_buf[24]; siprintf(coin_buf, "$%u COINS", (unsigned int)g_settings.coins);
+    char cnum[24]; save_format_coins(cnum, sizeof(cnum));
+    char coin_buf[32]; siprintf(coin_buf, "$%s COINS", cnum);
     int coin_x = SCREEN_WIDTH - 6 - (int)strlen(coin_buf) * 6;
     gfx_draw_text(coin_x, 4, coin_buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
@@ -967,7 +1013,7 @@ static void render_hangar_dynamic(void) {
         gfx_draw_text_centered(btn_x, 125, btn_w, "[A] EQUIP", PAL_TEXT_WHITE);
 #endif
     } else {
-        bool can_afford = (g_settings.coins >= (u32)item_price);
+        bool can_afford = (g_settings.coins >= (coin_t)item_price);
         char pbuf[16]; format_price(pbuf, item_price); char btn_text[28];
         if (can_afford) { siprintf(btn_text, "[A] BUY %s", pbuf); gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_GOLD, PAL_BTN_HOVER); gfx_draw_text_centered(btn_x, 125, btn_w, btn_text, PAL_TEXT_GOLD); }
         else { siprintf(btn_text, "NEED %s", pbuf); gfx_draw_glass_card(btn_x, 118, btn_w, 21, PAL_TEXT_RED, PAL_BTN_BG); gfx_draw_text_centered(btn_x, 125, btn_w, btn_text, PAL_TEXT_RED); }
@@ -991,7 +1037,8 @@ static void render_hangar_dynamic(void) {
 static void render_upgrades_static(void) {
     starfield_draw_base(0, 0);
     gfx_draw_text(6, 4, "SHIP UPGRADES", PAL_TEXT_CYAN);
-    char coin_buf[24]; siprintf(coin_buf, "$%u COINS", (unsigned int)g_settings.coins);
+    char cnum[24]; save_format_coins(cnum, sizeof(cnum));
+    char coin_buf[32]; siprintf(coin_buf, "$%s COINS", cnum);
     int coin_x = SCREEN_WIDTH - 6 - (int)strlen(coin_buf) * 6;
     gfx_draw_text(coin_x, 4, coin_buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
@@ -1007,7 +1054,7 @@ static void render_upgrades_static(void) {
 
 static void render_upgrades_dynamic(void) {
     menu_draw_base();
-    int count = NUM_UPGRADES;
+    int count = upgrades_row_count();
     int selected = s_upg_selected;
     int off = upg_scroll_offs();
     int first = off / LIST_ROW_H;
@@ -1086,7 +1133,7 @@ static void render_upgrades_dynamic(void) {
         gfx_draw_text_centered(btn_x, 103, btn_w, "MAX LEVEL", PAL_TEXT_GOLD);
     } else {
         int price = shop_get_upgrade_price(upg, cur_lv);
-        bool can = g_settings.coins >= (u32)price;
+        bool can = g_settings.coins >= (coin_t)price;
         char pbuf[16]; format_price(pbuf, price);
         char btn[28];
         if (can) {
@@ -1162,7 +1209,8 @@ static const char* options_label(int row) {
         case 2: return "SFX";
         case 3: return "SCREEN SHAKE";
 #ifdef PLATFORM_HOST
-        case 4: return "HAPTICS";
+        case OPT_ROW_HAPTICS: return "HAPTICS";
+        case OPT_ROW_CODES:   return "CODES";
 #endif
         default: return "";
     }
@@ -1197,7 +1245,8 @@ static void render_options_dynamic(void) {
             case 2: siprintf(val, "%d%%", g_settings.sfx_volume); value = val; break;
             case 3: value = g_settings.screen_shake ? "ON" : "OFF"; break;
 #ifdef PLATFORM_HOST
-            case 4: value = g_settings.haptics ? "ON" : "OFF"; break;
+            case OPT_ROW_HAPTICS: value = g_settings.haptics ? "ON" : "OFF"; break;
+            case OPT_ROW_CODES:   value = "ENTER"; break;
 #endif
             default: break;
         }
@@ -1262,7 +1311,8 @@ static void render_game_over(void) {
     char buf[32];
     siprintf(buf, "Score: %06u", (unsigned int)g_game.score);
     gfx_draw_text_centered(x, y + 18, w, buf, PAL_TEXT_WHITE);
-    siprintf(buf, "Coins: $%u", (unsigned int)g_settings.coins);
+    char go_coins[24]; save_format_coins(go_coins, sizeof(go_coins));
+    siprintf(buf, "Coins: $%s", go_coins);
     gfx_draw_text_centered(x, y + 28, w, buf, PAL_TEXT_GOLD);
     if (g_game.is_new_high_score) gfx_draw_badge(x + (w - 74) / 2, y + 39, "NEW BEST!", PAL_TEXT_GOLD);
     else { siprintf(buf, "Best:  %06u", (unsigned int)g_settings.high_score); gfx_draw_text_centered(x, y + 40, w, buf, 17); }

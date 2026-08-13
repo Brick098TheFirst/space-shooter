@@ -60,7 +60,12 @@ Play opens a **mode select** on **both** Android and GBA:
 - **Endless** — no waves; random hunter ships and rocks keep coming and the threat keeps rising.
 - **Overdrive** — 90-second score rush with denser random spawns.
 
-The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
+The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses) and a **CODES** row — tap it to open the cheat-code dialog (native Android text input). Known code: **`GIMMEMONEY`** tops your coin balance up to **$999,000,000,000,000** (999 trillion — the coin counter is 64-bit on Android and the save file upgrades to the V6 layout automatically). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
+
+### Android-only gameplay differences
+
+- **Life-only powerups:** The Shield and Rapid Fire drops are removed. The only powerup that drops is the **life (repair)** pickup, at exactly the same rarity the repair slice had before (the underlying drop chances are unchanged). The now-dead "Rapid" duration tech upgrade is hidden from the Upgrades screen (its data stays in the save).
+- **Adaptive full-screen widescreen:** The framebuffer is always 160 px tall, but its width adapts to the phone (284–480 px) so the game **fills the entire screen — no side bars**, on any aspect ratio from 16:9 up to 21:9+. The app is locked to **landscape** (`sensorLandscape`), draws under the camera cutout, and re-fits live on fold/unfold or multi-window resizes. The GBA build keeps its fixed 240×160 Mode 4 screen untouched.
 
 `cd android && ./gradlew assembleDebug` — see `android/README.md`.
 

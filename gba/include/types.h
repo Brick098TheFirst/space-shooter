@@ -5,7 +5,10 @@
 
 #ifndef SCREEN_WIDTH
 #ifdef PLATFORM_HOST
-#define SCREEN_WIDTH 284
+/* Android (host): runtime width so the game adapts to any phone aspect
+ * ratio and fills the screen edge-to-edge.  Code paths that draw or clamp
+ * against the screen edges all read this live value. */
+#define SCREEN_WIDTH host_screen_width()
 #else
 #define SCREEN_WIDTH 240
 #endif
@@ -13,6 +16,24 @@
 
 #ifndef SCREEN_HEIGHT
 #define SCREEN_HEIGHT 160
+#endif
+
+/* Frame buffer sizes: on the host the visible width is dynamic, so static
+ * layers are sized for the widest supported viewport. */
+#ifdef PLATFORM_HOST
+#define FB_PIXELS (HOST_SCREEN_W_MAX * SCREEN_HEIGHT)
+#else
+#define FB_PIXELS (SCREEN_WIDTH * SCREEN_HEIGHT)
+#endif
+
+/* Coins need 64 bits on Android for cheat-code-scale fortunes
+ * (999,000,000,000,000).  The GBA keeps its tight 32-bit counter. */
+#ifdef PLATFORM_HOST
+typedef u64 coin_t;
+#define COINS_MAX ((u64)999000000000000ULL)
+#else
+typedef u32 coin_t;
+#define COINS_MAX ((u32)9999999u)
 #endif
 
 #define NUM_ACCENTS 9
@@ -80,7 +101,7 @@ typedef struct {
     WeaponRig weapon_rig; // 0..5
     int laser_index;  // 0..7
     u32 high_score;
-    u32 coins;
+    coin_t coins;
     u16 owned_accents;  // bitmask for 9 paints
     u16 owned_trails;   // bitmask for 8 trails
     u16 owned_rigs;     // bitmask for 6 rigs

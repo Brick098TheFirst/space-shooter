@@ -7,6 +7,17 @@ void save_init_defaults(void);
 void save_load(void);
 void save_write(void);
 
+/* Writes the coin balance into dst ("1,234,567"; big balances shorten to
+ * "1.5B" / "999T"). dst_cap includes the terminator. */
+void save_format_coins(char* dst, int dst_cap);
+
+#ifdef PLATFORM_HOST
+/* Cheat codes are an Android-only feature: the entry UI lives in the
+ * Android Settings screen and pops a native text dialog.
+ * Returns 1 when the code was applied, 0 for an unknown code. */
+int save_apply_cheat(const char* code);
+#endif
+
 // Item pricing & catalog query helpers
 int shop_get_accent_price(int idx);
 int shop_get_trail_price(int idx);

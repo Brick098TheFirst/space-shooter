@@ -15,7 +15,7 @@ void gfx_clear(u8 color);
 void gfx_set_target(u8* buf);
 void gfx_apply_static(void);
 
-extern u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT];
+extern u8 gfx_static_layer[FB_PIXELS];
 
 /* Clip rectangle: while enabled, all drawing is confined to the given region.
  * Used by the host touch UI to scroll lists smoothly under a fixed viewport. */

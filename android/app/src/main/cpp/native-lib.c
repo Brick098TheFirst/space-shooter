@@ -176,3 +176,43 @@ Java_com_brick_spaceshooter_NativeGame_nativeTakeHaptics(JNIEnv* env, jclass cla
     (*env)->ReleaseIntArrayElements(env, out, dst, 0);
     return got;
 }
+
+/* ── Adaptive widescreen ─────────────────────────────────────────────── */
+/* Kotlin measures its view on layout, derives the framebuffer width that
+ * matches the device aspect ratio (160 px tall always), and pushes it here.
+ * The game then renders edge-to-edge: no side bars on any phone. */
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeSetViewport(JNIEnv* env, jclass clazz, jint w) {
+    (void)env; (void)clazz;
+    if (host_set_screen_width((int)w)) {
+        /* Star positions and the cached static layers were built for the old
+         * width — rebuild them so nothing renders misplaced or garbage. */
+        starfield_init();
+        menu_request_full_redraw();
+        game_request_full_redraw();
+    }
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeGetFrameWidth(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)host_screen_width();
+}
+
+/* ── Cheat codes (Settings -> CODES) ───────────────────────────────────── */
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeTakeCodeRequest(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)menu_take_code_request();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeApplyCheatCode(JNIEnv* env, jclass clazz, jstring code) {
+    (void)clazz;
+    if (!code) return 0;
+    const char* s = (*env)->GetStringUTFChars(env, code, NULL);
+    if (!s) return 0;
+    int applied = save_apply_cheat(s);
+    (*env)->ReleaseStringUTFChars(env, code, s);
+    return (jint)applied;
+}
