@@ -111,6 +111,25 @@ Java_com_brick_spaceshooter_NativeGame_nativeGoBack(JNIEnv* env, jclass clazz) {
     menu_go_back();
 }
 
+JNIEXPORT jfloat JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeScrollTo(JNIEnv* env, jclass clazz, jfloat px) {
+    (void)env; (void)clazz;
+    menu_scroll_to((float)px);
+    return (jfloat)menu_scroll_get();
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeScrollGet(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jfloat)menu_scroll_get();
+}
+
+JNIEXPORT jfloat JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeScrollMax(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jfloat)menu_scroll_max();
+}
+
 JNIEXPORT void JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeLoadSave(JNIEnv* env, jclass clazz, jbyteArray data) {
     (void)clazz;

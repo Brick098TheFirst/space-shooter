@@ -33,6 +33,63 @@ static int s_tap_x = -1;
 static int s_tap_y = -1;
 static bool s_tap_pending = false;
 
+static int shop_get_category_count(int cat);
+
+// ── Smooth scroll (Android host only) ──────────────────────────────────
+// The two scrollable lists (hangar shop, upgrades) use a pixel-precise
+// offset on the host so drags and flings glide 1:1 instead of snapping one
+// whole row at a time.  The GBA build keeps the existing integer row scroll.
+#define LIST_ROW_H 21
+
+static int hangar_list_top(void) { return 34; }   // first row baseline (game px)
+static int upgrades_list_top(void) { return 21; }
+
+#ifdef PLATFORM_HOST
+static float s_shop_scroll_px = 0;
+static float s_upg_scroll_px = 0;
+
+static int shop_scroll_offs(void) { return (int)s_shop_scroll_px; }
+static int upg_scroll_offs(void) { return (int)s_upg_scroll_px; }
+
+static int shop_max_scroll(void) {
+    int count = shop_get_category_count(s_shop_category);
+    int max_i = count - 5; if (max_i < 0) max_i = 0;
+    return max_i * LIST_ROW_H;
+}
+static int upg_max_scroll(void) {
+    int max_i = NUM_UPGRADES - 5; if (max_i < 0) max_i = 0;
+    return max_i * LIST_ROW_H;
+}
+
+float menu_scroll_get(void) {
+    if (s_current_screen == SCREEN_HANGAR) return s_shop_scroll_px;
+    if (s_current_screen == SCREEN_SETTINGS) return s_upg_scroll_px;
+    return 0;
+}
+
+float menu_scroll_max(void) {
+    if (s_current_screen == SCREEN_HANGAR) return (float)shop_max_scroll();
+    if (s_current_screen == SCREEN_SETTINGS) return (float)upg_max_scroll();
+    return 0;
+}
+
+void menu_scroll_to(float px) {
+    float maxp = menu_scroll_max();
+    if (px < 0) px = 0;
+    if (px > maxp) px = maxp;
+    if (s_current_screen == SCREEN_HANGAR) {
+        s_shop_scroll_px = px;
+        s_shop_scroll[s_shop_category] = (int)((px + LIST_ROW_H / 2) / LIST_ROW_H);
+    } else if (s_current_screen == SCREEN_SETTINGS) {
+        s_upg_scroll_px = px;
+        s_upg_scroll = (int)((px + LIST_ROW_H / 2) / LIST_ROW_H);
+    }
+}
+#else
+static int shop_scroll_offs(void) { return s_shop_scroll[s_shop_category] * LIST_ROW_H; }
+static int upg_scroll_offs(void) { return s_upg_scroll * LIST_ROW_H; }
+#endif
+
 static void menu_static_invalidate(void) { s_static_valid = false; }
 static void menu_static_begin(void) { gfx_set_target(gfx_static_layer); }
 static void menu_static_end(void) { gfx_set_target(NULL); s_static_valid = true; }
@@ -52,6 +109,9 @@ void menu_open(GameScreen screen) {
     s_shop_msg_timer = 0;
     s_upg_selected = 0;
     s_upg_scroll = 0;
+#ifdef PLATFORM_HOST
+    s_upg_scroll_px = 0;
+#endif
     s_tap_pending = false;
     menu_static_invalidate();
     if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS ||
@@ -181,6 +241,9 @@ static void hangar_select_item(int idx) {
     s_shop_selected[cat] = idx;
     if (idx < s_shop_scroll[cat]) s_shop_scroll[cat] = idx;
     else if (idx >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = idx - 4;
+#ifdef PLATFORM_HOST
+    s_shop_scroll_px = (float)(s_shop_scroll[cat] * LIST_ROW_H);
+#endif
     menu_static_invalidate();
 }
 
@@ -245,10 +308,29 @@ static void update_hangar(void) {
             if (tapped >= SHOP_CAT_COUNT) tapped = SHOP_CAT_COUNT - 1;
             if (tapped != s_shop_category) {
                 s_shop_category = tapped;
+#ifdef PLATFORM_HOST
+                s_shop_scroll_px = 0;   // fresh tab starts at top
+#endif
                 menu_static_invalidate();
             }
             return;
         }
+#ifdef PLATFORM_HOST
+        // Smooth-scroll aware item hit test (tap y maps through the pixel offset).
+        {
+            int off = shop_scroll_offs();
+            int top = hangar_list_top();
+            int idx = (ty - top + off) / LIST_ROW_H;
+            if (idx >= 0 && idx < count) {
+                int item_y = top + idx * LIST_ROW_H - off;
+                if (in_rect(tx, ty, 6, item_y, list_w - 4, 19)) {
+                    if (s_shop_selected[cat] == idx) hangar_activate();
+                    else hangar_select_item(idx);
+                    return;
+                }
+            }
+        }
+#else
         for (int i = 0; i < 5; i++) {
             int idx = s_shop_scroll[cat] + i;
             if (idx >= count) break;
@@ -269,31 +351,46 @@ static void update_hangar(void) {
             menu_static_invalidate();
             return;
         }
+#endif
         if (in_rect(tx, ty, right_x + 4, 116, right_w - 8, 24)) {
             hangar_activate();
             return;
         }
+#ifndef PLATFORM_HOST
         if (ty >= 144) {
             save_write();
             menu_open(SCREEN_MAIN_MENU);
             return;
         }
+#endif
     }
 
     if (key_hit(KEY_L)) {
         s_shop_category = (s_shop_category + SHOP_CAT_COUNT - 1) % SHOP_CAT_COUNT;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = 0;
+#endif
         menu_static_invalidate(); return;
     }
     if (key_hit(KEY_R)) {
         s_shop_category = (s_shop_category + 1) % SHOP_CAT_COUNT;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = 0;
+#endif
         menu_static_invalidate(); return;
     }
     if (key_hit(KEY_LEFT)) {
         s_shop_category = (s_shop_category + SHOP_CAT_COUNT - 1) % SHOP_CAT_COUNT;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = 0;
+#endif
         menu_static_invalidate(); return;
     }
     if (key_hit(KEY_RIGHT)) {
         s_shop_category = (s_shop_category + 1) % SHOP_CAT_COUNT;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = 0;
+#endif
         menu_static_invalidate(); return;
     }
 
@@ -302,6 +399,9 @@ static void update_hangar(void) {
         int sel = s_shop_selected[cat];
         if (sel < s_shop_scroll[cat]) s_shop_scroll[cat] = sel;
         else if (sel >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = sel - 4;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = (float)(s_shop_scroll[cat] * LIST_ROW_H);
+#endif
         menu_static_invalidate();
     }
     if (key_hit(KEY_DOWN)) {
@@ -309,6 +409,9 @@ static void update_hangar(void) {
         int sel = s_shop_selected[cat];
         if (sel < s_shop_scroll[cat]) s_shop_scroll[cat] = sel;
         else if (sel >= s_shop_scroll[cat] + 5) s_shop_scroll[cat] = sel - 4;
+#ifdef PLATFORM_HOST
+        s_shop_scroll_px = (float)(s_shop_scroll[cat] * LIST_ROW_H);
+#endif
         menu_static_invalidate();
     }
 
@@ -321,6 +424,9 @@ static void update_hangar(void) {
 static void upgrades_ensure_visible(void) {
     if (s_upg_selected < s_upg_scroll) s_upg_scroll = s_upg_selected;
     else if (s_upg_selected >= s_upg_scroll + 5) s_upg_scroll = s_upg_selected - 4;
+#ifdef PLATFORM_HOST
+    s_upg_scroll_px = (float)(s_upg_scroll * LIST_ROW_H);
+#endif
 }
 
 static void upgrades_activate(void) {
@@ -351,6 +457,24 @@ static void update_upgrades(void) {
         int list_w = shop_list_width();
         int right_x = 4 + list_w + 2;
         int right_w = SCREEN_WIDTH - 4 - right_x;
+#ifdef PLATFORM_HOST
+        {
+            int off = upg_scroll_offs();
+            int top = upgrades_list_top();
+            int idx = (ty - top + off) / LIST_ROW_H;
+            if (idx >= 0 && idx < count) {
+                int item_y = top + idx * LIST_ROW_H - off;
+                if (in_rect(tx, ty, 6, item_y, list_w - 4, 19)) {
+                    if (s_upg_selected == idx) upgrades_activate();
+                    else {
+                        s_upg_selected = idx;
+                        menu_static_invalidate();
+                    }
+                    return;
+                }
+            }
+        }
+#else
         for (int i = 0; i < 5; i++) {
             int idx = s_upg_scroll + i;
             if (idx >= count) break;
@@ -374,15 +498,18 @@ static void update_upgrades(void) {
             menu_static_invalidate();
             return;
         }
+#endif
         if (in_rect(tx, ty, right_x + 4, 94, right_w - 8, 24)) {
             upgrades_activate();
             return;
         }
+#ifndef PLATFORM_HOST
         if (ty >= 144) {
             save_write();
             menu_open(SCREEN_MAIN_MENU);
             return;
         }
+#endif
     }
 
     if (key_hit(KEY_UP)) {
@@ -479,11 +606,13 @@ static void update_options(void) {
                 return;
             }
         }
+#ifndef PLATFORM_HOST
         if (ty >= 144) {
             save_write();
             menu_open(SCREEN_MAIN_MENU);
             return;
         }
+#endif
     }
     if (key_hit(KEY_UP)) s_opt_selected = (s_opt_selected + count - 1) % count;
     if (key_hit(KEY_DOWN)) s_opt_selected = (s_opt_selected + 1) % count;
@@ -526,10 +655,12 @@ static void update_mode_select(void) {
                 return;
             }
         }
+#ifndef PLATFORM_HOST
         if (ty >= 144) {
             menu_open(SCREEN_MAIN_MENU);
             return;
         }
+#endif
     }
     if (key_hit(KEY_UP)) s_menu_selected = (s_menu_selected + count - 1) % count;
     if (key_hit(KEY_DOWN)) s_menu_selected = (s_menu_selected + 1) % count;
@@ -716,16 +847,20 @@ static void render_hangar_dynamic(void) {
     int cat = s_shop_category;
     int count = shop_get_category_count(cat);
     int selected = s_shop_selected[cat];
-    int scroll = s_shop_scroll[cat];
+    int off = shop_scroll_offs();
+    int first = off / LIST_ROW_H;
 
     int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
     int right_x = 4 + list_w + 2;
     int right_w = SCREEN_WIDTH - 4 - right_x;
 
-    for (int i = 0; i < 5; i++) {
-        int item_idx = scroll + i;
-        if (item_idx >= count) break;
-        int row_y = 34 + i * 21;
+    // Clip list rows to the list card so smooth (sub-row) scrolling never
+    // bleeds into the tab strip or the bottom message area.
+    gfx_set_clip(5, hangar_list_top() - 1, list_w - 2, 5 * LIST_ROW_H);
+    for (int i = first; i < first + 6; i++) {
+        int item_idx = i;
+        if (item_idx < 0 || item_idx >= count) continue;
+        int row_y = hangar_list_top() + item_idx * LIST_ROW_H - off;
         bool is_sel = (item_idx == selected);
         u8 border = is_sel ? PAL_TEXT_CYAN : 20;
         u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
@@ -774,8 +909,9 @@ static void render_hangar_dynamic(void) {
         int b_x = 4 + list_w - 6 - (int)strlen(badge_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, badge_buf, badge_col);
     }
-    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 36, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 130, 'v', PAL_TEXT_CYAN);
+    gfx_clear_clip();
+    if (off > 0) gfx_draw_char(4 + list_w - 10, 36, '^', PAL_TEXT_CYAN);
+    if (off < (count - 5) * LIST_ROW_H) gfx_draw_char(4 + list_w - 10, 130, 'v', PAL_TEXT_CYAN);
 
     // Right panel preview
     gfx_draw_glass_card(right_x + 2, 33, right_w - 4, 35, 20, PAL_SPACE_BLACK);
@@ -873,17 +1009,19 @@ static void render_upgrades_dynamic(void) {
     menu_draw_base();
     int count = NUM_UPGRADES;
     int selected = s_upg_selected;
-    int scroll = s_upg_scroll;
+    int off = upg_scroll_offs();
+    int first = off / LIST_ROW_H;
 
     int list_w = 116 + (SCREEN_WIDTH - 240) / 2;
     int right_x = 4 + list_w + 2;
     int right_w = SCREEN_WIDTH - 4 - right_x;
 
-    // Left list 5 visible
-    for (int i = 0; i < 5; i++) {
-        int idx = scroll + i;
-        if (idx >= count) break;
-        int row_y = 21 + i * 21;
+    // Clip list rows to the list card so smooth scrolling stays contained.
+    gfx_set_clip(5, upgrades_list_top() - 1, list_w - 2, 5 * LIST_ROW_H);
+    for (int i = first; i < first + 6; i++) {
+        int idx = i;
+        if (idx < 0 || idx >= count) continue;
+        int row_y = upgrades_list_top() + idx * LIST_ROW_H - off;
         bool is_sel = (idx == selected);
         u8 border = is_sel ? PAL_TEXT_CYAN : 20;
         u8 bg = is_sel ? PAL_BTN_HOVER : PAL_BTN_BG;
@@ -905,8 +1043,9 @@ static void render_upgrades_dynamic(void) {
         int b_x = 4 + list_w - 6 - (int)strlen(lvl_buf) * 6;
         gfx_draw_text(b_x, row_y + 6, lvl_buf, lvl_col);
     }
-    if (scroll > 0) gfx_draw_char(4 + list_w - 10, 23, '^', PAL_TEXT_CYAN);
-    if (scroll + 5 < count) gfx_draw_char(4 + list_w - 10, 126, 'v', PAL_TEXT_CYAN);
+    gfx_clear_clip();
+    if (off > 0) gfx_draw_char(4 + list_w - 10, 23, '^', PAL_TEXT_CYAN);
+    if (off < (count - 5) * LIST_ROW_H) gfx_draw_char(4 + list_w - 10, 126, 'v', PAL_TEXT_CYAN);
 
     // Right details panel
     UpgradeType upg = (UpgradeType)selected;

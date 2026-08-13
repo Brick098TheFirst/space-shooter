@@ -41,6 +41,9 @@ object NativeGame {
     external fun nativeGetScreen(): Int
     external fun nativeQueueTap(x: Int, y: Int)
     external fun nativeGoBack()
+    external fun nativeScrollTo(px: Float): Float
+    external fun nativeScrollGet(): Float
+    external fun nativeScrollMax(): Float
     external fun nativeLoadSave(data: ByteArray)
     external fun nativeGetSave(): ByteArray
     external fun nativeFlushSave()

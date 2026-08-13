@@ -6,6 +6,22 @@ EWRAM_BSS u8 gfx_static_layer[SCREEN_WIDTH * SCREEN_HEIGHT] __attribute__((align
 
 static u8* s_rt = s_back_buffer;
 
+/* Clip rectangle state (default: off). */
+static int s_clip_x0 = 0, s_clip_y0 = 0, s_clip_x1 = SCREEN_WIDTH, s_clip_y1 = SCREEN_HEIGHT;
+static bool s_clip_on = false;
+
+void gfx_set_clip(int x, int y, int w, int h) {
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
+    int y1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
+    if (x0 >= x1 || y0 >= y1) { x0 = y0 = x1 = y1 = 0; }
+    s_clip_x0 = x0; s_clip_y0 = y0; s_clip_x1 = x1; s_clip_y1 = y1;
+    s_clip_on = true;
+}
+
+void gfx_clear_clip(void) { s_clip_on = false; }
+
 void gfx_set_target(u8* buf) {
     s_rt = buf ? buf : s_back_buffer;
 }
@@ -92,6 +108,7 @@ IWRAM_CODE void gfx_clear(u8 color) {
 
 IWRAM_CODE void gfx_draw_pixel(int x, int y, u8 color) {
     if ((unsigned)x < SCREEN_WIDTH && (unsigned)y < SCREEN_HEIGHT) {
+        if (s_clip_on && (x < s_clip_x0 || x >= s_clip_x1 || y < s_clip_y0 || y >= s_clip_y1)) return;
         s_rt[y * SCREEN_WIDTH + x] = color;
     }
 }
@@ -102,6 +119,12 @@ IWRAM_CODE void gfx_fill_rect(int x, int y, int w, int h, u8 color) {
     int y0 = y < 0 ? 0 : y;
     int x1 = x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
     int y1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
+    if (s_clip_on) {
+        if (x0 < s_clip_x0) x0 = s_clip_x0;
+        if (y0 < s_clip_y0) y0 = s_clip_y0;
+        if (x1 > s_clip_x1) x1 = s_clip_x1;
+        if (y1 > s_clip_y1) y1 = s_clip_y1;
+    }
     int span = x1 - x0;
     if (span <= 0) return;
     
@@ -256,8 +279,10 @@ IWRAM_CODE void gfx_draw_laser(int center_x, int center_y, bool heavy,
 
 IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
     if (c < 32 || c > 127) c = '?';
-    if ((unsigned)x <= SCREEN_WIDTH - 5 && (unsigned)y <= SCREEN_HEIGHT - 7) {
-        const u8* glyph = font_5x7[c - 32];
+    const u8* glyph = font_5x7[c - 32];
+
+    // Fast path: fully on-screen and no clip active (the common case).
+    if (!s_clip_on && (unsigned)x <= SCREEN_WIDTH - 5 && (unsigned)y <= SCREEN_HEIGHT - 7) {
         u8* dst = &s_rt[y * SCREEN_WIDTH + x];
         for (int r = 0; r < 7; r++) {
             u8 row = glyph[r];
@@ -270,17 +295,18 @@ IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
         }
         return;
     }
-    if (x < -5 || x >= SCREEN_WIDTH || y < -7 || y >= SCREEN_HEIGHT) return;
-    const u8* glyph = font_5x7[c - 32];
+
     for (int r = 0; r < 7; r++) {
         int py = y + r;
         if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        if (s_clip_on && (py < s_clip_y0 || py >= s_clip_y1)) continue;
         u8 row = glyph[r];
         for (int col = 0; col < 5; col++) {
+            if (!(row & (1 << (4 - col)))) continue;
             int px = x + col;
-            if ((unsigned)px < SCREEN_WIDTH && (row & (1 << (4 - col)))) {
-                s_rt[py * SCREEN_WIDTH + px] = color;
-            }
+            if ((unsigned)px >= SCREEN_WIDTH) continue;
+            if (s_clip_on && (px < s_clip_x0 || px >= s_clip_x1)) continue;
+            s_rt[py * SCREEN_WIDTH + px] = color;
         }
     }
 }
