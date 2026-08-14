@@ -74,6 +74,23 @@ jobs:
           test -f spaceshooter.apk
           echo "Android APK size: $(wc -c < spaceshooter.apk) bytes"
 
+      # ── 2b. MULTIPLAYER TEST APK (EOS co-op edition) ──
+      - name: Build multiplayer test APK
+        env:
+          EOS_PRODUCT_ID: ${{ secrets.EOS_PRODUCT_ID }}
+          EOS_SANDBOX_ID: ${{ secrets.EOS_SANDBOX_ID }}
+          EOS_DEPLOYMENT_ID: ${{ secrets.EOS_DEPLOYMENT_ID }}
+          EOS_CLIENT_ID: ${{ secrets.EOS_CLIENT_ID }}
+          EOS_CLIENT_SECRET: ${{ secrets.EOS_CLIENT_SECRET }}
+        run: |
+          cd multiplayer-test
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../spaceshooter-multiplayer.apk
+          cd $GITHUB_WORKSPACE
+          test -f spaceshooter-multiplayer.apk
+          echo "Multiplayer APK size: $(wc -c < spaceshooter-multiplayer.apk) bytes"
+
       # ── 3. AUTO-INCREMENT VERSION & PUBLISH GITHUB RELEASE ──
       - name: Determine Next Release Version Tag
         id: versioning
@@ -103,30 +120,3 @@ jobs:
             TAG_NAME="spaceshooter-v${NEXT_NUM}"
           fi
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "release_title=Space Unlimited ${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "Generated next release tag: $TAG_NAME"
-
-      - name: Publish GitHub Release with APK and GBA ROM
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.versioning.outputs.tag_name }}
-          TITLE: ${{ steps.versioning.outputs.release_title }}
-        run: |
-          gh release create "$TAG_NAME" \
-            SpaceUnlimited.gba \
-            spaceshooter.apk \
-            --title "$TITLE" \
-            --notes "🚀 **Space Unlimited: Recharged ($TAG_NAME)**
-
-          ### 📦 Release Assets
-          - **\`spaceshooter.apk\`**: Standalone Native Android APK for mobile devices (pure Kotlin, widescreen, 120Hz/90Hz, virtual analog joystick, touch HUD).
-          - **\`SpaceUnlimited.gba\`**: Native Game Boy Advance ROM for emulators and flashcarts.
-
-          ### 🕹️ Features
-          - 9 Ship Paints (including dynamic animated Rainbow Prism)
-          - 8 Engine Trails (including animated Rainbow Trail)
-          - 8 Weapon Rigs (Single -> Nova Annihilator)
-          - 12 Laser Crystals (including Omega Prism & Rainbow Laser)
-          - 8 Tech Tree Upgrades (5 levels each)
-          - Persistent saving via Android SharedPreferences & SRAM
-          - Hunter enemy fighters with laser bursts and red exhaust trails"
