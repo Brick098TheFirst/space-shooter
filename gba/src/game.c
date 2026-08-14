@@ -665,7 +665,9 @@ static void update_continuous_modes(void) {
 /* ── Faster difficulty ramp: by wave 4 it's serious ────────────────────── */
 static void begin_wave(void) {
     g_game.wave++;
-    g_game.wave_banner_timer = 110;
+    /* Give the first boss taunt a little longer than a normal wave banner so
+     * the player has time to read it. */
+    g_game.wave_banner_timer = (g_game.wave == 5) ? 180 : 110;
 
     if (g_game.wave > 1) {
         award_coins(g_game.wave * 30);
@@ -1931,7 +1933,8 @@ void game_draw(void) {
     }
 
     if (g_game.wave_banner_timer > 0) {
-        int banner_w = 120;
+        bool first_boss = g_game.mode == GAME_MODE_WAVES && g_game.wave == 5;
+        int banner_w = first_boss ? 180 : 120;
         int banner_h = 24;
         int bx = (SCREEN_WIDTH - banner_w) / 2;
         int by = 68;
@@ -1942,6 +1945,9 @@ void game_draw(void) {
         } else if (g_game.mode == GAME_MODE_OVERDRIVE) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "OVERDRIVE", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "90 SECONDS", PAL_TEXT_CYAN);
+        } else if (first_boss) {
+            gfx_draw_text_centered(bx, by + 4, banner_w, "MINI BOSS", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, by + 13, banner_w, "THINK YOU CAN HANDLE THIS", PAL_TEXT_CYAN);
         } else if (is_mini_boss_wave(g_game.wave)) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "MINI BOSS", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_CYAN);
