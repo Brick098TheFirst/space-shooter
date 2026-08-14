@@ -56,11 +56,20 @@ When a Quick Match connects, the game enters **host-authoritative co-op**:
 - `app/src/main/cpp/native-lib.c` — wires `coop_tick()` into the frame loop and
   ties the session to the EOS match state.
 
-Known multiplayer limitations: coins are awarded to the host's balance
-only (the shared run's coins don't sync to the guest), and the guest's own
-laser sound is played locally for feedback rather than network-synced.
+Co-op session model: the host is authoritative and simulates both ships;
+the guest streams input, renders host snapshots, and banks its share of the
+run's coins and best score into its own save. The guest's laser sound is
+played locally, matched to the host's exact fire cadence, rather than
+network-synced (SFX samples are never retriggered while still playing).
 
 ## Local credential setup
+
+> 🔐 For the released APK, credentials come from the **GitHub repository
+> settings** (Settings → Secrets and variables → Actions): `EOS_PRODUCT_ID`,
+> `EOS_SANDBOX_ID`, `EOS_DEPLOYMENT_ID`, `EOS_CLIENT_ID`,
+> `EOS_CLIENT_SECRET`. They are never stored in the repository itself, so
+> nobody who clones or forks it can access them — GitHub masks them in CI
+> logs and only maintainers with settings access can view or edit them.
 
 In Epic Developer Portal, create a deployment and an untrusted **User Required
 Peer2Peer** client policy/client. Then:

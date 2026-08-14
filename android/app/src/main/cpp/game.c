@@ -27,7 +27,6 @@ static CoopLoadout s_coop_p2_lo;      // guest loadout (drives player 2 on host)
 static u8 s_coop_p2_lo_valid = 0;
 static int s_coop_frame = 0;          // host: ticks since session start
 static u16 s_coop_snapshot_seq = 0;
-static u8 s_coop_snapshot_magic[2] = { 0xC0, 0xA1 };
 /* Guest render-advance bookkeeping: how many sim ticks have elapsed since the
  * last snapshot was applied, so we can extrapolate smoothly between them. */
 static int s_render_ticks = 0;
@@ -2540,9 +2539,10 @@ void game_draw(void) {
  * Co-op (host-authoritative) network-facing API.
  *
  * Wire snapshot layout (little-endian, both ends are Android ARM/x86_64):
- *   u16 magic 0xC0A1 | u16 seq | u8 flags | u32 score | u16 wave | u8 mode
- *   u8 combo | u16 wave_banner | u16 intermission | u16 overdrive
- *   u16 spawn | s8 shake_x | s8 shake_y | u8 shake_timer
+ *   u16 magic 0xC0A2 | u16 seq | u8 flags | u32 score
+ *   u32 coins_lo | u32 coins_hi (host balance, for guest progression sync)
+ *   u16 wave | u8 mode | u8 combo | u16 wave_banner | u16 intermission
+ *   u16 overdrive | u16 spawn | s8 shake_x | s8 shake_y | u8 shake_timer
  *   [player1 block] [player2 block]
  *   u8 nAsteroids + n*(x,y,vx,vy,type,hp)
  *   u8 nBullets  + n*(x,y,vx,vy,damage,life,flags)
@@ -2554,7 +2554,19 @@ void game_draw(void) {
  * A snapshot can exceed one EOS packet (1170 bytes), so coop.c fragments it
  * over reliable-ordered packets and reassembles before calling game_coop_apply.
  * ════════════════════════════════════════════════════════════════════════ */
-#define COOP_SNAPSHOT_MAGIC 0xC0A1
+#define COOP_SNAPSHOT_MAGIC 0xC0A2
+
+/* ── Guest progression sync ─────────────────────────────────────────────
+ * The host is authoritative for the world AND the run's earnings: every
+ * kill pays coins into the host's balance (award_coins -> save_write).  The
+ * guest never simulates, so without a bridge it would earn nothing while
+ * playing co-op.  We ship the host balance in every snapshot; the guest
+ * adds only the POSITIVE DELTA between snapshots to its own balance and
+ * banks its new best score when the run ends.  The first snapshot after a
+ * GAME_START only establishes a baseline — the host's pre-join fortune is
+ * not transferred. */
+static u64 s_host_coins_prev = 0;
+static int s_coins_baselined = 0;
 
 #ifdef PLATFORM_HOST
 static void wr8(u8** p, u8 v) { **p = v; *p += 1; }
@@ -2617,6 +2629,9 @@ static int game_coop_serialize_into(u8* buf, int cap) {
     if (g_game.time_up) flags |= 8;
     wr8(&p, flags);
     wr32(&p, g_game.score);
+    /* Host coin balance (u64 split into two u32s for wire safety). */
+    wr32(&p, (u32)(g_settings.coins & 0xFFFFFFFFu));
+    wr32(&p, (u32)((g_settings.coins >> 32) & 0xFFFFFFFFu));
     wr16(&p, (u16)g_game.wave);
     wr8(&p, (u8)g_game.mode);
     wr8(&p, (u8)g_game.combo);
@@ -2731,6 +2746,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
     g_game.is_new_high_score = (flags & 4) != 0;
     g_game.time_up = (flags & 8) != 0;
     g_game.score = rd32(&p);
+    u64 host_coins = (u64)rd32(&p) | ((u64)rd32(&p) << 32);
     g_game.wave = (int)rd16(&p);
     g_game.mode = (GameMode)rd8(&p);
     g_game.combo = (int)rd8(&p);
@@ -2842,6 +2858,30 @@ static void game_coop_apply_into(const u8* buf, int len) {
         pu->type = (PowerupType)rd8(&p);
     }
 
+    /* Guest progression sync: bank only what was earned during this session.
+     * The first snapshot after a GAME_START is the baseline (the host's
+     * pre-join balance is not transferred); afterwards every positive delta
+     * is co-op earnings and lands in the guest's own save too. */
+    if (!s_coins_baselined) {
+        s_host_coins_prev = host_coins;
+        s_coins_baselined = 1;
+    } else if (host_coins > s_host_coins_prev) {
+        u64 delta = host_coins - s_host_coins_prev;
+        g_settings.coins += delta;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        save_write();
+        s_host_coins_prev = host_coins;
+    } else if (host_coins < s_host_coins_prev) {
+        /* Host spent / reset data: re-baseline so we never go backwards. */
+        s_host_coins_prev = host_coins;
+    }
+
+    /* Bank a new best score when the run ends (writes once per run). */
+    if (g_game.is_game_over && g_game.score > g_settings.high_score) {
+        g_settings.high_score = g_game.score;
+        save_write();
+    }
+
     s_render_ticks = 0;
 }
 
@@ -2907,8 +2947,31 @@ void game_coop_set_guest_keys(u16 keys) {
     s_coop_guest_keys = keys;
 }
 
+/* ── Guest-side audio helpers ───────────────────────────────────────────
+ * The guest doesn't simulate, but it still wants its own laser SFX to play
+ * exactly when the host fires its ship.  These expose the host simulation's
+ * numbers (Android fire-rate formula + big-laser timing) so coop.c can
+ * mirror the cadence locally. */
+int game_coop_local_shot_cooldown(void) {
+    static const int tbl[6] = { 256, 215, 178, 148, 122, 102 };
+    int lv = g_settings.upgrade_levels[UPG_FIRE_RATE];
+    if (lv < 0) lv = 0;
+    if (lv > 5) lv = 5;
+    int cd = (28 * tbl[lv]) >> 8; /* matches fire_weapon_for() on Android */
+    if (cd < 4) cd = 4;
+    return cd;
+}
+
+int game_coop_beam_charge_ticks(void) { return BEAM_CHARGE_TICKS; }
+int game_coop_beam_duration_ticks(void) { return BEAM_DURATION_TICKS; }
+
 void game_coop_set_render_only(int on) {
     s_coop_render_only = on ? 1 : 0;
+    if (on) {
+        /* A fresh GAME_START is arriving: the next snapshot re-establishes
+         * the coin baseline instead of paying out the host's whole balance. */
+        s_coins_baselined = 0;
+    }
 }
 
 int game_coop_is_guest_active(void) { return s_coop_guest_active; }

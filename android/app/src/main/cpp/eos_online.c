@@ -14,7 +14,10 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V1"
+/* Versioned with the coop protocol (coop.c COOP_PROTOCOL_VERSION): builds
+ * that speak different packet layouts never matchmake into each other's
+ * lobbies, so an old APK can never silently misbehave against a new one. */
+#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V2"
 #define COOP_SOCKET "SPACECOOP1"
 #define EOS_TEXT_CAP 192
 #define LOBBY_ID_CAP 128
@@ -563,6 +566,22 @@ int eos_online_initialize(const EosOnlineConfig* config) {
     memset(&s_socket, 0, sizeof(s_socket));
     s_socket.ApiVersion = EOS_P2P_SOCKETID_API_LATEST;
     snprintf(s_socket.SocketName, sizeof(s_socket.SocketName), "%s", COOP_SOCKET);
+
+    /* The EOS P2P default packet queues are tiny (a few dozen packets per
+     * channel).  The host streams up to ~90 reliable packets per second of
+     * snapshot fragments, so any hiccup — Android UI jank, slow NAT/relay
+     * warm-up, a dropped frame — overflows the queue and EOS starts
+     * dropping packets.  One dropped fragment stalls the guest's state
+     * stream (it never "loads in").  Give the queues room to breathe. */
+    EOS_P2P_SetPacketQueueSizeOptions queue_options;
+    memset(&queue_options, 0, sizeof(queue_options));
+    queue_options.ApiVersion = EOS_P2P_SETPACKETQUEUESIZE_API_LATEST;
+    queue_options.IncomingPacketQueueMaxSizeBytes = 8ull * 1024 * 1024;
+    queue_options.OutgoingPacketQueueMaxSizeBytes = 8ull * 1024 * 1024;
+    EOS_EResult queue_result = EOS_P2P_SetPacketQueueSize(s_p2p, &queue_options);
+    if (queue_result != EOS_Success) {
+        LOGE("EOS_P2P_SetPacketQueueSize failed: %s", EOS_EResult_ToString(queue_result));
+    }
 
     start_device_login();
     return 1;
