@@ -238,5 +238,10 @@ void game_coop_advance_render(void);
 /* Guest-side: report the last authoritative position of player 2 so the
  * input/feedback layer can keep the local ship crisp. */
 void game_coop_get_p2_pos(int* fx, int* fy);
+/* Guest-side audio cadence: the exact host-simulation numbers so the guest
+ * can play its own laser SFX when the host actually fires its ship. */
+int game_coop_local_shot_cooldown(void);
+int game_coop_beam_charge_ticks(void);
+int game_coop_beam_duration_ticks(void);
 
 #endif

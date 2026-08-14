@@ -54,6 +54,35 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 The primary Android app is the multiplayer edition. It shares the renderer, audio, save, menu, and asset sources in `gba/`, and compiles an Android-specific fork of `game.c` with two-player support using the NDK (`PLATFORM_HOST`). Epic Online Services provides Device-ID sign-in, public Quick Match lobbies, and P2P networking; the game remains playable offline when EOS credentials are not configured. No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus (including shop tabs), and shows a circular virtual stick only while playing.
 
+### Co-op reliability & fairness
+
+- **Host-authoritative co-op with self-healing sync:** the host simulates both ships from the guest's streamed input and broadcasts full-world snapshots every 3 ticks. If packets are lost (NAT warm-up, queue overflow, UI jank), the guest detects the stale stream within ~1.3 s and asks the host to resend the world — no more getting stuck on a frozen screen.
+- **Your loadout travels with you:** the guest's paint, laser crystal, weapon rig, trail, and all stat upgrades are streamed to the host (first packets reliable so they can't be dropped during connection setup), and each player fights with their own gear. Snapshot and input packets are protocol-versioned and the lobby bucket is versioned too, so mismatched app builds fail cleanly instead of misbehaving.
+- **Both players progress:** the host's coin balance rides in every snapshot; the guest banks co-op earnings into its own save (the host's pre-join fortune is never transferred) and records its new best score at game over.
+- **P2P queues sized for 90 Hz:** the EOS P2P packet queues are raised from the tiny default so the snapshot stream survives Android frame hiccups.
+- **Laser SFX matches your real fire rate:** the guest plays its own laser sound at the exact cadence the host fires for it (including big-laser charge timing), and the SFX mixer never restarts a still-playing laser sample — no more machine-gun stutter.
+
+### 🔐 Epic Online Services credentials (where the secrets live)
+
+The EOS credentials — `productId`, `sandboxId`, `deploymentId`, `clientId`, and
+`clientSecret` — are **never committed to this repository** and never appear in
+any source file. They are stored in the **GitHub repository settings**:
+**Settings → Secrets and variables → Actions** as `EOS_PRODUCT_ID`,
+`EOS_SANDBOX_ID`, `EOS_DEPLOYMENT_ID`, `EOS_CLIENT_ID`, and
+`EOS_CLIENT_SECRET`. Only repository maintainers with settings access can see
+or edit those values — nobody who clones, forks, or downloads this repo can
+access them, and GitHub masks them in CI logs during builds.
+
+- The `Build & Release (GBA ROM + Multiplayer Android APK)` workflow injects
+  the repo-settings secrets into the Gradle build via environment variables.
+- For local development, credentials go in `android/eos.properties`, which is
+  git-ignored (`.gitignore`) — never force-add it and never paste the values
+  into any committed file, issue, or PR.
+- The Android client uses an untrusted **User Required Peer2Peer** policy, so
+  the client ID/secret inside the APK are public by design (Epic's security
+  model for client-side apps) — the deployment ID and sandbox are what gate
+  real access, and those stay in repo settings too.
+
 Play opens a **mode select** on **both** Android and GBA:
 
 - **Waves** — clear each wave of asteroids and hunters. Wave 5/15/25... is a **mini-boss**; every 10th wave is a full **boss fight**.

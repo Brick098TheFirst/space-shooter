@@ -172,6 +172,17 @@ void audio_play_sfx(SfxId sfx) {
     }
     if (!data || len == 0) return;
 
+    /* Same-sample retrigger suppression: if this exact SFX is already
+     * playing, let it finish instead of restarting it.  Without this,
+     * every shot during fast fire (or two ships firing in co-op) restarts
+     * the sample mid-play, turning the laser into a stuttering machine-gun
+     * buzz that sounds way faster than the actual fire rate. */
+    for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
+        if (s_sfx_channels[i].active && s_sfx_channels[i].data == data) {
+            return;
+        }
+    }
+
     int chosen = -1;
     for (int i = 0; i < MAX_ACTIVE_SFX; i++) {
         if (!s_sfx_channels[i].active) {
