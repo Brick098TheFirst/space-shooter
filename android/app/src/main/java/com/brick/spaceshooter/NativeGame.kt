@@ -37,6 +37,7 @@ object NativeGame {
     const val SCREEN_GAME_OVER = 6
     const val SCREEN_OPTIONS = 7
     const val SCREEN_MODE_SELECT = 8
+    const val SCREEN_MULTIPLAYER = 9
 
     const val EOS_CONFIG_REQUIRED = 0
     const val EOS_INITIALIZING = 1
@@ -97,4 +98,6 @@ object NativeGame {
     external fun nativeEosSendPacket(packet: ByteArray, channel: Int, reliable: Boolean): Int
     /** Return value packs channel in bits 24..31 and byte count in bits 0..23. */
     external fun nativeEosReceivePacket(out: ByteArray): Int
+    /** Opens the native co-op Multiplayer tab (Quick Match controls + status). */
+    external fun nativeOpenMultiplayer()
 }

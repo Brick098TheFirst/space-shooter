@@ -30,6 +30,38 @@ static u16 s_coop_snapshot_seq = 0;
 /* Guest render-advance bookkeeping: how many sim ticks have elapsed since the
  * last snapshot was applied, so we can extrapolate smoothly between them. */
 static int s_render_ticks = 0;
+static u16 s_coop_local_keys = 0;     // guest: own touch input (frame prediction)
+
+/* ── Co-op FX event sync (protocol v3) ─────────────────────────────────
+ * Snapshots carry entity positions but not one-shot effects (explosions,
+ * weapon fire, pickups).  Without them the guest sees rocks simply vanish
+ * with no explosion and hears none of the host's lasers.  Every particle-
+ * heavy one-shot event the host sim produces also pushes a tiny tagged
+ * event into this ring; the next snapshot drains it, and the guest replays
+ * the effect locally (visual + SFX) at the synced position.  Syncs BOTH
+ * directions because the guest's ship is simulated on the host. */
+#define COOP_FX_MAX 24
+#define COOP_FX_EXPLOSION 1   // big boom + particles         (sfx: explosion)
+#define COOP_FX_FIRE_P1   2   // host ship laser volley       (sfx: laser)
+#define COOP_FX_FIRE_P2   3   // guest ship laser volley      (sfx: laser)
+#define COOP_FX_PICKUP    4   // powerup collected            (sfx: pickup)
+#define COOP_FX_BEAM_P1   5   // host big beam engaged        (sfx: laser)
+#define COOP_FX_BEAM_P2   6   // guest big beam engaged       (sfx: laser)
+#define COOP_FX_PLAYER_DIE 7  // a ship went down             (sfx: explosion)
+typedef struct { u8 type; s16 x; s16 y; } CoopFxEvent;
+static CoopFxEvent s_fx_ring[COOP_FX_MAX];
+static int s_fx_head = 0;   // next slot to write
+static int s_fx_count = 0;  // events not yet serialized
+
+static void coop_fx_push(u8 type, int x, int y) {
+    if (!s_coop_guest_active) return;   // solo / guest: nothing to sync out
+    if (s_fx_count < COOP_FX_MAX) s_fx_count++;
+    s_fx_ring[s_fx_head].type = type;
+    s_fx_ring[s_fx_head].x = (s16)x;
+    s_fx_ring[s_fx_head].y = (s16)y;
+    s_fx_head = (s_fx_head + 1) % COOP_FX_MAX;
+}
+
 #define COOP_SNAPSHOT_EVERY 3  // host sends one full snapshot every N ticks
 #define COOP_CHUNK_MAX 1100    // < EOS P2P 1170-byte packet limit
 #define COOP_RELIABLE_CH 0
@@ -406,6 +438,7 @@ IWRAM_CODE static void trigger_explosion(int x, int y) {
         g_game.shake_timer = 12;
     }
     audio_play_sfx(SFX_EXPLOSION);
+    coop_fx_push(COOP_FX_EXPLOSION, x, y);
 }
 
 IWRAM_CODE static void emit_engine_particle(void) {
@@ -488,6 +521,7 @@ static int coins_for_asteroid(AsteroidType type) {
 
 static void damage_player(void) {
     if (g_game.player.invulnerable_timer > 0) return;
+    if (g_game.player.dead) return; // spectating co-op pilot: untouchable
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
     platform_queue_haptic(HAPTIC_HIT);
@@ -503,7 +537,20 @@ static void damage_player(void) {
         g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 20);
         trigger_explosion(px, py);
         if (g_game.player.lives <= 0) {
-            finish_run(false);
+            if (s_coop_guest_active) {
+                /* Co-op: losing your last life doesn't end the run. Your ship
+                 * goes down, you SPECTATE your partner, and the run only ends
+                 * when both ships are down. */
+                g_game.player.dead = true;
+                g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
+                g_game.player.y = TO_FIXED(SCREEN_HEIGHT + 60); // parked off-screen
+                g_game.beam_active = false;
+                g_game.beam_charge = 0;
+                coop_fx_push(COOP_FX_PLAYER_DIE, px, py);
+                if (g_game.player2.dead) finish_run(false); // both down: run over
+            } else {
+                finish_run(false);
+            }
         }
     }
     g_game.combo = 1;
@@ -652,6 +699,16 @@ static int current_threat(void) {
     int threat = g_game.wave;
     if (threat < 1) threat = 1;
     return threat;
+}
+
+/* Co-op targeting: enemies aim at a LIVING ship. With both pilots up they
+ * track player 1 (classic behaviour); when one ship goes down all fire
+ * redirects at the survivor instead of chewing on a corpse. */
+static Player* ai_target_ship(void) {
+    if (s_coop_guest_active) {
+        if (g_game.player.dead && !g_game.player2.dead) return &g_game.player2;
+    }
+    return &g_game.player;
 }
 
 static void spawn_random_asteroid(void) {
@@ -1060,8 +1117,9 @@ static u32 isqrt32(u32 v) {
 static void boss_fire_spread_at_player(int speed_fixed) {
     int bx = FROM_FIXED(g_game.boss.x);
     int by = FROM_FIXED(g_game.boss.y) + 14;
-    int px = FROM_FIXED(g_game.player.x);
-    int py = FROM_FIXED(g_game.player.y);
+    const Player* aim = ai_target_ship();
+    int px = FROM_FIXED(aim->x);
+    int py = FROM_FIXED(aim->y);
     int dx = px - bx, dy = py - by;
 #ifdef PLATFORM_HOST
     double mag = hypot((double)dx, (double)dy);
@@ -1130,6 +1188,7 @@ static void loadout_from_settings(CoopLoadout* lo) {
     lo->laser_index = g_settings.laser_index;
     lo->weapon_rig = g_settings.weapon_rig;
     lo->trail_index = g_settings.trail_index;
+    lo->ship_index = g_settings.ship_index;
     memcpy(lo->upgrade_levels, g_settings.upgrade_levels, NUM_UPGRADES);
 }
 
@@ -1221,6 +1280,10 @@ static void fire_weapon_for(Player* p, const CoopLoadout* lo, int owner) {
     }
     p->fire_cooldown = cooldown;
     audio_play_sfx(SFX_LASER);
+    /* Co-op FX sync: the volley event lets the remote device mirror this
+     * ship's laser fire (colour + SFX) even though bullets stream anyway. */
+    coop_fx_push(owner == 1 ? COOP_FX_FIRE_P2 : COOP_FX_FIRE_P1,
+                 FROM_FIXED(px), FROM_FIXED(py) - 8);
 }
 
 static void fire_player_weapon(void) {
@@ -1326,6 +1389,12 @@ static void damage_player2(void) {
             p->dead = true;
             p->x = TO_FIXED(SCREEN_WIDTH / 2);
             p->y = TO_FIXED(SCREEN_HEIGHT + 60); // hide below screen
+            p->beam_active = false;
+            p->beam_charge = 0;
+            coop_fx_push(COOP_FX_PLAYER_DIE, px, py);
+            /* Guest down: host spectates nothing (they're alive) — the run
+             * only ends here if the host ship already fell too. */
+            if (g_game.player.dead) finish_run(false); // both down: run over
         }
     }
     if (g_settings.screen_shake) g_game.shake_timer = 18;
@@ -1379,6 +1448,7 @@ static void coop_update_player2(void) {
                     p->beam_timer = BEAM_DURATION_TICKS;
                     platform_queue_haptic(HAPTIC_BEAM);
                     audio_play_sfx(SFX_LASER);
+                    coop_fx_push(COOP_FX_BEAM_P2, FROM_FIXED(p->x), FROM_FIXED(p->y));
                 }
             }
         } else if (p->beam_charge > 0) {
@@ -1537,6 +1607,7 @@ static void coop_update_player2(void) {
                 }
                 g_game.powerups[pw].active = false;
                 audio_play_sfx(SFX_PICKUP);
+                coop_fx_push(COOP_FX_PICKUP, pow_x, pow_y);
             }
         }
     }
@@ -1591,11 +1662,17 @@ static void game_update_tick(void) {
     if (g_game.player.invulnerable_timer > 0) g_game.player.invulnerable_timer--;
     if (g_game.player.rapid_fire_timer > 0) g_game.player.rapid_fire_timer--;
 
+    /* A downed co-op pilot spectates: no steering, firing or beam until the
+     * run is over. Only reachable while the partner is still alive. */
+    const bool p1_spectating = g_game.player.dead;
+
     int mx = 0, my = 0;
-    if (key_is_down(KEY_LEFT)) mx -= 1;
-    if (key_is_down(KEY_RIGHT)) mx += 1;
-    if (key_is_down(KEY_UP)) my -= 1;
-    if (key_is_down(KEY_DOWN)) my += 1;
+    if (!p1_spectating) {
+        if (key_is_down(KEY_LEFT)) mx -= 1;
+        if (key_is_down(KEY_RIGHT)) mx += 1;
+        if (key_is_down(KEY_UP)) my -= 1;
+        if (key_is_down(KEY_DOWN)) my += 1;
+    }
 
     // ── Engine speed with 2x cap logic ───────────────────────────────
     int eng_mult = get_engine_mult(); // 180..512
@@ -1622,7 +1699,8 @@ static void game_update_tick(void) {
 
     // ── Big laser: hold B/R/L for 2s to charge, then a piercing beam
     //    fires for 3s (Undertale yellow-soul style). ──────────────────
-    bool beam_held = key_is_down(KEY_B) || key_is_down(KEY_R) || key_is_down(KEY_L);
+    bool beam_held = !p1_spectating &&
+        (key_is_down(KEY_B) || key_is_down(KEY_R) || key_is_down(KEY_L));
     if (!g_game.beam_active) {
         if (beam_held) {
             if (g_game.beam_charge < BEAM_CHARGE_TICKS) {
@@ -1633,6 +1711,7 @@ static void game_update_tick(void) {
                     g_game.beam_timer = BEAM_DURATION_TICKS;
                     platform_queue_haptic(HAPTIC_BEAM);
                     audio_play_sfx(SFX_LASER);
+                    coop_fx_push(COOP_FX_BEAM_P1, FROM_FIXED(g_game.player.x), FROM_FIXED(g_game.player.y));
                 }
             }
         } else if (g_game.beam_charge > 0) {
@@ -1647,7 +1726,7 @@ static void game_update_tick(void) {
         }
     }
 
-    if (key_is_down(KEY_A) && g_game.player.fire_cooldown == 0) {
+    if (!p1_spectating && key_is_down(KEY_A) && g_game.player.fire_cooldown == 0) {
         fire_player_weapon();
     }
 
@@ -1710,7 +1789,7 @@ static void game_update_tick(void) {
         } else {
             drone->phase = (drone->phase + 1) & 255;
             int aim_wobble = (lu_sin(drone->phase * 256) * TO_FIXED(4)) >> 12;
-            int target_x = g_game.player.x + aim_wobble;
+            int target_x = ai_target_ship()->x + aim_wobble;
             int dx = target_x - drone->x;
             int track_step = (95 * mult) >> 8;
             if (dx > track_step) drone->x += track_step;
@@ -1811,12 +1890,13 @@ static void game_update_tick(void) {
                         if (b->cooldown < 10) b->cooldown = 10;
                     }
                     if (b->phase_timer <= 0) {
+                        const Player* aim = ai_target_ship();
                         /* Mini-boss skips the dive lunge — same kit, less mean. */
                         int roll = rand() % (b->mini ? 3 : 4);
                         if (roll == 0) { b->phase = BOSS_BURST; b->phase_timer = 90; b->fire_state = 0; }
-                        else if (roll == 1) { b->phase = BOSS_BEAM_WIND; b->phase_timer = 60; b->beam_x = g_game.player.x; }
-                        else if (roll == 2) { b->phase = BOSS_SWEEP; b->phase_timer = 120; b->sweep_dir = (g_game.player.x < b->x) ? -1 : 1; }
-                        else { b->phase = BOSS_DIVE; b->phase_timer = 140; b->aim_x = g_game.player.x; }
+                        else if (roll == 1) { b->phase = BOSS_BEAM_WIND; b->phase_timer = 60; b->beam_x = aim->x; }
+                        else if (roll == 2) { b->phase = BOSS_SWEEP; b->phase_timer = 120; b->sweep_dir = (aim->x < b->x) ? -1 : 1; }
+                        else { b->phase = BOSS_DIVE; b->phase_timer = 140; b->aim_x = aim->x; }
                     }
                     break;
                 }
@@ -1845,7 +1925,7 @@ static void game_update_tick(void) {
                     break;
                 }
                 case BOSS_BEAM_WIND: {
-                    b->beam_x = g_game.player.x;
+                    b->beam_x = ai_target_ship()->x;
                     if ((b->phase_timer & 3) == 0) {
                         int wx = FROM_FIXED(b->beam_x);
                         spawn_particle(TO_FIXED(wx + (rand()&7)-4), TO_FIXED(40+rand()%90), 0, 80,
@@ -1860,7 +1940,7 @@ static void game_update_tick(void) {
                     break;
                 }
                 case BOSS_BEAM_FIRE: {
-                    int pxi = g_game.player.x;
+                    int pxi = ai_target_ship()->x;
                     int diff = pxi - b->beam_x;
                     int step = TO_FIXED(1) / 8; // slow tracking, ~0.12 pix/tick
                     if (diff > step) b->beam_x += step;
@@ -2145,6 +2225,7 @@ static void game_update_tick(void) {
             award_coins(15);
             g_game.powerups[p].active = false;
             audio_play_sfx(SFX_PICKUP);
+            coop_fx_push(COOP_FX_PICKUP, pow_x, pow_y);
         }
     }
 
@@ -2308,7 +2389,7 @@ void game_draw(void) {
         }
     }
 
-    if (!g_game.is_game_over) {
+    if (!g_game.is_game_over && !g_game.player.dead) {
         bool visible = true;
         if (g_game.player.invulnerable_timer > 0) {
             visible = (g_game.player.invulnerable_timer & 2) != 0;
@@ -2318,7 +2399,7 @@ void game_draw(void) {
             int py = FROM_FIXED(g_game.player.y) - 8 + oy;
             int accent = g_game.p1_loadout.accent_index;
             if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
-            gfx_draw_ship(px, py, accent, s_game_frame);
+            gfx_draw_ship_styled(px, py, accent, s_game_frame, g_game.p1_loadout.ship_index);
             if (g_game.player.shield_charges > 0) {
                 gfx_draw_sprite(px - 2, py - 4, 24, 24, spr_shield_bubble);
             }
@@ -2337,7 +2418,7 @@ void game_draw(void) {
             int p2y = FROM_FIXED(g_game.player2.y) - 8 + oy;
             int accent2 = g_game.p2_loadout.accent_index;
             if (accent2 < 0 || accent2 >= NUM_ACCENTS) accent2 = 1;
-            gfx_draw_ship(p2x, p2y, accent2, s_game_frame + 1);
+            gfx_draw_ship_styled(p2x, p2y, accent2, s_game_frame + 1, g_game.p2_loadout.ship_index);
             if (g_game.player2.shield_charges > 0) {
                 gfx_draw_sprite(p2x - 2, p2y - 4, 24, 24, spr_shield_bubble);
             }
@@ -2419,6 +2500,34 @@ void game_draw(void) {
         gfx_draw_progress_bar(SCREEN_WIDTH - 54, SCREEN_HEIGHT - 9, 50, 5,
                               hud_beam_charge, BEAM_CHARGE_TICKS, beam_col, 18);
     }
+
+#ifdef PLATFORM_HOST
+    // ── Co-op spectate / partner HUD ──────────────────────────────────
+    // "me"/"them" flip on the guest: it renders itself as player 2.
+    if (s_coop_guest_active || s_coop_render_only) {
+        const Player* me_p   = s_coop_render_only ? &g_game.player2 : &g_game.player;
+        const Player* them_p = s_coop_render_only ? &g_game.player  : &g_game.player2;
+        if (me_p->dead && !them_p->dead && !g_game.is_game_over) {
+            int bw = 150;
+            int bx2 = (SCREEN_WIDTH - bw) / 2;
+            gfx_draw_glass_card(bx2, 100, bw, 24, PAL_TEXT_GOLD, 15);
+            gfx_draw_text_centered(bx2, 103, bw, "YOU ARE DOWN", PAL_TEXT_RED);
+            gfx_draw_text_centered(bx2, 112, bw, "SPECTATING PARTNER", PAL_TEXT_GOLD);
+        }
+        // Partner mini-status (top-center, under the wave banner area).
+        if (!g_game.is_game_over) {
+            const char* tag = s_coop_render_only ? "P1" : "P2";
+            gfx_draw_text((SCREEN_WIDTH - 52) / 2 + 4, 13, tag, 17);
+            if (them_p->dead) {
+                gfx_draw_text((SCREEN_WIDTH - 52) / 2 + 18, 13, "DOWN", PAL_TEXT_RED);
+            } else {
+                for (int li = 0; li < them_p->lives && li < 7; li++) {
+                    gfx_draw_char((SCREEN_WIDTH - 52) / 2 + 18 + li * 5, 13, '^', PAL_TEXT_GREEN);
+                }
+            }
+        }
+    }
+#endif
 
     if (g_game.wave_banner_timer > 0) {
         int banner_w = 120;
@@ -2550,6 +2659,8 @@ void game_draw(void) {
  *   u8 bossActive + boss fields (if active)
  *   u8 nBossBullets + n*(x,y,vx,vy,heavy)
  *   u8 nPowerups + n*(x,y,vy,type)
+ *   u8 nExplosions + n*(x,y,frame)              (v3: synced boom anims)
+ *   u8 nFxEvents  + n*(type,x,y)                (v3: effect sync)
  *
  * A snapshot can exceed one EOS packet (1170 bytes), so coop.c fragments it
  * over reliable-ordered packets and reassembles before calling game_coop_apply.
@@ -2593,6 +2704,7 @@ static void ser_player(u8** p, const Player* pl, const CoopLoadout* lo, u8 live,
     wr8(p, (u8)lo->laser_index);
     wr8(p, (u8)lo->weapon_rig);
     wr8(p, (u8)lo->trail_index);
+    wr8(p, (u8)lo->ship_index);
     wr8(p, live);
 }
 
@@ -2612,6 +2724,8 @@ static void deser_player(const u8** p, Player* pl, CoopLoadout* lo,
     lo->laser_index = (int)rd8(p);
     lo->weapon_rig = (WeaponRig)rd8(p);
     lo->trail_index = (int)rd8(p);
+    lo->ship_index = (int)rd8(p);
+    if (lo->ship_index < 0 || lo->ship_index >= NUM_SHIP_STYLES) lo->ship_index = 0;
     rd8(p); // live flag
     pl->radius = 6;
 }
@@ -2732,12 +2846,110 @@ static int game_coop_serialize_into(u8* buf, int cap) {
         wr8(&p, (u8)g_game.powerups[i].type);
     }
 
+    /* ── v3 tail: explosion animations-in-flight so booms line up. ──── */
+    int xc = 0;
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) if (g_game.explosions[i].active) xc++;
+    wr8(&p, (u8)xc);
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (!g_game.explosions[i].active) continue;
+        wr16(&p, (u16)(s16)g_game.explosions[i].x);
+        wr16(&p, (u16)(s16)g_game.explosions[i].y);
+        wr8(&p, (u8)(g_game.explosions[i].frame & 0xF));
+    }
+
+    /* ── v3 tail: one-shot FX events accumulated since the last snapshot ── */
+    wr8(&p, (u8)s_fx_count);
+    for (int i = 0; i < s_fx_count; i++) {
+        int idx = (s_fx_head - s_fx_count + i + COOP_FX_MAX) % COOP_FX_MAX;
+        wr8(&p, s_fx_ring[idx].type);
+        wr16(&p, (u16)s_fx_ring[idx].x);
+        wr16(&p, (u16)s_fx_ring[idx].y);
+    }
+    s_fx_count = 0; // drained
+    s_fx_head = 0;
+
     return (int)(p - start);
+}
+
+/* ── Guest-side FX replay (effect sync) ────────────────────────────────
+ * The guest runs no simulation, so these helpers spawn the pretty parts of
+ * a host event locally: explosion animation, particles and SFX, without the
+ * host-only bits (no shake/haptics, no game-state damage). */
+static void guest_spawn_explosion(int x, int y) {
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (!g_game.explosions[i].active) {
+            g_game.explosions[i].x = x;
+            g_game.explosions[i].y = y;
+            g_game.explosions[i].frame = 0;
+            g_game.explosions[i].timer = 0;
+            g_game.explosions[i].active = true;
+            break;
+        }
+    }
+    for (int pc = 0; pc < 10; pc++) {
+        int angle = pc * 25;
+        int spd = (rand() & 127) + 80;
+        int vx = (lu_cos(angle * 256) * spd) >> 12;
+        int vy = (lu_sin(angle * 256) * spd) >> 12;
+        u8 col = 128 + (rand() & 31);
+        spawn_particle(TO_FIXED(x), TO_FIXED(y), vx, vy, col, (rand() & 15) + 12);
+    }
+    audio_play_sfx(SFX_EXPLOSION);
+}
+
+static void guest_replay_fx(u8 type, int x, int y) {
+    switch (type) {
+        case COOP_FX_EXPLOSION:
+            guest_spawn_explosion(x, y);
+            break;
+        case COOP_FX_PLAYER_DIE:
+            /* A ship went down: extra-big boom so it reads across the map. */
+            guest_spawn_explosion(x, y);
+            guest_spawn_explosion(x + 6, y - 4);
+            guest_spawn_explosion(x - 6, y + 4);
+            break;
+        case COOP_FX_FIRE_P1:
+            /* Host ship firing heard+seen on the guest (vice-versa sync).
+             * FIRE_P2 is skipped: the guest already mirrors its OWN fire SFX
+             * from the local cadence loop for zero-latency feedback. */
+            audio_play_sfx(SFX_LASER);
+            for (int pc = 0; pc < 2; pc++) {
+                u8 col = gfx_get_laser_color(g_game.p1_loadout.laser_index);
+                spawn_particle(TO_FIXED(x + (rand() & 7) - 3), TO_FIXED(y + (rand() & 3)),
+                               (rand() & 63) - 32, -((rand() & 63) + 60), col, 6);
+            }
+            break;
+        case COOP_FX_BEAM_P1:
+        case COOP_FX_BEAM_P2:
+            /* Charge-complete flash: the beam column itself comes from the
+             * synced beam_active flag; this sells the moment it engages. */
+            audio_play_sfx(SFX_LASER);
+            {
+                u8 col = gfx_get_laser_color(
+                    (type == COOP_FX_BEAM_P1) ? g_game.p1_loadout.laser_index
+                                              : g_game.p2_loadout.laser_index);
+                for (int pc = 0; pc < 6; pc++) {
+                    spawn_particle(TO_FIXED(x + (rand() & 11) - 5), TO_FIXED(y + (rand() & 5) - 2),
+                                   (rand() & 127) - 64, (rand() & 127) - 64, col, 10);
+                }
+            }
+            break;
+        case COOP_FX_PICKUP:
+            audio_play_sfx(SFX_PICKUP);
+            for (int pc = 0; pc < 5; pc++) {
+                spawn_particle(TO_FIXED(x + (rand() & 9) - 4), TO_FIXED(y + (rand() & 9) - 4),
+                               (rand() & 63) - 32, -((rand() & 91) + 30), PAL_TEXT_GOLD, 8);
+            }
+            break;
+        default:
+            break;
+    }
 }
 
 static void game_coop_apply_into(const u8* buf, int len) {
     const u8* p = buf;
     if (!buf || len < 8) return;
+#define SNAP_LEFT() (len - (int)(p - buf))
     if (rd16(&p) != COOP_SNAPSHOT_MAGIC) return;
     rd16(&p); // seq
     u8 flags = rd8(&p);
@@ -2758,6 +2970,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
     g_game.shake_y = (int)(s8)rd8(&p);
     g_game.shake_timer = (int)rd8(&p);
 
+    if (SNAP_LEFT() < 32) return; // two player blocks
     deser_player(&p, &g_game.player, &g_game.p1_loadout,
                  &g_game.beam_charge, &g_game.beam_timer, &g_game.beam_active);
     deser_player(&p, &g_game.player2, &g_game.p2_loadout,
@@ -2766,6 +2979,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
     int ac = (int)rd8(&p);
+    if (SNAP_LEFT() < ac * 10) return;
     for (int i = 0; i < ac && i < MAX_ASTEROIDS; i++) {
         Asteroid* a = &g_game.asteroids[i];
         a->active = true;
@@ -2781,6 +2995,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
     int bcnt = (int)rd8(&p);
+    if (SNAP_LEFT() < bcnt * 11) return;
     for (int i = 0; i < bcnt && i < MAX_BULLETS; i++) {
         Bullet* b = &g_game.bullets[i];
         b->active = true;
@@ -2799,6 +3014,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
     int dcount = (int)rd8(&p);
+    if (SNAP_LEFT() < dcount * 10) return;
     for (int i = 0; i < dcount && i < MAX_DRONES; i++) {
         Drone* d = &g_game.drones[i];
         d->active = true;
@@ -2812,6 +3028,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     int boss_on = (int)rd8(&p);
     if (boss_on) {
+        if (SNAP_LEFT() < 21) return; // boss block
         g_game.boss_active = true;
         g_game.boss.active = true;
         g_game.boss.mini = rd8(&p) ? true : false;
@@ -2834,6 +3051,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     for (int i = 0; i < MAX_BOSS_BULLETS; i++) g_game.boss_bullets[i].active = false;
     int bbc = (int)rd8(&p);
+    if (SNAP_LEFT() < bbc * 9) return;
     for (int i = 0; i < bbc && i < MAX_BOSS_BULLETS; i++) {
         Bullet* b = &g_game.boss_bullets[i];
         b->active = true;
@@ -2849,6 +3067,7 @@ static void game_coop_apply_into(const u8* buf, int len) {
 
     for (int i = 0; i < MAX_POWERUPS; i++) g_game.powerups[i].active = false;
     int pwc = (int)rd8(&p);
+    if (SNAP_LEFT() < pwc * 7) return;
     for (int i = 0; i < pwc && i < MAX_POWERUPS; i++) {
         Powerup* pu = &g_game.powerups[i];
         pu->active = true;
@@ -2856,6 +3075,32 @@ static void game_coop_apply_into(const u8* buf, int len) {
         pu->y = (int)rd16(&p);
         pu->vy = rd16s(&p);
         pu->type = (PowerupType)rd8(&p);
+    }
+
+    /* ── v3 tail: explosion animations + FX events. Older/corrupt buffers
+     * simply end here — every read above was length-guarded. ─────────── */
+    if (SNAP_LEFT() >= 1) {
+        int xc = (int)rd8(&p);
+        if (SNAP_LEFT() < xc * 5) return;
+        for (int i = 0; i < MAX_EXPLOSIONS; i++) g_game.explosions[i].active = false;
+        for (int i = 0; i < xc && i < MAX_EXPLOSIONS; i++) {
+            Explosion* ex = &g_game.explosions[i];
+            ex->active = true;
+            ex->x = (int)(s16)rd16(&p);
+            ex->y = (int)(s16)rd16(&p);
+            ex->frame = (int)rd8(&p) & 0xF;
+            ex->timer = 0;
+        }
+        if (SNAP_LEFT() >= 1) {
+            int nfx = (int)rd8(&p);
+            if (SNAP_LEFT() < nfx * 5) return;
+            for (int i = 0; i < nfx; i++) {
+                u8 type = rd8(&p);
+                int fx = (int)(s16)rd16(&p);
+                int fy = (int)(s16)rd16(&p);
+                guest_replay_fx(type, fx, fy);
+            }
+        }
     }
 
     /* Guest progression sync: bank only what was earned during this session.
@@ -2883,11 +3128,45 @@ static void game_coop_apply_into(const u8* buf, int len) {
     }
 
     s_render_ticks = 0;
+#undef SNAP_LEFT
 }
 
 static void game_coop_advance_render_impl(void) {
     s_render_ticks++;
+    /* The guest's own animation clock: drives rainbow paint waves, laser
+     * sprites, boss engine pulse, HUD blink, and the synced explosion
+     * animations. Without this the guest world rendered frozen. */
+    s_game_frame++;
     starfield_update();
+
+    if (g_game.shake_timer > 0) g_game.shake_timer--;
+    else { g_game.shake_x = 0; g_game.shake_y = 0; }
+    if (g_game.wave_banner_timer > 0) g_game.wave_banner_timer--;
+    if (g_game.combo_timer > 0) {
+        g_game.combo_timer--;
+        if (g_game.combo_timer == 0) g_game.combo = 1;
+    }
+
+    /* Synced/Fx-spawned explosions animate at the host's 3-tick cadence. */
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) {
+        if (g_game.explosions[i].active) {
+            g_game.explosions[i].timer++;
+            if (g_game.explosions[i].timer >= 3) {
+                g_game.explosions[i].timer = 0;
+                g_game.explosions[i].frame++;
+                if (g_game.explosions[i].frame >= 9) g_game.explosions[i].active = false;
+            }
+        }
+    }
+    for (int i = 0; i < MAX_PARTICLES; i++) {
+        if (g_game.particles[i].active) {
+            g_game.particles[i].x += g_game.particles[i].vx;
+            g_game.particles[i].y += g_game.particles[i].vy;
+            g_game.particles[i].life--;
+            if (g_game.particles[i].life == 0) g_game.particles[i].active = false;
+        }
+    }
+
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (!g_game.asteroids[i].active) continue;
         g_game.asteroids[i].x += g_game.asteroids[i].vx;
@@ -2916,6 +3195,54 @@ static void game_coop_advance_render_impl(void) {
         if (!g_game.powerups[i].active) continue;
         g_game.powerups[i].y += g_game.powerups[i].vy;
     }
+
+    /* Engine trails are pure cosmetics: spawn them locally under BOTH ships
+     * so the host's ship shows its own trail colours on the guest too. */
+    if (!g_game.is_game_over) {
+        if (!g_game.player.dead && (rand() & 2) == 0) {
+            u8 col = gfx_get_trail_color_animated(g_game.p1_loadout.trail_index,
+                                                  ((s_game_frame >> 1) + (rand() & 3)) * 4);
+            spawn_particle(g_game.player.x + (rand() & 1023) - 512,
+                           g_game.player.y + TO_FIXED(8),
+                           (rand() & 255) - 128, (rand() & 127) + 200, col, (rand() & 7) + 6);
+        }
+        if (!g_game.player2.dead && (rand() & 2) == 0) {
+            u8 col = gfx_get_trail_color_animated(g_game.p2_loadout.trail_index,
+                                                  ((s_game_frame >> 1) + (rand() & 3)) * 4);
+            spawn_particle(g_game.player2.x + (rand() & 1023) - 512,
+                           g_game.player2.y + TO_FIXED(8),
+                           (rand() & 255) - 128, (rand() & 127) + 200, col, (rand() & 7) + 6);
+        }
+    }
+
+    /* Local input prediction: nudge the guest's OWN ship from its live touch
+     * input between snapshots so it feels 1:1 responsive; the authoritative
+     * host position corrects drift every snapshot. */
+    if (!g_game.is_game_over && !g_game.player2.dead && s_coop_local_keys) {
+        Player* p = &g_game.player2;
+        int mx = 0, my = 0;
+        if (s_coop_local_keys & KEY_LEFT) mx -= 1;
+        if (s_coop_local_keys & KEY_RIGHT) mx += 1;
+        if (s_coop_local_keys & KEY_UP) my -= 1;
+        if (s_coop_local_keys & KEY_DOWN) my += 1;
+        if (mx || my) {
+            CoopLoadout lo;
+            loadout_from_settings(&lo);
+            int eng_mult = lo_engine_mult(&lo);
+            int spd = ((TO_FIXED(1) + 50) * eng_mult) >> 8;
+            if (mx && my) {
+                p->x += (mx * spd * 181) / 256;
+                p->y += (my * spd * 181) / 256;
+            } else {
+                p->x += mx * spd;
+                p->y += my * spd;
+            }
+            if (p->x < TO_FIXED(12)) p->x = TO_FIXED(12);
+            if (p->x > TO_FIXED(SCREEN_WIDTH - 12)) p->x = TO_FIXED(SCREEN_WIDTH - 12);
+            if (p->y < TO_FIXED(22)) p->y = TO_FIXED(22);
+            if (p->y > TO_FIXED(SCREEN_HEIGHT - 12)) p->y = TO_FIXED(SCREEN_HEIGHT - 12);
+        }
+    }
 }
 
 void game_coop_set_guest_active(int active) {
@@ -2933,6 +3260,12 @@ void game_coop_set_guest_active(int active) {
         if (s_coop_p2_lo_valid) g_game.p2_loadout = s_coop_p2_lo;
         s_coop_snapshot_seq = 0;
         s_coop_frame = 0;
+        s_fx_head = 0;
+        s_fx_count = 0;
+    } else if (g_game.player.dead && !g_game.is_game_over) {
+        /* Partner left while the host pilot was spectating: nobody is left
+         * to fight, so the run is over for real. */
+        finish_run(false);
     }
 }
 
@@ -2945,6 +3278,10 @@ void game_coop_set_guest_loadout(const CoopLoadout* lo) {
 
 void game_coop_set_guest_keys(u16 keys) {
     s_coop_guest_keys = keys;
+}
+
+void game_coop_set_local_input(u16 keys) {
+    s_coop_local_keys = keys;
 }
 
 /* ── Guest-side audio helpers ───────────────────────────────────────────
@@ -2976,6 +3313,16 @@ void game_coop_set_render_only(int on) {
 
 int game_coop_is_guest_active(void) { return s_coop_guest_active; }
 int game_coop_is_render_only(void) { return s_coop_render_only; }
+
+int game_coop_local_player_dead(void) {
+    /* The dead ship is player 1 on the host, player 2 on the guest. */
+    return s_coop_render_only ? (g_game.player2.dead ? 1 : 0)
+                              : (g_game.player.dead ? 1 : 0);
+}
+
+int game_coop_partner_present(void) {
+    return (s_coop_guest_active || s_coop_render_only) ? 1 : 0;
+}
 
 int game_coop_serialize(u8* buf, int cap) {
     return game_coop_serialize_into(buf, cap);

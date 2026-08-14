@@ -14,6 +14,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V5 0x53554746 // 'SUGF' + settings screen flags (tilt steer, haptics)
 #define SAVE_MAGIC_V6 0x53554747 // 'SUGG' Android only: 64-bit coins (as 2 x u32)
 #define SAVE_MAGIC_V7 0x53554748 // 'SUGH' Android only: 24-laser bitmask (hi word in pads)
+#define SAVE_MAGIC_V8 0x53554749 // 'SUGI' Android only: hull styles (ship shop tab)
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -182,6 +183,43 @@ typedef struct {
     u32 checksum;
 } SaveDataV7;
 
+/* V8 (52 bytes, Android) = V7 + equipped hull style + hull ownership mask. */
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins_lo;
+    u32 coins_hi;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;
+    u16 owned_lasers_lo;
+    u8  upgrade_levels[NUM_UPGRADES]; // 8 x 0..5
+    u8  tilt_steer;
+    u8  haptics;
+    u16 owned_lasers_hi;
+    u8  ship_index;
+    u8  owned_ships_lo;   // hull styles 0..7 (5 today, room to grow)
+    u8  pad0;
+    u8  pad1;
+    u32 checksum;
+} SaveDataV8;
+
+static u32 calc_checksum_v8(const SaveDataV8* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV8) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
 static u32 calc_checksum_v6(const SaveDataV6* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -252,14 +290,27 @@ void save_init_defaults(void) {
     g_settings.trail_index = 1;  // Ion free starter
     g_settings.weapon_rig = WEAPON_SINGLE; // NEW: single weak starter
     g_settings.laser_index = 0; // Ion Basic weak starter
+    g_settings.ship_index = SHIP_STYLE_CLASSIC; // Cyber Mk I starter hull
     g_settings.high_score = 0;
     g_settings.coins = 0;
     g_settings.owned_accents = (1 << 1); // Ion Cyan
     g_settings.owned_trails  = (1 << 1); // Ion
     g_settings.owned_rigs    = (1 << WEAPON_SINGLE); // only single
     g_settings.owned_lasers  = (1 << 0); // Ion Basic
+    g_settings.owned_ships   = (1 << SHIP_STYLE_CLASSIC); // classic hull
     for (int i = 0; i < NUM_UPGRADES; i++) {
         g_settings.upgrade_levels[i] = 0;
+    }
+}
+
+/* Keeps hull-style loadout sane after loading any older save layout (which
+ * has no ship fields): the classic hull is always owned and always legal. */
+static void repair_ship_loadout(void) {
+    g_settings.owned_ships |= (1 << SHIP_STYLE_CLASSIC);
+    g_settings.owned_ships &= (u16)((1 << NUM_SHIP_STYLES) - 1);
+    if (g_settings.ship_index < 0 || g_settings.ship_index >= NUM_SHIP_STYLES ||
+        !(g_settings.owned_ships & (1 << g_settings.ship_index))) {
+        g_settings.ship_index = SHIP_STYLE_CLASSIC;
     }
 }
 
@@ -270,7 +321,46 @@ void save_load(void) {
     /* Pull coins/loot/settings from filesDir/saves/save.sav if present. */
     platform_restore_save();
 
-    // Android current format: V7 (64-bit coins + 24-laser mask)
+    // Android current format: V8 (64-bit coins + 24-laser mask + hull styles)
+    SaveDataV8 d8;
+    u8* dest8 = (u8*)&d8;
+    for (u32 i = 0; i < sizeof(SaveDataV8); i++) dest8[i] = SRAM_BASE[i];
+    if (d8.magic == SAVE_MAGIC_V8 && d8.checksum == calc_checksum_v8(&d8)) {
+        if (d8.difficulty <= 2) g_settings.difficulty = (Difficulty)d8.difficulty;
+        g_settings.music_volume = d8.music_volume <= 100 ? d8.music_volume : 80;
+        g_settings.sfx_volume = d8.sfx_volume <= 100 ? d8.sfx_volume : 80;
+        g_settings.screen_shake = (d8.screen_shake != 0);
+        g_settings.tilt_steer = false; // gyro removed
+        g_settings.haptics = (d8.haptics != 0);
+        if (d8.accent_index < NUM_ACCENTS) g_settings.accent_index = d8.accent_index;
+        if (d8.trail_index < NUM_TRAILS) g_settings.trail_index = d8.trail_index;
+        if (d8.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d8.weapon_rig;
+        if (d8.laser_index < NUM_LASERS) g_settings.laser_index = d8.laser_index;
+        g_settings.high_score = d8.high_score;
+        g_settings.coins = ((coin_t)d8.coins_hi << 32) | (coin_t)d8.coins_lo;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        g_settings.owned_accents = d8.owned_accents ? d8.owned_accents : (1<<1);
+        g_settings.owned_trails  = d8.owned_trails  ? d8.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d8.owned_rigs    ? d8.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = ((u32)d8.owned_lasers_hi << 16) | (u32)d8.owned_lasers_lo;
+        if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
+        g_settings.ship_index    = d8.ship_index;
+        g_settings.owned_ships   = d8.owned_ships_lo ? d8.owned_ships_lo : (1<<SHIP_STYLE_CLASSIC);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d8.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+        repair_ship_loadout();
+        return;
+    }
+
+    // Legacy V7 (64-bit coins + 24-laser mask, no hull styles)
     SaveDataV7 d7;
     u8* dest7 = (u8*)&d7;
     for (u32 i = 0; i < sizeof(SaveDataV7); i++) dest7[i] = SRAM_BASE[i];
@@ -303,6 +393,8 @@ void save_load(void) {
         if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
         if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+        repair_ship_loadout();
+        save_write(); // upgrade V7 -> V8 (adds hull styles)
         return;
     }
 
@@ -338,7 +430,8 @@ void save_load(void) {
         if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
         if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
-        save_write(); // upgrade V6 -> V7
+        repair_ship_loadout();
+        save_write(); // upgrade V6 -> V8
         return;
     }
 #endif
@@ -374,8 +467,14 @@ void save_load(void) {
         if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
         if (!(g_settings.owned_lasers & (1 << g_settings.laser_index))) g_settings.laser_index = 0;
+        /* Hull styles ride along in the V5 pad bytes on real GBA hardware
+         * (magic stays V5 so old ROMs still accept the SRAM image, and old
+         * ROMs' zeroed pads translate to "classic hull owned"). */
+        g_settings.ship_index  = d5.pad0;
+        g_settings.owned_ships = d5.pad1 ? d5.pad1 : (1 << SHIP_STYLE_CLASSIC);
+        repair_ship_loadout();
 #ifdef PLATFORM_HOST
-        save_write(); // Android: upgrade a legacy V5 blob to V6 (64-bit coins)
+        save_write(); // Android: upgrade a legacy V5 blob to V8
 #endif
         return;
     }
@@ -409,6 +508,7 @@ void save_load(void) {
         if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
         if (!(g_settings.owned_lasers & (1 << g_settings.laser_index))) g_settings.laser_index = 0;
+        repair_ship_loadout();
         save_write(); // upgrade to V5
         return;
     }
@@ -460,6 +560,7 @@ void save_load(void) {
         g_settings.upgrade_levels[UPG_OVERDRIVE] = old_lv[5] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[5];
         g_settings.upgrade_levels[UPG_FIRE_RATE] = old_lv[6] > UPG_MAX_LEVEL ? UPG_MAX_LEVEL : old_lv[6];
 
+        repair_ship_loadout();
         save_write();
         return;
     }
@@ -486,6 +587,7 @@ void save_load(void) {
             }
         }
         g_settings.owned_lasers  = d2.owned_lasers  ? d2.owned_lasers  : (1<<0);
+        repair_ship_loadout();
         save_write();
         return;
     }
@@ -506,16 +608,18 @@ void save_load(void) {
         g_settings.owned_trails  |= (1 << g_settings.trail_index);
         g_settings.owned_rigs    |= (1 << WEAPON_SINGLE);
         if (g_settings.coins == 0 && g_settings.high_score > 0) g_settings.coins = 250;
+        repair_ship_loadout();
         save_write();
     }
 }
 
 void save_write(void) {
+    repair_ship_loadout();
 #ifdef PLATFORM_HOST
-    // Android: V7 with 64-bit coins and a 32-bit laser mask.
-    SaveDataV7 data;
-    memset(&data, 0, sizeof(SaveDataV7));
-    data.magic = SAVE_MAGIC_V7;
+    // Android: V8 with 64-bit coins, 32-bit laser mask, and hull styles.
+    SaveDataV8 data;
+    memset(&data, 0, sizeof(SaveDataV8));
+    data.magic = SAVE_MAGIC_V8;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -534,13 +638,15 @@ void save_write(void) {
     data.owned_rigs    = g_settings.owned_rigs;
     data.owned_lasers_lo = (u16)(g_settings.owned_lasers & 0xFFFFu);
     data.owned_lasers_hi = (u16)((g_settings.owned_lasers >> 16) & 0xFFFFu);
+    data.ship_index = (u8)g_settings.ship_index;
+    data.owned_ships_lo = (u8)(g_settings.owned_ships & 0xFF);
     for (int i = 0; i < NUM_UPGRADES; i++) {
         data.upgrade_levels[i] = g_settings.upgrade_levels[i];
     }
-    data.checksum = calc_checksum_v7(&data);
+    data.checksum = calc_checksum_v8(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV7); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV8); i++) {
         SRAM_BASE[i] = src[i];
     }
     platform_persist_save();
@@ -564,6 +670,8 @@ void save_write(void) {
     data.owned_trails  = g_settings.owned_trails;
     data.owned_rigs    = g_settings.owned_rigs;
     data.owned_lasers  = g_settings.owned_lasers;
+    data.pad0 = (u8)g_settings.ship_index;             // hull style (V5 pads)
+    data.pad1 = (u8)(g_settings.owned_ships & 0xFF);   // owned hull styles
     for (int i = 0; i < NUM_UPGRADES; i++) {
         data.upgrade_levels[i] = g_settings.upgrade_levels[i];
     }
@@ -966,6 +1074,54 @@ bool shop_try_purchase_laser(int idx) {
     g_settings.coins -= price;
     g_settings.owned_lasers |= (1 << idx);
     g_settings.laser_index = idx;
+    save_write();
+    return true;
+}
+
+// ── Hull styles (SHIPS tab) ──────────────────────────────────────────────
+int shop_get_ship_price(int idx) {
+    /* Priced like mid-tier weapon rigs: a visible-unlock every few runs
+     * early on, and the flagship as a long-term savings goal. */
+#ifdef PLATFORM_HOST
+    switch (idx) {
+        case 0: return 0;        // Cyber Mk I (starter)
+        case 1: return 4000;     // Viper Mk II
+        case 2: return 15000;    // Manta Ray
+        case 3: return 60000;    // Aegis Titan
+        case 4: return 240000;   // Phoenix MkX
+        default: return 9999999;
+    }
+#else
+    switch (idx) {
+        case 0: return 0;        // Cyber Mk I (starter)
+        case 1: return 2000;     // Viper Mk II
+        case 2: return 8000;     // Manta Ray
+        case 3: return 30000;    // Aegis Titan
+        case 4: return 120000;   // Phoenix MkX
+        default: return 9999999;
+    }
+#endif
+}
+
+bool shop_is_ship_owned(int idx) {
+    if (idx < 0 || idx >= NUM_SHIP_STYLES) return false;
+    return (g_settings.owned_ships & (1 << idx)) != 0;
+}
+
+void shop_equip_ship(int idx) {
+    if (shop_is_ship_owned(idx)) {
+        g_settings.ship_index = idx;
+        save_write();
+    }
+}
+
+bool shop_try_purchase_ship(int idx) {
+    if (shop_is_ship_owned(idx)) { shop_equip_ship(idx); return true; }
+    int price = shop_get_ship_price(idx);
+    if (g_settings.coins < (coin_t)price) return false;
+    g_settings.coins -= price;
+    g_settings.owned_ships |= (1 << idx);
+    g_settings.ship_index = idx;
     save_write();
     return true;
 }

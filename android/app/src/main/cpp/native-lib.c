@@ -338,6 +338,14 @@ Java_com_brick_spaceshooter_NativeGame_nativeEosMemberCount(JNIEnv* env, jclass 
     return (jint)eos_online_member_count();
 }
 
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeOpenMultiplayer(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    /* Surface area managed fully by menu.c (Quick Match buttons, live lobby
+     * status, launch). The Kotlin online chip routes here. */
+    menu_open(SCREEN_MULTIPLAYER);
+}
+
 JNIEXPORT jint JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeEosSendPacket(
         JNIEnv* env, jclass clazz, jbyteArray packet, jint channel, jboolean reliable) {

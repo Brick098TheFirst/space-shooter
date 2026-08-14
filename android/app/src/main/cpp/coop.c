@@ -17,8 +17,10 @@
 #define COOP_P_REQUEST_STATE    0x51 /* guest -> host: "resend the world now" */
 
 /* Bump whenever the packet layouts change.  The lobby bucket is versioned
- * too, so builds with different protocols never matchmake together. */
-#define COOP_PROTOCOL_VERSION 2
+ * too, so builds with different protocols never matchmake together.
+ * v3: hull-style in loadout/INPUT, synced explosion/fx tail in snapshots,
+ *     spectate-on-death semantics. */
+#define COOP_PROTOCOL_VERSION 3
 
 /* Reuse the game.c constants for cadence / chunk size. */
 #define COOP_SNAPSHOT_EVERY 3
@@ -61,6 +63,15 @@ static int s_guest_beam_firing = 0;
 static int s_input_packets_sent = 0; /* first packets go reliable (NAT warm-up) */
 
 static void guest_local_audio(u16 k) {
+    /* Dead guest pilot = spectating: our ship isn't firing anymore, so the
+     * local cadence mirror must go quiet too (the run continues while the
+     * partner fights on). */
+    if (game_coop_local_player_dead()) {
+        s_guest_fire_cd = 0;
+        s_guest_beam_charge = 0;
+        s_guest_beam_firing = 0;
+        return;
+    }
     if (s_guest_fire_cd > 0) s_guest_fire_cd--;
     if ((k & KEY_A) && s_guest_fire_cd == 0) {
         audio_play_sfx(SFX_LASER);
@@ -91,7 +102,7 @@ static void guest_local_audio(u16 k) {
 }
 
 static void send_input_packet(void) {
-    u8 buf[16];
+    u8 buf[24];
     int idx = 0;
     buf[idx++] = COOP_P_INPUT;
     buf[idx++] = COOP_PROTOCOL_VERSION;
@@ -110,9 +121,15 @@ static void send_input_packet(void) {
     buf[idx++] = (u8)g_settings.laser_index;
     buf[idx++] = (u8)g_settings.weapon_rig;
     buf[idx++] = (u8)g_settings.trail_index;
-    for (int i = 0; i < NUM_UPGRADES && idx < 16; i++) {
+    buf[idx++] = (u8)g_settings.ship_index; /* hull style (protocol v3) */
+    for (int i = 0; i < NUM_UPGRADES && idx < 24; i++) {
         buf[idx++] = g_settings.upgrade_levels[i];
     }
+
+    /* Local prediction: the guest's own ship renders from host snapshots,
+     * which lag one round-trip. Feeding the live input into the renderer
+     * lets the local ship respond instantly between corrections. */
+    game_coop_set_local_input(k);
 
     /* The first few input packets are reliable: the very first packets on a
      * fresh P2P connection can be dropped while NAT traversal / relay is
@@ -195,7 +212,7 @@ static void handle_fragment(const u8* data, int len) {
 }
 
 static void handle_input(const u8* data, int len) {
-    if (len < 9) return;
+    if (len < 10) return;
     if (data[1] != COOP_PROTOCOL_VERSION) return; /* mismatched build: ignore */
     u16 k = (u16)(data[2] | (data[3] << 8));
     s_guest_keys = k;
@@ -204,8 +221,10 @@ static void handle_input(const u8* data, int len) {
     lo.laser_index = (int)data[5];
     lo.weapon_rig = (WeaponRig)data[6];
     lo.trail_index = (int)data[7];
-    for (int i = 0; i < NUM_UPGRADES && (8 + i) < len; i++) {
-        lo.upgrade_levels[i] = data[8 + i];
+    lo.ship_index = (int)data[8]; /* hull style (protocol v3) */
+    if (lo.ship_index < 0 || lo.ship_index >= NUM_SHIP_STYLES) lo.ship_index = 0;
+    for (int i = 0; i < NUM_UPGRADES && (9 + i) < len; i++) {
+        lo.upgrade_levels[i] = data[9 + i];
     }
     game_coop_set_guest_loadout(&lo);
     game_coop_set_guest_keys(k);
@@ -218,6 +237,7 @@ static void handle_leave(void) {
         game_coop_set_guest_active(0);
     } else {
         game_coop_set_render_only(0);
+        game_coop_set_local_input(0);
         menu_open(SCREEN_MAIN_MENU);
     }
     s_in_session = 0;
@@ -247,6 +267,7 @@ static void handle_packet(const u8* data, int len, int channel) {
                 game_set_mode(mode);
                 game_start();
                 game_coop_set_render_only(1);
+                game_coop_set_local_input(0);
                 menu_open(SCREEN_PLAYING);
                 /* Ask for the world right away so the very first frames of
                  * the guest's screen are not an empty local state. */
@@ -317,6 +338,32 @@ void coop_on_unmatched(void) {
 
 int coop_in_session(void) {
     return s_in_session;
+}
+
+int coop_is_host(void) {
+    return s_is_host;
+}
+
+void coop_leave_session(void) {
+    if (!s_in_session) return;
+    /* Tell the peer first, then tear down locally (same as receiving its
+     * LEAVE). Host: the guest ship just vanishes and the run continues.
+     * Guest: we stop rendering the streamed world and stop sending input. */
+    u8 leave[1];
+    leave[0] = COOP_P_LEAVE;
+    eos_online_send_packet(leave, 1, COOP_RELIABLE_CH, 1);
+    if (s_is_host) {
+        game_coop_set_guest_active(0);
+    } else {
+        game_coop_set_render_only(0);
+        game_coop_set_local_input(0);
+    }
+    reset_session_state();
+    s_in_session = 0;
+    /* Leaving the co-op session also leaves the match lobby so the host
+     * can't silently drag us into another run, and Quick Match is ready
+     * for a fresh search right away. */
+    eos_online_cancel_match();
 }
 
 static int s_host_was_playing = 0;

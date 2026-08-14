@@ -597,7 +597,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_SETTINGS,
             NativeGame.SCREEN_CONTROLS,
             NativeGame.SCREEN_OPTIONS,
-            NativeGame.SCREEN_MODE_SELECT -> drawBackChip(canvas)
+            NativeGame.SCREEN_MODE_SELECT,
+            NativeGame.SCREEN_MULTIPLAYER -> drawBackChip(canvas)
         }
     }
 
@@ -727,7 +728,8 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         uiScreen == NativeGame.SCREEN_SETTINGS ||
         uiScreen == NativeGame.SCREEN_CONTROLS ||
         uiScreen == NativeGame.SCREEN_OPTIONS ||
-        uiScreen == NativeGame.SCREEN_MODE_SELECT
+        uiScreen == NativeGame.SCREEN_MODE_SELECT ||
+        uiScreen == NativeGame.SCREEN_MULTIPLAYER
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         return if (uiScreen == NativeGame.SCREEN_PLAYING) {
@@ -873,57 +875,19 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         NativeGame.nativeQueueTap(mapped.first, mapped.second)
     }
 
+    /**
+     * The main-menu online chip now routes to the native Multiplayer tab,
+     * which owns all Quick Match controls (find / cancel / launch) plus the
+     * live lobby status. No more dialog popups for ordinary flow.
+     */
     private fun handleOnlineChip() {
         try {
             eosStatus = NativeGame.nativeEosGetStatus()
             eosStatusText = NativeGame.nativeEosGetStatusText()
-            when (eosStatus) {
-                NativeGame.EOS_READY -> {
-                    if (NativeGame.nativeEosQuickMatch() == 1) {
-                        eosStatus = NativeGame.EOS_MATCHMAKING
-                        eosStatusText = "Searching for a public co-op game..."
-                        Toast.makeText(context, "Quick Match started", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                NativeGame.EOS_CONFIG_REQUIRED -> showOnlineDialog(
-                    "ONLINE SETUP NEEDED",
-                    "Add your Epic Product, Sandbox, Deployment, Client ID, and Client Secret to android/eos.properties, then rebuild the app.",
-                    false
-                )
-                NativeGame.EOS_ERROR -> showOnlineDialog(
-                    "EPIC ONLINE ERROR",
-                    eosStatusText,
-                    true
-                )
-                NativeGame.EOS_MATCHED -> {
-                    val role = if (NativeGame.nativeEosIsHost() == 1) "Host" else "Guest"
-                    showOnlineDialog(
-                        "CO-OP LOBBY CONNECTED",
-                        "$role • ${NativeGame.nativeEosMemberCount()} / 2 players\n\n$eosStatusText",
-                        true
-                    )
-                }
-                else -> showOnlineDialog("ONLINE CO-OP", eosStatusText, true)
-            }
+            NativeGame.nativeOpenMultiplayer()
         } catch (error: Throwable) {
             Toast.makeText(context, "EOS unavailable: ${error.message}", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun showOnlineDialog(title: String, message: String, canCancelMatch: Boolean) {
-        val builder = AlertDialog.Builder(context)
-            .setTitle(title)
-            .setMessage(message)
-            .setNegativeButton("CLOSE", null)
-        if (canCancelMatch) {
-            builder.setPositiveButton("LEAVE / RESET") { _, _ ->
-                try {
-                    NativeGame.nativeEosCancelMatch()
-                    eosStatusText = NativeGame.nativeEosGetStatusText()
-                } catch (_: Throwable) {}
-            }
-        }
-        builder.show()
     }
 
     // ── Smooth scroll animation (run from doFrame) ──────────────────────

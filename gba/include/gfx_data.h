@@ -2,6 +2,7 @@
 #define GFX_DATA_H
 
 #include "platform.h"
+#include "types.h" /* NUM_SHIP_STYLES */
 
 #define PAL_SPACE_BLACK 0
 #define PAL_TEXT_WHITE 16
@@ -17,6 +18,8 @@
 extern const u16 master_palette[256];
 
 extern const u8 spr_ship[9][20 * 16];
+/* Hull style templates for the SHIPS shop tab (see gfx_data.c). */
+extern const u8 spr_ship_styles[NUM_SHIP_STYLES][20 * 16];
 extern const u8 spr_ast_large[24 * 24];
 extern const u8 spr_ast_med_a[16 * 16];
 extern const u8 spr_ast_med_b[16 * 16];
