@@ -24,10 +24,42 @@ one phone.
 - Main-menu status chip for setup, login, search, waiting, match, and errors.
 - Credentials supplied only by an ignored local file or environment variables.
 
-The lobby and P2P transport are working foundations. A host-authoritative second
-ship and synchronized game entities are still the next gameplay phase; this
-edition does not claim that the existing single-player C simulation is already
-network synchronized.
+## Two-player synchronized co-op
+
+When a Quick Match connects, the game enters **host-authoritative co-op**:
+
+- The **host** runs the full simulation — both ships, the asteroids, drones,
+  boss, bullets and powerups are all simulated in one shared world on the host.
+  The host broadcasts a compact snapshot of the whole world to the guest.
+- The **guest** stops simulating entirely. It streams its input (movement,
+  fire, beam) plus its equipped loadout to the host every frame, and simply
+  renders the host's snapshots — so both players see the *exact same* asteroids,
+  enemies and boss, and the same shared score/wave.
+- Each ship keeps its **own paint, laser crystal, weapon rig and engine trail**.
+  The host simulates the guest ship with the guest's own fire-rate / damage /
+  speed numbers, and bullets render in each owner's laser colour.
+- Snapshots are larger than one EOS packet (1170 bytes), so the host fragments
+  each one over reliable-ordered packets and the guest reassembles before
+  applying. The guest extrapolates gently between snapshots for smooth motion.
+- The host starts a normal game (mode select → play) and the guest is dragged
+  into the same run automatically. If the host restarts from game-over, the
+  guest follows. Leaving the run / leaving the lobby ends the co-op session.
+
+### Co-op source layout (this folder)
+
+- `app/src/main/cpp/game.c` / `game.h` — a **forked copy** of the shared GBA
+  game with the second-player support: a `player2` in `GameState`, per-owner
+  bullets, per-owner laser rendering, a host-side second-ship simulation, and
+  the snapshot serialize/apply/render hooks. The unmodified `gba/` sources are
+  untouched; only this test edition compiles the fork.
+- `app/src/main/cpp/coop.c` / `coop.h` — the networking glue: input streaming,
+  snapshot fragmentation/reassembly, and game-start / leave control messages.
+- `app/src/main/cpp/native-lib.c` — wires `coop_tick()` into the frame loop and
+  ties the session to the EOS match state.
+
+Known test-edition simplifications: coins are awarded to the host's balance
+only (the shared run's coins don't sync to the guest), and the guest's own
+laser sound is played locally for feedback rather than network-synced.
 
 ## Local credential setup
 
