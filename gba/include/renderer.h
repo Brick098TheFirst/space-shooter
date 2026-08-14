@@ -29,6 +29,11 @@ void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_co
 
 void gfx_draw_sprite(int x, int y, int w, int h, const u8* data);
 void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
+/* Draws any hull style with any paint.  Style 0 delegates to the classic
+ * spr_ship fast path; styles 1+ render from the spr_ship_styles templates,
+ * remapping accent mask pixels (241..243) so every paint - including the
+ * animated rainbow - works on every hull. */
+void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style);
 void gfx_draw_enemy_ship(int x, int y);
 #ifdef PLATFORM_HOST
 /* Boss hull: the unused mini-drone sprite, recolored + scaled so it
@@ -58,6 +63,8 @@ u8 gfx_get_laser_color(int laser_idx);
 
 const char* gfx_get_accent_name(int accent_idx);
 const char* gfx_get_accent_desc(int accent_idx);
+const char* gfx_get_ship_style_name(int style_idx);
+const char* gfx_get_ship_style_desc(int style_idx);
 const char* gfx_get_trail_name(int trail_idx);
 const char* gfx_get_trail_desc(int trail_idx);
 const char* gfx_get_weapon_name(WeaponRig rig);

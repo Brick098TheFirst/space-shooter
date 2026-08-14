@@ -28,6 +28,13 @@ void coop_on_unmatched(void);
 
 int coop_in_session(void);
 
+int coop_is_host(void);
+
+/* Voluntarily leave the current co-op session: notifies the peer, tears
+ * down the co-op game state and also leaves the EOS match lobby so a
+ * fresh Quick Match can start immediately. Safe to call when idle. */
+void coop_leave_session(void);
+
 #ifdef __cplusplus
 }
 #endif

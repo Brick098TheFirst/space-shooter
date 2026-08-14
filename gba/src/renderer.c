@@ -245,6 +245,56 @@ IWRAM_CODE void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame) {
     }
 }
 
+/* Draws any hull STYLE with any paint: sprite templates use the same palette
+ * language as the classic ship (hull ramp 33..38, accent mask 241..243), so
+ * every paint - including the animated Rainbow Prism wave - works on them. */
+IWRAM_CODE void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style) {
+    if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 1;
+    if (style <= 0 || style >= NUM_SHIP_STYLES) {
+        gfx_draw_ship(x, y, accent_idx, anim_frame);
+        return;
+    }
+
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + 20 > SCREEN_WIDTH ? SCREEN_WIDTH : x + 20;
+    int y1 = y + 16 > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + 16;
+    if (s_clip_on) {
+        if (x0 < s_clip_x0) x0 = s_clip_x0;
+        if (y0 < s_clip_y0) y0 = s_clip_y0;
+        if (x1 > s_clip_x1) x1 = s_clip_x1;
+        if (y1 > s_clip_y1) y1 = s_clip_y1;
+    }
+    if (x0 >= x1 || y0 >= y1) return;
+
+    const u8 rainbow_accents[7] = { 5, 0, 4, 3, 1, 2, 7 }; // same wave as classic rainbow
+    const u8* src = spr_ship_styles[style];
+    const bool rainbow = (accent_idx == 8);
+
+    for (int py = y0; py < y1; py++) {
+        int sy = py - y;
+        int dst_idx = py * SCREEN_WIDTH + x0;
+        int src_idx = sy * 20 + (x0 - x);
+        for (int px = x0; px < x1; px++, src_idx++, dst_idx++) {
+            u8 pix = src[src_idx];
+            if (pix == 0) continue;
+            if (pix >= 241 && pix <= 243) {
+                int shade = pix - 240;
+                if (rainbow) {
+                    int sx = px - x;
+                    int phase = ((anim_frame >> 1) + sx * 2 + sy) % 28;
+                    u8 base_acc = rainbow_accents[phase / 4];
+                    s_rt[dst_idx] = 48 + base_acc * 4 + shade;
+                } else {
+                    s_rt[dst_idx] = 48 + accent_idx * 4 + shade;
+                }
+            } else {
+                s_rt[dst_idx] = pix;
+            }
+        }
+    }
+}
+
 /* Enemy fighters use the exact player silhouette and Crimson paint, rotated
  * 180 degrees so their cannons and flight direction face down-screen. */
 IWRAM_CODE void gfx_draw_enemy_ship(int x, int y) {
@@ -607,6 +657,28 @@ const char* gfx_get_laser_desc(int laser_idx) {
         case 10: return "Photon burst +5";
         case 11: return "GOD! Pierce +7, 1shot";
         default: return "Laser wavelength";
+    }
+}
+
+const char* gfx_get_ship_style_name(int style_idx) {
+    switch (style_idx) {
+        case 0: return "Cyber Mk I";
+        case 1: return "Viper Mk II";
+        case 2: return "Manta Ray";
+        case 3: return "Aegis Titan";
+        case 4: return "Phoenix MkX";
+        default: return "Starfighter";
+    }
+}
+
+const char* gfx_get_ship_style_desc(int style_idx) {
+    switch (style_idx) {
+        case 0: return "Classic fleet fighter";
+        case 1: return "Sleek arrow interceptor";
+        case 2: return "Wide gliding sunwing";
+        case 3: return "Heavy armored gunship";
+        case 4: return "Ceremonial flagship";
+        default: return "Hull configuration";
     }
 }
 

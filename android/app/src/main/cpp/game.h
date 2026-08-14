@@ -164,6 +164,7 @@ typedef struct {
     int laser_index;    // laser colour
     WeaponRig weapon_rig;
     int trail_index;    // engine trail colour
+    int ship_index;     // hull style (SHIPS shop tab)
     u8 upgrade_levels[NUM_UPGRADES];
 } CoopLoadout;
 
@@ -227,9 +228,15 @@ void game_draw(void);
 void game_coop_set_guest_active(int active);        // host: start simulating player 2
 void game_coop_set_guest_loadout(const CoopLoadout* lo); // host: guest's visual/combat config
 void game_coop_set_guest_keys(u16 keys);            // host: guest input each tick
+void game_coop_set_local_input(u16 keys);           // guest: own input (local render prediction)
 void game_coop_set_render_only(int on);             // guest: render-only mode
 int  game_coop_is_guest_active(void);               // host is simulating player 2
 int  game_coop_is_render_only(void);                // guest is rendering host world
+/* Spectate support (co-op death no longer ends the run alone):
+ *  - local pilot dead while the partner fights on -> spectating banner
+ *  - the game only ends when BOTH ships are down. */
+int  game_coop_local_player_dead(void);             // this device's ship is dead
+int  game_coop_partner_present(void);               // a second ship is in the world
 /* Host snapshot out / guest snapshot in (wire buffers owned by coop.c). */
 int  game_coop_serialize(u8* buf, int cap);
 void game_coop_apply(const u8* buf, int len);

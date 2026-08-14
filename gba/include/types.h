@@ -39,6 +39,12 @@ typedef u32 coin_t;
 #define NUM_ACCENTS 9
 #define NUM_TRAILS 8
 #define NUM_RIGS 8
+/* Hull STYLES in the SHIPS tab: distinct ship silhouettes (not paints).
+ * Style index 0 is the classic Cyber Mk I everyone starts with.  The paint
+ * (accent) and the style are applied together: every style respects every
+ * paint, including the animated rainbow one. */
+#define NUM_SHIP_STYLES 5
+#define SHIP_STYLE_CLASSIC 0
 #ifdef PLATFORM_HOST
 /* Android hangar: 24 crystals, strictly stronger/pricier as the index climbs.
  * Bits 0-11 keep the original 12 unlocks so old saves still make sense. */
@@ -90,7 +96,8 @@ typedef enum {
     SCREEN_PAUSED,
     SCREEN_GAME_OVER,
     SCREEN_OPTIONS,
-    SCREEN_MODE_SELECT
+    SCREEN_MODE_SELECT,
+    SCREEN_MULTIPLAYER  /* Android: co-op Quick Match lobby browser */
 } GameScreen;
 
 typedef enum {
@@ -110,12 +117,14 @@ typedef struct {
     int trail_index;  // 0..7
     WeaponRig weapon_rig; // 0..5
     int laser_index;  // 0..7
+    int ship_index;   // hull style 0..NUM_SHIP_STYLES-1 (SHIPS shop tab)
     u32 high_score;
     coin_t coins;
     u16 owned_accents;  // bitmask for 9 paints
     u16 owned_trails;   // bitmask for 8 trails
     u16 owned_rigs;     // bitmask for 8 rigs
     u32 owned_lasers;   // bitmask (12 on GBA, 24 on Android)
+    u16 owned_ships;    // bitmask for hull styles (bit 0 = classic, always owned)
     u8  upgrade_levels[NUM_UPGRADES]; // 0..3 for each upgrade
 } GameSettings;
 

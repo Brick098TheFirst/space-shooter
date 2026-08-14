@@ -1955,7 +1955,7 @@ void game_draw(void) {
             int py = FROM_FIXED(g_game.player.y) - 8 + oy;
             int accent = g_settings.accent_index;
             if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
-            gfx_draw_ship(px, py, accent, s_game_frame);
+            gfx_draw_ship_styled(px, py, accent, s_game_frame, g_settings.ship_index);
             if (g_game.player.shield_charges > 0) {
                 gfx_draw_sprite(px - 2, py - 4, 24, 24, spr_shield_bubble);
             }

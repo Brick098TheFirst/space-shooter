@@ -1,6 +1,7 @@
 #include "eos_online.h"
 
 #include <android/log.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -17,7 +18,7 @@
 /* Versioned with the coop protocol (coop.c COOP_PROTOCOL_VERSION): builds
  * that speak different packet layouts never matchmake into each other's
  * lobbies, so an old APK can never silently misbehave against a new one. */
-#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V2"
+#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V3"
 #define COOP_SOCKET "SPACECOOP1"
 #define EOS_TEXT_CAP 192
 #define LOBBY_ID_CAP 128
@@ -41,6 +42,8 @@ static int s_member_count;
 static int s_wait_ticks;
 static int s_restart_after_leave;
 static int s_cancel_pending;
+static int s_status_ticks;          /* ticks in current status (watchdog) */
+static int s_login_retries;         /* transient network blips self-heal */
 static char s_status_text[EOS_TEXT_CAP] = "Online co-op needs EOS credentials";
 static char s_lobby_id[LOBBY_ID_CAP];
 static char s_display_name[EOS_CONNECT_USERLOGININFO_DISPLAYNAME_MAX_LENGTH + 1] = "Space Pilot";
@@ -51,7 +54,22 @@ static void create_public_lobby(void);
 static void refresh_lobby_members(void);
 static void prepare_p2p(void);
 
+/* Every long-running lobby op (search/create/join) tags its callback with a
+ * generation token so a stale completion from an abandoned op can never
+ * corrupt a fresh matchmaking pass (this was a source of "stuck forever"
+ * states - a late search callback would grab a lobby mid-cancel). */
+static uint32_t s_op_gen;
+static int s_login_retry_at;            /* eos tick index, 0 = none pending */
+static int s_eos_tick;
+static char s_p2p_peer_text[EOS_PRODUCTUSERID_MAX_LENGTH + 1];
+
+static int is_transient(EOS_EResult r) {
+    return r == EOS_NoConnection || r == EOS_ServiceFailure ||
+           r == EOS_TooManyRequests || r == EOS_OperationWillRetry;
+}
+
 static void set_status(int status, const char* text) {
+    if (s_status != status) s_status_ticks = 0;
     s_status = status;
     snprintf(s_status_text, sizeof(s_status_text), "%s", text ? text : "");
     LOGI("%s", s_status_text);
@@ -113,6 +131,8 @@ static void clear_match_state(void) {
     s_member_count = 0;
     s_wait_ticks = 0;
     s_cancel_pending = 0;
+    s_p2p_peer_text[0] = '\0';
+    s_op_gen++; /* invalidate any in-flight op callbacks */
 
     if (s_p2p_request_notify != EOS_INVALID_NOTIFICATIONID && s_p2p) {
         EOS_P2P_RemoveNotifyPeerConnectionRequest(s_p2p, s_p2p_request_notify);
@@ -122,15 +142,23 @@ static void clear_match_state(void) {
 
 static void EOS_CALL on_create_user(const EOS_Connect_CreateUserCallbackInfo* data) {
     if (data->ResultCode != EOS_Success) {
+        if (is_transient(data->ResultCode) && s_login_retries < 3) {
+            s_login_retries++;
+            s_login_retry_at = s_eos_tick + 180; /* ~2 s */
+            set_status(EOS_ONLINE_SIGNING_IN, "Connection hiccup - retrying sign in...");
+            return;
+        }
         set_result_error("Create EOS player", data->ResultCode);
         return;
     }
+    s_login_retries = 0;
     s_local_user = data->LocalUserId;
     set_status(EOS_ONLINE_READY, "Online - ready for Quick Match");
 }
 
 static void EOS_CALL on_connect_login(const EOS_Connect_LoginCallbackInfo* data) {
     if (data->ResultCode == EOS_Success) {
+        s_login_retries = 0;
         s_local_user = data->LocalUserId;
         set_status(EOS_ONLINE_READY, "Online - ready for Quick Match");
         return;
@@ -146,6 +174,12 @@ static void EOS_CALL on_connect_login(const EOS_Connect_LoginCallbackInfo* data)
         return;
     }
 
+    if (is_transient(data->ResultCode) && s_login_retries < 3) {
+        s_login_retries++;
+        s_login_retry_at = s_eos_tick + 180;
+        set_status(EOS_ONLINE_SIGNING_IN, "Connection hiccup - retrying sign in...");
+        return;
+    }
     set_result_error("EOS Device ID login", data->ResultCode);
 }
 
@@ -174,6 +208,12 @@ static void login_with_device_id(void) {
 static void EOS_CALL on_create_device_id(const EOS_Connect_CreateDeviceIdCallbackInfo* data) {
     if (data->ResultCode == EOS_Success || data->ResultCode == EOS_DuplicateNotAllowed) {
         login_with_device_id();
+        return;
+    }
+    if (is_transient(data->ResultCode) && s_login_retries < 3) {
+        s_login_retries++;
+        s_login_retry_at = s_eos_tick + 180;
+        set_status(EOS_ONLINE_SIGNING_IN, "Connection hiccup - retrying sign in...");
         return;
     }
     set_result_error("Create EOS Device ID", data->ResultCode);
@@ -205,6 +245,17 @@ static void EOS_CALL on_p2p_connection_request(const EOS_P2P_OnIncomingConnectio
 static void prepare_p2p(void) {
     if (!s_p2p || !s_local_user || !s_remote_user) return;
 
+    /* prepare_p2p runs on every lobby member refresh; make it idempotent so
+     * we don't spam AcceptConnection/hello for the same peer. */
+    {
+        char peer[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {0};
+        int32_t peer_len = (int32_t)sizeof(peer);
+        if (EOS_ProductUserId_ToString(s_remote_user, peer, &peer_len) == EOS_Success &&
+            peer[0] && strcmp(peer, s_p2p_peer_text) == 0) {
+            return; /* already prepared for this peer */
+        }
+    }
+
     if (s_p2p_request_notify == EOS_INVALID_NOTIFICATIONID) {
         EOS_P2P_AddNotifyPeerConnectionRequestOptions notify;
         memset(&notify, 0, sizeof(notify));
@@ -224,8 +275,17 @@ static void prepare_p2p(void) {
     accept.SocketId = &s_socket;
     EOS_EResult result = EOS_P2P_AcceptConnection(s_p2p, &accept);
     if (result != EOS_Success) {
-        set_result_error("Prepare co-op connection", result);
+        /* Not fatal: the member-status notification will re-arm this, and
+         * the guest's stale-state watchdog resends requests regardless. */
+        LOGE("Accept co-op connection: %s", EOS_EResult_ToString(result));
         return;
+    }
+
+    {
+        int32_t peer_len = (int32_t)sizeof(s_p2p_peer_text);
+        if (EOS_ProductUserId_ToString(s_remote_user, s_p2p_peer_text, &peer_len) != EOS_Success) {
+            s_p2p_peer_text[0] = '\0';
+        }
     }
 
     static const char hello[] = "SUCOOP1";
@@ -275,6 +335,11 @@ static void refresh_lobby_members(void) {
             ? "Co-op player found - you are host"
             : "Co-op player found - connected to host");
         prepare_p2p();
+    } else if (s_status == EOS_ONLINE_MATCHED && !s_is_host) {
+        /* Guest saw the lobby shrink (host closed it): drop back to a clean
+         * READY state instead of staying MATCHED to a ghost lobby. */
+        clear_match_state();
+        set_status(EOS_ONLINE_READY, "Lobby ended - ready to re-match");
     } else if (s_status != EOS_ONLINE_MATCHMAKING) {
         set_status(EOS_ONLINE_WAITING_FOR_PLAYER, "Public lobby open - waiting for player...");
     }
@@ -282,6 +347,16 @@ static void refresh_lobby_members(void) {
 
 static void EOS_CALL on_lobby_member_status(const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo* data) {
     if (!data->LobbyId || !s_lobby_id[0] || strcmp(data->LobbyId, s_lobby_id) != 0) return;
+    if (data->CurrentStatus == EOS_LMS_CLOSED) {
+        /* The lobby is gone (host destroyed it / service evicted it). Clean
+         * up locally so the UI can offer an instant re-match instead of
+         * sitting on a stale MATCHED/WAITING forever. */
+        clear_match_state();
+        if (!s_restart_after_leave) {
+            set_status(EOS_ONLINE_READY, "Lobby closed - ready to re-match");
+        }
+        return;
+    }
     refresh_lobby_members();
 }
 
@@ -295,6 +370,11 @@ static void ensure_lobby_notifications(void) {
 }
 
 static void EOS_CALL on_create_lobby(const EOS_Lobby_CreateLobbyCallbackInfo* data) {
+    if ((uintptr_t)data->ClientData != (uintptr_t)s_op_gen) {
+        LOGI("Ignoring stale create-lobby completion (gen %lu != %lu)",
+             (unsigned long)(uintptr_t)data->ClientData, (unsigned long)s_op_gen);
+        return; /* abandoned op: a newer matchmaking pass owns the state */
+    }
     if (s_cancel_pending) {
         s_cancel_pending = 0;
         if (data->ResultCode == EOS_Success && data->LobbyId) {
@@ -338,10 +418,19 @@ static void create_public_lobby(void) {
     options.bRejoinAfterKickRequiresInvite = EOS_FALSE;
     options.bCrossplayOptOut = EOS_FALSE;
     set_status(EOS_ONLINE_MATCHMAKING, "No lobby found - creating one...");
-    EOS_Lobby_CreateLobby(s_lobby, &options, NULL, on_create_lobby);
+    s_op_gen++;
+    EOS_Lobby_CreateLobby(s_lobby, &options, (void*)(uintptr_t)s_op_gen, on_create_lobby);
 }
 
 static void EOS_CALL on_join_lobby(const EOS_Lobby_JoinLobbyCallbackInfo* data) {
+    if ((uintptr_t)data->ClientData != (uintptr_t)s_op_gen) {
+        if (s_join_details) {
+            EOS_LobbyDetails_Release(s_join_details);
+            s_join_details = NULL;
+        }
+        LOGI("Ignoring stale join-lobby completion");
+        return; /* abandoned op */
+    }
     if (s_join_details) {
         EOS_LobbyDetails_Release(s_join_details);
         s_join_details = NULL;
@@ -376,6 +465,10 @@ static void EOS_CALL on_join_lobby(const EOS_Lobby_JoinLobbyCallbackInfo* data) 
 }
 
 static void EOS_CALL on_lobby_search(const EOS_LobbySearch_FindCallbackInfo* data) {
+    if ((uintptr_t)data->ClientData != (uintptr_t)s_op_gen) {
+        LOGI("Ignoring stale lobby-search completion");
+        return; /* abandoned op */
+    }
     if (s_cancel_pending) {
         s_cancel_pending = 0;
         clear_match_state();
@@ -419,7 +512,8 @@ static void EOS_CALL on_lobby_search(const EOS_LobbySearch_FindCallbackInfo* dat
     join.bPresenceEnabled = EOS_FALSE;
     join.bCrossplayOptOut = EOS_FALSE;
     set_status(EOS_ONLINE_MATCHMAKING, "Joining public co-op lobby...");
-    EOS_Lobby_JoinLobby(s_lobby, &join, NULL, on_join_lobby);
+    s_op_gen++;
+    EOS_Lobby_JoinLobby(s_lobby, &join, (void*)(uintptr_t)s_op_gen, on_join_lobby);
 }
 
 static void start_lobby_search(void) {
@@ -459,7 +553,8 @@ static void start_lobby_search(void) {
     find.ApiVersion = EOS_LOBBYSEARCH_FIND_API_LATEST;
     find.LocalUserId = s_local_user;
     set_status(EOS_ONLINE_MATCHMAKING, "Searching for a public co-op game...");
-    EOS_LobbySearch_Find(s_search, &find, NULL, on_lobby_search);
+    s_op_gen++;
+    EOS_LobbySearch_Find(s_search, &find, (void*)(uintptr_t)s_op_gen, on_lobby_search);
 }
 
 static void EOS_CALL on_match_left(const EOS_Lobby_LeaveLobbyCallbackInfo* data) {
@@ -590,6 +685,14 @@ int eos_online_initialize(const EosOnlineConfig* config) {
 void eos_online_tick(void) {
     if (!s_platform) return;
     EOS_Platform_Tick(s_platform);
+    s_eos_tick++;
+    s_status_ticks++;
+
+    /* Scheduled sign-in retry after a transient network failure. */
+    if (s_login_retry_at && s_eos_tick >= s_login_retry_at) {
+        s_login_retry_at = 0;
+        if (s_status == EOS_ONLINE_SIGNING_IN) start_device_login();
+    }
 
     /* Resolve the rare race where both Quick Match users searched before
      * either public lobby existed, then each created an empty lobby. */
@@ -598,6 +701,29 @@ void eos_online_tick(void) {
         if (s_wait_ticks == 0) {
             s_restart_after_leave = 1;
             eos_online_cancel_match();
+        }
+    }
+
+    /* Matchmaking watchdog: a search/create/join/cancel that never completes
+     * (killed activity, flaky network, orphaned callback) used to leave the
+     * spinner running forever. Requeue automatically. ~20s then ~40s. */
+    if (s_status == EOS_ONLINE_MATCHMAKING && s_status_ticks > 1800) {
+        if (!s_cancel_pending) {
+            LOGI("matchmaking watchdog: stuck in MATCHMAKING, cancelling + requeueing");
+            s_restart_after_leave = 1;
+            eos_online_cancel_match();
+        } else if (s_status_ticks > 3600) {
+            /* Even the cancel is stuck: hard reset and search fresh. The op
+             * generation token keeps a late completion from corrupting the
+             * new pass. */
+            LOGI("matchmaking watchdog: cancel never completed, hard reset");
+            clear_match_state();
+            s_restart_after_leave = 0;
+            set_status(EOS_ONLINE_READY, "Reconnecting Quick Match...");
+            if (s_local_user) {
+                ensure_lobby_notifications();
+                start_lobby_search();
+            }
         }
     }
 }

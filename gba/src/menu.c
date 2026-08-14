@@ -6,15 +6,24 @@
 #include "starfield.h"
 #include <string.h>
 
+#ifdef PLATFORM_HOST
+/* The Multiplayer tab talks directly to the EOS quick-match layer - taps on
+ * the FIND MATCH / LEAVE buttons drive matchmaking from the menu itself. */
+#include "eos_online.h"
+#include "coop.h"
+#endif
+
 static GameScreen s_current_screen = SCREEN_MAIN_MENU;
 static int s_menu_selected = 0;
+static int s_mp_selected = 0;   // Multiplayer tab button focus
 static int s_anim_frame = 0;
 
-// Shop state: now 4 categories (0=PAINTS,1=TRAILS,2=WEAPONS,3=LASERS)
-#define SHOP_CAT_COUNT 4
+// Shop state: 5 categories (0=PAINTS,1=TRAILS,2=WEAPONS,3=LASERS,4=SHIPS)
+#define SHOP_CAT_COUNT 5
+#define SHOP_CAT_SHIPS 4
 static int s_shop_category = 0;
-static int s_shop_selected[SHOP_CAT_COUNT] = { 0, 0, 0, 0 };
-static int s_shop_scroll[SHOP_CAT_COUNT]   = { 0, 0, 0, 0 };
+static int s_shop_selected[SHOP_CAT_COUNT] = { 0, 0, 0, 0, 0 };
+static int s_shop_scroll[SHOP_CAT_COUNT]   = { 0, 0, 0, 0, 0 };
 
 // Upgrades state: 8 core upgrades, 5 visible
 static int s_upg_selected = 0;
@@ -150,9 +159,11 @@ void menu_open(GameScreen screen) {
     s_upg_scroll_px = 0;
 #endif
     s_tap_pending = false;
+    s_mp_selected = 0;
     menu_static_invalidate();
     if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS ||
-        screen == SCREEN_CONTROLS || screen == SCREEN_OPTIONS || screen == SCREEN_MODE_SELECT) {
+        screen == SCREEN_CONTROLS || screen == SCREEN_OPTIONS || screen == SCREEN_MODE_SELECT ||
+        screen == SCREEN_MULTIPLAYER) {
         audio_play_bgm(BGM_MENU);
     }
     s_opt_selected = 0;
@@ -173,6 +184,11 @@ void menu_go_back(void) {
         case SCREEN_HANGAR:
         case SCREEN_SETTINGS:
             save_write();
+            menu_open(SCREEN_MAIN_MENU);
+            break;
+        case SCREEN_MULTIPLAYER:
+            /* Backing out never cancels a live match - matchmaking runs in
+             * the background and the menu chip keeps showing its status. */
             menu_open(SCREEN_MAIN_MENU);
             break;
         case SCREEN_CONTROLS:
@@ -220,6 +236,7 @@ static int shop_get_category_count(int cat) {
         case 1: return NUM_TRAILS;
         case 2: return NUM_RIGS;
         case 3: return NUM_LASERS;
+        case SHOP_CAT_SHIPS: return NUM_SHIP_STYLES;
         default: return 0;
     }
 }
@@ -235,12 +252,11 @@ static void launch_mode(GameMode mode) {
     s_current_screen = SCREEN_PLAYING;
 }
 
-#define SHOP_TAB_W 56
+#define SHOP_TAB_W 45
 
 static int shop_tab_x(int t) {
-    int tab_gap = (SCREEN_WIDTH - 8 - 4 * SHOP_TAB_W) / 3;
-    if (tab_gap < 0) tab_gap = 0;
-    if (t == 3) return SCREEN_WIDTH - 4 - SHOP_TAB_W;
+    int tab_gap = (SCREEN_WIDTH - 8 - SHOP_CAT_COUNT * SHOP_TAB_W) / (SHOP_CAT_COUNT - 1);
+    if (tab_gap < 1) tab_gap = 1;
     return 4 + t * (SHOP_TAB_W + tab_gap);
 }
 
@@ -266,6 +282,10 @@ static void hangar_activate(void) {
         case 3:
             if (shop_is_laser_owned(sel)) { shop_equip_laser(sel); shop_set_msg("EQUIPPED LASER!", PAL_TEXT_GREEN); }
             else { ok = shop_try_purchase_laser(sel); shop_set_msg(ok ? "PURCHASED LASER!" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
+            break;
+        case SHOP_CAT_SHIPS:
+            if (shop_is_ship_owned(sel)) { shop_equip_ship(sel); shop_set_msg("HULL EQUIPPED!", PAL_TEXT_GREEN); }
+            else { ok = shop_try_purchase_ship(sel); shop_set_msg(ok ? "NEW HULL! LAUNCH READY" : "NEED MORE COINS!", ok ? PAL_TEXT_GOLD : PAL_TEXT_RED); if (ok) audio_play_sfx(SFX_PICKUP); }
             break;
     }
     menu_static_invalidate();
@@ -306,16 +326,17 @@ static void format_price(char* dst, int price) {
 static void main_menu_activate(int index) {
     switch (index) {
         case 0: request_play(); break;
-        case 1: menu_open(SCREEN_HANGAR); break;
-        case 2: menu_open(SCREEN_SETTINGS); break; // now UPGRADES
-        case 3: menu_open(SCREEN_CONTROLS); break;
-        case 4: menu_open(SCREEN_OPTIONS); break;
+        case 1: menu_open(SCREEN_MULTIPLAYER); break; // 2P co-op quick match
+        case 2: menu_open(SCREEN_HANGAR); break;
+        case 3: menu_open(SCREEN_SETTINGS); break; // now UPGRADES
+        case 4: menu_open(SCREEN_CONTROLS); break;
+        case 5: menu_open(SCREEN_OPTIONS); break;
         default: break;
     }
 }
 
 static void update_main_menu(void) {
-    const int count = 5;
+    const int count = 6;
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
         for (int i = 0; i < count; i++) {
@@ -715,6 +736,191 @@ static int mode_card_w(void) {
     return w;
 }
 
+/* ── MULTIPLAYER tab (2-player co-op Quick Match) ─────────────────────
+ * Android: drives EOS matchmaking directly - FIND MATCH / CANCEL / LAUNCH,
+ * live status, player count and role. GBA: informational page. */
+#ifdef PLATFORM_HOST
+#define MP_ACT_FIND   0
+#define MP_ACT_CANCEL 1
+#define MP_ACT_LAUNCH 2
+
+typedef struct { int y; const char* label; int act; } MpButton;
+
+static const char* mp_headline(int status) {
+    switch (status) {
+        case EOS_ONLINE_CONFIG_REQUIRED:    return "ONLINE SETUP NEEDED";
+        case EOS_ONLINE_INITIALIZING:       return "STARTING ONLINE...";
+        case EOS_ONLINE_SIGNING_IN:         return "SIGNING IN TO EPIC...";
+        case EOS_ONLINE_READY:              return "READY TO FIGHT TOGETHER";
+        case EOS_ONLINE_MATCHMAKING:        return "SEARCHING FOR A PILOT...";
+        case EOS_ONLINE_WAITING_FOR_PLAYER: return "LOBBY OPEN - WAITING";
+        case EOS_ONLINE_MATCHED:            return "CO-PILOT FOUND!";
+        case EOS_ONLINE_ERROR:              return "ONLINE ERROR";
+        default:                            return "ONLINE CO-OP";
+    }
+}
+
+/* Current button row(s) for the live matchmaking state. Returns count. */
+static int mp_buttons(MpButton* out) {
+    int status = eos_online_status();
+    int n = 0;
+    switch (status) {
+        case EOS_ONLINE_READY:
+            out[n++] = (MpButton){ 116, "FIND MATCH  (2P)", MP_ACT_FIND };
+            break;
+        case EOS_ONLINE_MATCHMAKING:
+            out[n++] = (MpButton){ 116, "CANCEL SEARCH", MP_ACT_CANCEL };
+            break;
+        case EOS_ONLINE_WAITING_FOR_PLAYER:
+            out[n++] = (MpButton){ 116, "CLOSE LOBBY", MP_ACT_CANCEL };
+            break;
+        case EOS_ONLINE_MATCHED:
+            if (eos_online_is_host()) {
+                out[n++] = (MpButton){ 100, "LAUNCH CO-OP GAME", MP_ACT_LAUNCH };
+                out[n++] = (MpButton){ 134, "LEAVE LOBBY", MP_ACT_CANCEL };
+            } else {
+                out[n++] = (MpButton){ 116, "LEAVE LOBBY", MP_ACT_CANCEL };
+            }
+            break;
+        case EOS_ONLINE_ERROR:
+            out[n++] = (MpButton){ 116, "RESET ONLINE", MP_ACT_CANCEL };
+            break;
+        default:
+            break;
+    }
+    return n;
+}
+
+static void mp_activate(int act) {
+    switch (act) {
+        case MP_ACT_FIND:
+            if (!eos_online_quick_match()) {
+                shop_set_msg("NOT READY YET!", PAL_TEXT_RED);
+            }
+            break;
+        case MP_ACT_CANCEL:
+            eos_online_cancel_match();
+            break;
+        case MP_ACT_LAUNCH:
+            request_play(); /* host picks the mode; guest follows via GAME_START */
+            break;
+    }
+    menu_static_invalidate();
+}
+
+static void update_multiplayer(void) {
+    if (s_shop_msg_timer > 0) s_shop_msg_timer--;
+    MpButton btns[2];
+    int count = mp_buttons(btns);
+    if (s_mp_selected >= count) s_mp_selected = count > 0 ? count - 1 : 0;
+
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) {
+        int bw = 160;
+        int bx = (SCREEN_WIDTH - bw) / 2;
+        for (int i = 0; i < count; i++) {
+            if (in_rect(tx, ty, bx, btns[i].y, bw, 16)) {
+                s_mp_selected = i;
+                mp_activate(btns[i].act);
+                return;
+            }
+        }
+    }
+    if (key_hit(KEY_UP) && count > 0) s_mp_selected = (s_mp_selected + count - 1) % count;
+    if (key_hit(KEY_DOWN) && count > 0) s_mp_selected = (s_mp_selected + 1) % count;
+    if (key_hit(KEY_A) && count > 0) mp_activate(btns[s_mp_selected].act);
+    if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
+}
+
+static void render_multiplayer(void) {
+    gfx_draw_text(10, 6, "2P CO-OP MULTIPLAYER", PAL_TEXT_CYAN);
+    gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
+
+    int status = eos_online_status();
+
+    /* Live status card */
+    gfx_draw_glass_card(8, 20, SCREEN_WIDTH - 16, 27, PAL_BTN_BORDER, 14);
+    gfx_draw_text(14, 24, mp_headline(status),
+                  status == EOS_ONLINE_MATCHED ? PAL_TEXT_GREEN :
+                  (status == EOS_ONLINE_ERROR ? PAL_TEXT_RED : PAL_TEXT_WHITE));
+    {
+        const char* detail = eos_online_status_text();
+        char dbuf[44];
+        int i = 0;
+        while (detail[i] && i < (int)sizeof(dbuf) - 1) { dbuf[i] = detail[i]; i++; }
+        dbuf[i] = '\0';
+        gfx_draw_text(14, 34, dbuf, PAL_TEXT_CYAN);
+    }
+
+    /* Players / role card */
+    gfx_draw_glass_card(8, 51, SCREEN_WIDTH - 16, 17, PAL_BTN_BORDER, 14);
+    {
+        char pbuf[40];
+        int members = eos_online_member_count();
+        const char* role = (status == EOS_ONLINE_MATCHED || status == EOS_ONLINE_WAITING_FOR_PLAYER)
+            ? (eos_online_is_host() ? "HOST" : "GUEST") : "-";
+        siprintf(pbuf, "PLAYERS: %d/2   ROLE: %s", members, role);
+        gfx_draw_text(14, 56, pbuf, PAL_TEXT_GOLD);
+    }
+
+    /* How co-op works */
+    gfx_draw_glass_card(8, 72, SCREEN_WIDTH - 16, 40, PAL_BTN_BORDER, 14);
+    if (status == EOS_ONLINE_CONFIG_REQUIRED) {
+        gfx_draw_text(14, 76, "Needs Epic credentials in", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 85, "android/eos.properties -", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 94, "see android/README.md and", PAL_TEXT_CYAN);
+        gfx_draw_text(14, 103, "rebuild to enable Quick Match", PAL_TEXT_CYAN);
+    } else if (status == EOS_ONLINE_MATCHED && !eos_online_is_host()) {
+        gfx_draw_text(14, 76, "CONNECTED TO HOST!", PAL_TEXT_GREEN);
+        gfx_draw_text(14, 85, "Waiting for the host to", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 94, "launch the game. You join", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 103, "automatically - hang on!", PAL_TEXT_CYAN);
+    } else {
+        gfx_draw_text(14, 76, "HOST RUNS WORLD, GUEST JOINS", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 85, "LASERS + EFFECTS SYNC 2-WAYS", PAL_TEXT_WHITE);
+        gfx_draw_text(14, 94, "DIE AND YOU SPECTATE UNTIL", PAL_TEXT_CYAN);
+        gfx_draw_text(14, 103, "BOTH SHIPS ARE DOWN!", PAL_TEXT_CYAN);
+    }
+
+    /* Action button(s) */
+    MpButton btns[2];
+    int count = mp_buttons(btns);
+    int bw = 160;
+    int bx = (SCREEN_WIDTH - bw) / 2;
+    for (int i = 0; i < count; i++) {
+        gfx_draw_button(bx, btns[i].y, bw, 15, btns[i].label, i == s_mp_selected);
+    }
+    if (count == 0 && status != EOS_ONLINE_CONFIG_REQUIRED) {
+        gfx_draw_text_centered(0, 120, SCREEN_WIDTH, "CONNECTING", PAL_TEXT_CYAN);
+        /* animated dots */
+        int dots = (s_anim_frame >> 4) % 4;
+        for (int d = 0; d < dots; d++) gfx_draw_char(SCREEN_WIDTH / 2 + 30 + d * 6, 120, '.', PAL_TEXT_CYAN);
+    }
+    gfx_draw_text_centered(0, 150, SCREEN_WIDTH, "B / BACK: return", 17);
+}
+#else
+static void update_multiplayer(void) {
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) { menu_open(SCREEN_MAIN_MENU); return; }
+    if (key_hit(KEY_A) || key_hit(KEY_B) || key_hit(KEY_START)) menu_open(SCREEN_MAIN_MENU);
+}
+
+static void render_multiplayer(void) {
+    gfx_draw_text(10, 6, "2P CO-OP MULTIPLAYER", PAL_TEXT_CYAN);
+    gfx_fill_rect(10, 16, SCREEN_WIDTH - 20, 1, 20);
+    gfx_draw_glass_card(8, 24, SCREEN_WIDTH - 16, 88, PAL_BTN_BORDER, 14);
+    gfx_draw_text(14, 30, "ONLINE CO-OP LIVES IN THE", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 39, "ANDROID EDITION OF THIS", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 48, "GAME (EPIC QUICK MATCH).", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 62, "HOW IT PLAYS THERE:", PAL_TEXT_CYAN);
+    gfx_draw_text(14, 71, "- HOST RUNS WORLD, GUEST JOINS", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 80, "- LASERS + EFFECTS SYNC BOTH WAYS", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 89, "- DIE AND YOU SPECTATE UNTIL", PAL_TEXT_WHITE);
+    gfx_draw_text(14, 98, "  BOTH SHIPS ARE DOWN!", PAL_TEXT_WHITE);
+    gfx_draw_text_centered(0, 146, SCREEN_WIDTH, "Press A or B to return", PAL_TEXT_WHITE);
+}
+#endif
+
 static void update_mode_select(void) {
     const int count = 3;
     int tx, ty;
@@ -741,7 +947,25 @@ static void update_mode_select(void) {
     if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
 }
 
+#ifdef PLATFORM_HOST
+static bool coop_guest_active(void) { return coop_in_session() && !coop_is_host(); }
+#else
+static bool coop_guest_active(void) { return false; }
+#endif
+
 static void pause_activate(int index) {
+    if (coop_guest_active()) {
+        /* Guest has no authority: pause only resumes locally or leaves the
+         * session (the host's world keeps running regardless). */
+        switch (index) {
+            case 0: s_current_screen = SCREEN_PLAYING; break;
+#ifdef PLATFORM_HOST
+            case 1: coop_leave_session(); save_write(); menu_open(SCREEN_MAIN_MENU); break;
+#endif
+            default: break;
+        }
+        return;
+    }
     switch (index) {
         case 0: s_current_screen = SCREEN_PLAYING; break;
         case 1: save_write(); game_start(); s_current_screen = SCREEN_PLAYING; break;
@@ -751,7 +975,7 @@ static void pause_activate(int index) {
 }
 
 static void update_paused(void) {
-    const int count = 3;
+    const int count = coop_guest_active() ? 2 : 3;
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
         int w = 110; int h = 88;
@@ -772,6 +996,12 @@ static void update_paused(void) {
 }
 
 static void game_over_activate(int index) {
+    if (coop_guest_active()) {
+        /* Guest can't restart the shared run - only the host decides
+         * whether a rematch happens. */
+        menu_open(SCREEN_MAIN_MENU);
+        return;
+    }
     switch (index) {
         case 0: game_start(); s_current_screen = SCREEN_PLAYING; break;
         case 1: menu_open(SCREEN_HANGAR); break;
@@ -781,7 +1011,7 @@ static void game_over_activate(int index) {
 }
 
 static void update_game_over(void) {
-    const int count = 3;
+    const int count = coop_guest_active() ? 1 : 3;
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
         int w = 130; int h = 122;
@@ -810,6 +1040,7 @@ void menu_update(void) {
         case SCREEN_CONTROLS:  starfield_update(); update_controls(); break;
         case SCREEN_OPTIONS:   starfield_update(); update_options(); break;
         case SCREEN_MODE_SELECT: starfield_update(); update_mode_select(); break;
+        case SCREEN_MULTIPLAYER: starfield_update(); update_multiplayer(); break;
         case SCREEN_PLAYING:
             s_tap_pending = false;
             if (key_hit(KEY_START)) { s_current_screen = SCREEN_PAUSED; s_menu_selected = 0; }
@@ -824,22 +1055,24 @@ void menu_update(void) {
 static void draw_ship_preview_static(int card_x, int card_y, int card_w, int card_h) {
     gfx_draw_glass_card(card_x, card_y, card_w, card_h, PAL_BTN_BORDER, 14);
     gfx_draw_text(card_x + 6, card_y + 4, "SHIP PROFILE", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 6, card_y + 13, "Cyber Mk I", PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 13, gfx_get_ship_style_name(g_settings.ship_index), PAL_TEXT_WHITE);
     gfx_fill_rect(card_x + 4, card_y + 45, card_w - 8, 1, 20);
-    gfx_draw_text(card_x + 6, card_y + 49, "PAINT", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 36, card_y + 49, gfx_get_accent_name(g_settings.accent_index), PAL_TEXT_WHITE);
-    gfx_draw_text(card_x + 6, card_y + 59, "TRAIL", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 36, card_y + 59, gfx_get_trail_name(g_settings.trail_index), PAL_TEXT_WHITE);
-    gfx_draw_text(card_x + 6, card_y + 69, "RIG", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 36, card_y + 69, gfx_get_weapon_name(g_settings.weapon_rig), PAL_TEXT_WHITE);
-    gfx_draw_text(card_x + 6, card_y + 79, "LASER", PAL_TEXT_CYAN);
-    gfx_draw_text(card_x + 36, card_y + 79, gfx_get_laser_name(g_settings.laser_index), PAL_TEXT_WHITE);
-    gfx_draw_text(card_x + 6, card_y + 89, "COINS", PAL_TEXT_GOLD);
+    gfx_draw_text(card_x + 6, card_y + 49, "HULL", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 36, card_y + 49, gfx_get_ship_style_name(g_settings.ship_index), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 58, "PAINT", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 36, card_y + 58, gfx_get_accent_name(g_settings.accent_index), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 67, "TRAIL", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 36, card_y + 67, gfx_get_trail_name(g_settings.trail_index), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 76, "RIG", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 36, card_y + 76, gfx_get_weapon_name(g_settings.weapon_rig), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 85, "LASER", PAL_TEXT_CYAN);
+    gfx_draw_text(card_x + 36, card_y + 85, gfx_get_laser_name(g_settings.laser_index), PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 94, "COINS", PAL_TEXT_GOLD);
     char buf[24]; save_format_coins(buf, sizeof(buf));
-    gfx_draw_text(card_x + 36, card_y + 89, buf, PAL_TEXT_WHITE);
-    gfx_draw_text(card_x + 6, card_y + 99, "BEST", PAL_TEXT_GOLD);
+    gfx_draw_text(card_x + 36, card_y + 94, buf, PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 6, card_y + 103, "BEST", PAL_TEXT_GOLD);
     siprintf(buf, "%06u", (unsigned int)g_settings.high_score);
-    gfx_draw_text(card_x + 36, card_y + 99, buf, PAL_TEXT_WHITE);
+    gfx_draw_text(card_x + 36, card_y + 103, buf, PAL_TEXT_WHITE);
 }
 static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx) {
     if (trail_idx == 7) {
@@ -862,7 +1095,7 @@ static void draw_ship_preview_dynamic(int card_x, int card_y, int card_w) {
 #endif
     int accent = g_settings.accent_index;
     if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
-    gfx_draw_ship(ship_x, ship_y, accent, s_anim_frame);
+    gfx_draw_ship_styled(ship_x, ship_y, accent, s_anim_frame, g_settings.ship_index);
     draw_preview_engine_trail(ship_x, ship_y, g_settings.trail_index);
 }
 
@@ -873,9 +1106,9 @@ static void render_main_menu_static(void) {
     gfx_fill_rect(10, 28, 45, 1, PAL_TEXT_CYAN);
     gfx_draw_text(10, 32, "GBA Edition", 17);
 
-    const char* items[] = { "Play", "Shop", "Upgrades", "Controls", "Settings" };
+    const char* items[] = { "Play", "Multiplayer", "Shop", "Upgrades", "Controls", "Settings" };
     int start_y = 44; int step_y = 19;
-    for (int i = 0; i < 5; i++) gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], false);
+    for (int i = 0; i < 6; i++) gfx_draw_button(10, start_y + i * step_y, 90, 16, items[i], false);
 
     int card_w = 126;
     int card_x = SCREEN_WIDTH - card_w - 6;
@@ -887,7 +1120,7 @@ static void render_main_menu_static(void) {
 static void render_main_menu_dynamic(void) {
     menu_draw_base();
     gfx_draw_button(10, 44 + s_menu_selected * 19, 90, 16,
-        (const char*[]){"Play","Shop","Upgrades","Controls","Settings"}[s_menu_selected], true);
+        (const char*[]){"Play","Multiplayer","Shop","Upgrades","Controls","Settings"}[s_menu_selected], true);
     int card_w = 126;
     int card_x = SCREEN_WIDTH - card_w - 6;
     draw_ship_preview_dynamic(card_x, 10, card_w);
@@ -902,8 +1135,8 @@ static void render_hangar_static(void) {
     gfx_draw_text(coin_x, 4, coin_buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
-    const char* tab_names[4] = { "PAINTS", "TRAILS", "WEAPONS", "LASERS" };
-    for (int t = 0; t < 4; t++) {
+    const char* tab_names[SHOP_CAT_COUNT] = { "PAINTS", "TRAILS", "WEAPONS", "LASERS", "SHIPS" };
+    for (int t = 0; t < SHOP_CAT_COUNT; t++) {
         int tx = shop_tab_x(t);
         bool is_active = (t == s_shop_category);
         u8 border = is_active ? PAL_TEXT_CYAN : 20;
@@ -984,6 +1217,15 @@ static void render_hangar_dynamic(void) {
                 else { format_price(badge_buf, shop_get_laser_price(item_idx)); }
                 break;
             }
+            case SHOP_CAT_SHIPS: {
+                strncpy(name_buf, gfx_get_ship_style_name(item_idx), 11);
+                bool eq = (g_settings.ship_index == item_idx);
+                bool own = shop_is_ship_owned(item_idx);
+                if (eq) { strncpy(badge_buf, "[EQ]", sizeof(badge_buf)-1); badge_col = PAL_TEXT_GREEN; }
+                else if (own) { strncpy(badge_buf, "OWN", sizeof(badge_buf)-1); badge_col = PAL_TEXT_CYAN; }
+                else { format_price(badge_buf, shop_get_ship_price(item_idx)); }
+                break;
+            }
         }
         if (is_sel) { gfx_draw_char(9, row_y + 6, '>', PAL_TEXT_CYAN); gfx_draw_text(16, row_y + 6, name_buf, PAL_TEXT_WHITE); }
         else gfx_draw_text(10, row_y + 6, name_buf, PAL_TEXT_CYAN);
@@ -999,10 +1241,11 @@ static void render_hangar_dynamic(void) {
     int preview_accent = (cat == 0) ? selected : g_settings.accent_index;
     int preview_trail  = (cat == 1) ? selected : g_settings.trail_index;
     int preview_laser  = (cat == 3) ? selected : g_settings.laser_index;
+    int preview_hull   = (cat == SHOP_CAT_SHIPS) ? selected : g_settings.ship_index;
     if (preview_accent < 0 || preview_accent >= NUM_ACCENTS) preview_accent = 1;
     int ship_x = right_x + (right_w - 20) / 2;
     int ship_y = 47;
-    gfx_draw_ship(ship_x, ship_y, preview_accent, s_anim_frame);
+    gfx_draw_ship_styled(ship_x, ship_y, preview_accent, s_anim_frame, preview_hull);
     draw_preview_engine_trail(ship_x, ship_y, preview_trail);
     if (cat == 2 || cat == 3) {
         int travel = (s_anim_frame * 2) % 18;
@@ -1025,6 +1268,7 @@ static void render_hangar_dynamic(void) {
         case 1: full_name = gfx_get_trail_name(selected); desc1 = gfx_get_trail_desc(selected); desc2 = "Drive exhaust wake"; is_owned = shop_is_trail_owned(selected); is_equipped = (g_settings.trail_index == selected); item_price = shop_get_trail_price(selected); break;
         case 2: full_name = gfx_get_weapon_name((WeaponRig)selected); desc1 = gfx_get_weapon_desc((WeaponRig)selected); desc2 = "Primary ordnance"; is_owned = shop_is_rig_owned((WeaponRig)selected); is_equipped = (g_settings.weapon_rig == selected); item_price = shop_get_rig_price((WeaponRig)selected); break;
         case 3: full_name = gfx_get_laser_name(selected); desc1 = gfx_get_laser_desc(selected); desc2 = "Laser crystal core"; is_owned = shop_is_laser_owned(selected); is_equipped = (g_settings.laser_index == selected); item_price = shop_get_laser_price(selected); break;
+        case SHOP_CAT_SHIPS: full_name = gfx_get_ship_style_name(selected); desc1 = gfx_get_ship_style_desc(selected); desc2 = "Works with every paint"; is_owned = shop_is_ship_owned(selected); is_equipped = (g_settings.ship_index == selected); item_price = shop_get_ship_price(selected); break;
     }
 
 #ifdef PLATFORM_HOST
@@ -1190,7 +1434,7 @@ static void render_upgrades_dynamic(void) {
     // Mini preview of ship with current speed?
     int ship_x = right_x + (right_w - 20) / 2;
     int ship_y = 118;
-    gfx_draw_ship(ship_x, ship_y, g_settings.accent_index, s_anim_frame);
+    gfx_draw_ship_styled(ship_x, ship_y, g_settings.accent_index, s_anim_frame, g_settings.ship_index);
     draw_preview_engine_trail(ship_x, ship_y, g_settings.trail_index);
 
     if (s_shop_msg_timer > 0) {
@@ -1343,8 +1587,13 @@ static void render_paused(void) {
     int y = (SCREEN_HEIGHT - h) / 2;
     gfx_draw_glass_card(x, y, w, h, PAL_TEXT_WHITE, 15);
     gfx_draw_text_centered(x, y + 6, w, "PAUSED", PAL_TEXT_CYAN);
-    const char* opts[] = { "Resume", "Restart", "Main Menu" };
-    for (int i = 0; i < 3; i++) gfx_draw_button(x + 10, y + 20 + i * 18, w - 20, 15, opts[i], s_menu_selected == i);
+    if (coop_guest_active()) {
+        const char* opts[] = { "Resume", "Leave Co-op" };
+        for (int i = 0; i < 2; i++) gfx_draw_button(x + 10, y + 20 + i * 18, w - 20, 15, opts[i], s_menu_selected == i);
+    } else {
+        const char* opts[] = { "Resume", "Restart", "Main Menu" };
+        for (int i = 0; i < 3; i++) gfx_draw_button(x + 10, y + 20 + i * 18, w - 20, 15, opts[i], s_menu_selected == i);
+    }
 }
 static void render_game_over(void) {
     game_draw();
@@ -1362,8 +1611,13 @@ static void render_game_over(void) {
     gfx_draw_text_centered(x, y + 28, w, buf, PAL_TEXT_GOLD);
     if (g_game.is_new_high_score) gfx_draw_badge(x + (w - 74) / 2, y + 39, "NEW BEST!", PAL_TEXT_GOLD);
     else { siprintf(buf, "Best:  %06u", (unsigned int)g_settings.high_score); gfx_draw_text_centered(x, y + 40, w, buf, 17); }
-    const char* opts[] = { "Retry", "Shop", "Main Menu" };
-    for (int i = 0; i < 3; i++) gfx_draw_button(x + 10, y + 54 + i * 18, w - 20, 15, opts[i], s_menu_selected == i);
+    if (coop_guest_active()) {
+        gfx_draw_button(x + 10, y + 54, w - 20, 15, "Main Menu", s_menu_selected == 0);
+        gfx_draw_text_centered(x, y + 74, w, "Host decides on a rematch", 17);
+    } else {
+        const char* opts[] = { "Retry", "Shop", "Main Menu" };
+        for (int i = 0; i < 3; i++) gfx_draw_button(x + 10, y + 54 + i * 18, w - 20, 15, opts[i], s_menu_selected == i);
+    }
 }
 
 void menu_draw(void) {
@@ -1386,6 +1640,11 @@ void menu_draw(void) {
         case SCREEN_MODE_SELECT:
             if (!s_static_valid) { menu_static_begin(); render_mode_select_static(); menu_static_end(); }
             render_mode_select_dynamic(); break;
+        case SCREEN_MULTIPLAYER:
+            /* Fully dynamic: matchmaking status can change on any frame. */
+            starfield_draw_base(0, 0);
+            starfield_draw_stars(0, 0);
+            render_multiplayer(); break;
         case SCREEN_PLAYING: game_draw(); break;
         case SCREEN_PAUSED: render_paused(); break;
         case SCREEN_GAME_OVER: render_game_over(); break;
