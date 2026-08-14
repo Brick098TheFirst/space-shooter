@@ -1,7 +1,7 @@
-# Copy this file to multiplayer-test/eos.properties and fill in values from:
+# Copy this file to android/eos.properties and fill in values from:
 # Epic Developer Portal -> your product -> Product Settings -> SDK Download & Credentials
 #
-# multiplayer-test/eos.properties is ignored by Git. Never commit the real
+# android/eos.properties is ignored by Git. Never commit the real
 # client secret. The Android client must use an untrusted, User Required
 # Peer2Peer client policy — never TrustedServer.
 

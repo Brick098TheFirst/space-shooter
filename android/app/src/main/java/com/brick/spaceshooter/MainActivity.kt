@@ -3,6 +3,7 @@ package com.brick.spaceshooter
 import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -10,6 +11,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.epicgames.mobile.eossdk.EOSSDK
+import java.io.File
 import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
@@ -22,8 +25,38 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setup90HzDisplay()
         hideSystemBars()
+        initializeEpicOnlineServices()
         gameView = GameView(this)
         setContentView(gameView)
+    }
+
+    /**
+     * The EOS Android Java layer must be initialized before loading our game
+     * library, because libspacegame links libEOSSDK. Credentials are generated
+     * from ignored eos.properties values (or CI environment secrets).
+     */
+    private fun initializeEpicOnlineServices() {
+        try {
+            System.loadLibrary("EOSSDK")
+            EOSSDK.init(this)
+
+            val eosCache = File(filesDir, "eos-cache").apply { mkdirs() }
+            val external = getExternalFilesDir(null)?.absolutePath.orEmpty()
+            NativeGame.nativeEosInitialize(
+                eosCache.absolutePath,
+                external,
+                BuildConfig.EOS_PRODUCT_ID,
+                BuildConfig.EOS_SANDBOX_ID,
+                BuildConfig.EOS_DEPLOYMENT_ID,
+                BuildConfig.EOS_CLIENT_ID,
+                BuildConfig.EOS_CLIENT_SECRET,
+                "Space Pilot"
+            )
+        } catch (error: Throwable) {
+            // Keep the offline game playable even when a local EOS setup is
+            // absent or malformed. The online chip reports configuration state.
+            Log.e("SpaceUnlimitedEOS", "Could not initialize EOS", error)
+        }
     }
 
     private fun setup90HzDisplay() {
@@ -71,10 +104,12 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         hideSystemBars()
         setup90HzDisplay()
+        try { NativeGame.nativeEosSetForeground(true) } catch (_: Throwable) {}
         if (::gameView.isInitialized) gameView.resume()
     }
 
     override fun onPause() {
+        try { NativeGame.nativeEosSetForeground(false) } catch (_: Throwable) {}
         if (::gameView.isInitialized) gameView.pause()
         super.onPause()
     }
@@ -86,6 +121,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         if (::gameView.isInitialized) gameView.release()
+        try { NativeGame.nativeEosShutdown() } catch (_: Throwable) {}
         super.onDestroy()
     }
 

@@ -38,6 +38,15 @@ object NativeGame {
     const val SCREEN_OPTIONS = 7
     const val SCREEN_MODE_SELECT = 8
 
+    const val EOS_CONFIG_REQUIRED = 0
+    const val EOS_INITIALIZING = 1
+    const val EOS_SIGNING_IN = 2
+    const val EOS_READY = 3
+    const val EOS_MATCHMAKING = 4
+    const val EOS_WAITING_FOR_PLAYER = 5
+    const val EOS_MATCHED = 6
+    const val EOS_ERROR = 7
+
     external fun nativeInit(saveDir: String)
     external fun nativeSetKeys(keys: Int)
     external fun nativeTick()
@@ -64,4 +73,28 @@ object NativeGame {
     external fun nativeTakeEraseRequest(): Int
     /** Wipe coins, unlocks, upgrades, high score, and settings. */
     external fun nativeResetAllData()
+
+    // Epic Online Services: Device-ID login, public two-player lobby, and P2P.
+    external fun nativeEosInitialize(
+        internalDir: String,
+        externalDir: String,
+        productId: String,
+        sandboxId: String,
+        deploymentId: String,
+        clientId: String,
+        clientSecret: String,
+        displayName: String
+    ): Int
+    external fun nativeEosTick()
+    external fun nativeEosSetForeground(foreground: Boolean)
+    external fun nativeEosShutdown()
+    external fun nativeEosGetStatus(): Int
+    external fun nativeEosGetStatusText(): String
+    external fun nativeEosQuickMatch(): Int
+    external fun nativeEosCancelMatch()
+    external fun nativeEosIsHost(): Int
+    external fun nativeEosMemberCount(): Int
+    external fun nativeEosSendPacket(packet: ByteArray, channel: Int, reliable: Boolean): Int
+    /** Return value packs channel in bits 24..31 and byte count in bits 0..23. */
+    external fun nativeEosReceivePacket(out: ByteArray): Int
 }

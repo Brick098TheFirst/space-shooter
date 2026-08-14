@@ -1,34 +1,106 @@
-# Space Unlimited: Recharged — Android (native host)
+# Space Unlimited — Android Multiplayer
 
-Android compiles the **same C game** in `gba/` with the NDK (`PLATFORM_HOST`). It is not a WebView, not an emulator, and not a second remake.
+This is the primary Android edition of Space Unlimited. It includes Epic Online
+Services multiplayer and replaces the former single-player-only Android app.
+The game still works offline when EOS credentials are not configured.
 
-GBA-only hardware (Mode 4 VRAM, DirectSound DMA, SRAM at `0x0E000000`) is swapped in `platform.h` / `platform_host.c`. Gameplay, shop, renderer software blit, and mixer stay in the shared sources.
+To avoid duplicating most of the C game and the Epic SDK, this project reuses:
 
-### Android Host Features
+- `../gba/` — shared renderer, audio, save, menu, assets, and platform sources.
+- `../SDK.zip` — Epic Online Services Android SDK 1.19.1.2.
 
-- **Adaptive Full-Screen Widescreen:** The framebuffer is 160 px tall with a runtime width from **284 to 480 px** that matches the phone's aspect ratio, so the picture fills the whole screen edge-to-edge — **no side bars, no letterbox** — on any device from 16:9 through 21:9+. Always **landscape** (`sensorLandscape`), immersive sticky mode, and draws under the display cutout (`shortEdges`). Rotating to the other landscape side, folding, or multi-window resizing re-fits live without restarting (`configChanges`).
-- **Cheat Codes (Settings → CODES):** A CODES row in Settings opens a native Android text dialog. `GIMMEMONEY` grants **999 trillion coins** ($999,000,000,000,000). Coins are 64-bit on Android (`coin_t`), and the save blob is written in a host-only **V7** layout (24-laser mask; legacy V5/V6 saves migrate automatically). Big balances print shortened (e.g. `999T`, `1.5B`).
-- **Erase All Data (Settings → ERASE DATA):** Confirms with a system dialog, then wipes coins, unlocks, upgrades, high score, and settings back to a fresh install.
-- **24 Laser Crystals:** The hangar LASERS tab has 24 crystals that get strictly stronger and more expensive as you go up. The hangar preview chamber actually fires the selected bolt (clipped, looping).
-- **Controller Support:** Xbox / generic Bluetooth gamepads work on Android. Left stick or D-pad to move, **A / RT** to fire, **B / X / LB** to charge the beam, **Start** to pause. The on-screen stick hides while a pad is in use.
-- **Boss Drone:** The wave boss is the unused mini-drone hull, scaled and recoloured (gold full boss / cyan mini-boss) so it cannot be mistaken for a hunter.
-- **Life-Only Powerups:** Shield and Rapid Fire powerup drops are removed on Android; every powerup roll resolves to the **life (repair)** pickup at its original rarity (20% of rolls → the same effective drop rate as before).
-- **90 Hz High Refresh Rate:** Configured for 90 Hz display refresh mode with synchronized 90 FPS Choreographer frame loop and 90 Hz time-accumulated physics.
-- **Synchronized Audio Mixer:** Mixes 202 samples @ 90 Hz (18.157 kHz source) and resamples to 44.1 kHz so Android does not pitch-shift or boom the soundtrack. Menu BGM is ducked so it is not louder/faster than the in-game track.
-- **Native Menu Touch:** Menus, hangar, upgrades, pause, and game-over are tapped directly. Shop tabs (`PAINTS` / `TRAILS` / `WEAPONS` / `LASERS`) use full-width touch zones, item/buy taps, and a horizontal swipe to change category. The virtual stick is hidden outside gameplay.
-- **Game Modes (Android only):** Play opens a mode select. **Waves** is the classic clear-the-wave run. **Endless** never stops — threat ramps, hunters spawn at random, no wave banners. **Overdrive** is a 90-second score rush with denser random spawns.
-- **Circular Virtual Stick:** In-game only floating circular analog pad (left) plus circular FIRE / BEAM (hold for big laser) buttons and a PAUSE chip.
-- **Haptics:** Settings menu toggles vibrator feedback (hits, kills, beam charge, beam fire, and button presses). Uses `VibratorManager` plus `performHapticFeedback` so it actually buzzes on modern phones. Persists in the save file. Gyro / tilt steering has been removed.
-- **Dynamic Phone Scaling:** The native width adapts to the current window (see above) and relayouts on rotate / multi-window resize, so there are never bars at the sides.
-- **Persistent Storage:** Coins, owned loot (paints, trails, weapons, lasers), upgrades, and high score write to `files/saves/save.sav` under the app's private internal storage (`Context.getFilesDir()`). That directory is always readable and writable by the app with **no storage permission and no folder picker** at launch. Legacy `space_unlimited.sav` files are migrated automatically.
+The Android host, Kotlin UI, JNI bridge, forked gameplay source, and all EOS
+multiplayer code live in this `android/` folder. It uses the primary application
+ID `com.brick.spaceshooter`.
 
-## Build
+## Implemented multiplayer foundation
+
+- EOS SDK initialization and Android foreground/background lifecycle handling.
+- Automatic EOS Connect Device-ID sign-in.
+- Public two-player Quick Match lobby search/create/join.
+- Empty-host retry to resolve simultaneous matchmaking races.
+- EOS P2P connection acceptance and generic packet send/receive JNI bridge.
+- Main-menu status chip for setup, login, search, waiting, match, and errors.
+- Credentials supplied only by an ignored local file or environment variables.
+
+## Two-player synchronized co-op
+
+When a Quick Match connects, the game enters **host-authoritative co-op**:
+
+- The **host** runs the full simulation — both ships, the asteroids, drones,
+  boss, bullets and powerups are all simulated in one shared world on the host.
+  The host broadcasts a compact snapshot of the whole world to the guest.
+- The **guest** stops simulating entirely. It streams its input (movement,
+  fire, beam) plus its equipped loadout to the host every frame, and simply
+  renders the host's snapshots — so both players see the *exact same* asteroids,
+  enemies and boss, and the same shared score/wave.
+- Each ship keeps its **own paint, laser crystal, weapon rig and engine trail**.
+  The host simulates the guest ship with the guest's own fire-rate / damage /
+  speed numbers, and bullets render in each owner's laser colour.
+- Snapshots are larger than one EOS packet (1170 bytes), so the host fragments
+  each one over reliable-ordered packets and the guest reassembles before
+  applying. The guest extrapolates gently between snapshots for smooth motion.
+- The host starts a normal game (mode select → play) and the guest is dragged
+  into the same run automatically. If the host restarts from game-over, the
+  guest follows. Leaving the run / leaving the lobby ends the co-op session.
+
+### Co-op source layout (this folder)
+
+- `app/src/main/cpp/game.c` / `game.h` — a **forked copy** of the shared GBA
+  game with the second-player support: a `player2` in `GameState`, per-owner
+  bullets, per-owner laser rendering, a host-side second-ship simulation, and
+  the snapshot serialize/apply/render hooks. The unmodified `gba/` sources are
+  untouched; only the Android edition compiles the fork.
+- `app/src/main/cpp/coop.c` / `coop.h` — the networking glue: input streaming,
+  snapshot fragmentation/reassembly, and game-start / leave control messages.
+- `app/src/main/cpp/native-lib.c` — wires `coop_tick()` into the frame loop and
+  ties the session to the EOS match state.
+
+Known multiplayer limitations: coins are awarded to the host's balance
+only (the shared run's coins don't sync to the guest), and the guest's own
+laser sound is played locally for feedback rather than network-synced.
+
+## Local credential setup
+
+In Epic Developer Portal, create a deployment and an untrusted **User Required
+Peer2Peer** client policy/client. Then:
+
+```bash
+cd android
+cp eos.properties.example eos.properties
+```
+
+Fill in the ignored `eos.properties`:
+
+```properties
+productId=
+sandboxId=
+deploymentId=
+clientId=
+clientSecret=
+```
+
+Confirm Git will ignore it:
+
+```bash
+git check-ignore -v android/eos.properties
+```
+
+Never use `git add -f` on that file. Never use a TrustedServer client policy in
+a public APK.
+
+## Local build
 
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+APK:
 
-Requires Android SDK + NDK (CMake). The GBA ROM build (`npm run build`) is unchanged and still uses libtonc (240×160 @ 60 FPS).
+```text
+android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+EOS SDK 1.19.1.2 makes the Android app API 26+ and 64-bit only
+(`arm64-v8a`, `x86_64`). Gradle expands the SDK into an ignored build directory.

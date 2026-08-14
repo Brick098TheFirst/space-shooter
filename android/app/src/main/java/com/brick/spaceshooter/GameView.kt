@@ -61,6 +61,12 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private val saveFile = File(saveDir, "save.sav")
     private var persistCounter = 0
 
+    // Epic Online Services status. EOS itself is ticked on this same UI thread
+    // because the SDK is not thread-safe and was initialized by MainActivity.
+    private var eosStatus = NativeGame.EOS_CONFIG_REQUIRED
+    private var eosStatusText = "Online co-op needs setup"
+    private var eosStatusPoll = 0
+
     private val audioBuf = ShortArray(NativeGame.AUDIO_SAMPLES_PER_FRAME)
     private val audioTrack: AudioTrack
 
@@ -158,6 +164,10 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         isHapticFeedbackEnabled = true
         migrateLegacySave()
         NativeGame.nativeInit(saveDir.absolutePath)
+        try {
+            eosStatus = NativeGame.nativeEosGetStatus()
+            eosStatusText = NativeGame.nativeEosGetStatusText()
+        } catch (_: Throwable) {}
 
         val minBuf = AudioTrack.getMinBufferSize(
             NativeGame.AUDIO_SAMPLE_RATE,
@@ -267,6 +277,16 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
         if (!running) return
 
+        try {
+            NativeGame.nativeEosTick()
+            eosStatusPoll++
+            if (eosStatusPoll >= 15) {
+                eosStatusPoll = 0
+                eosStatus = NativeGame.nativeEosGetStatus()
+                eosStatusText = NativeGame.nativeEosGetStatusText()
+            }
+        } catch (_: Throwable) {}
+
         val held = if (uiScreen == NativeGame.SCREEN_PLAYING) gameplayKeys() else 0
         keys = held or controllerBits() or pulseKeys
         pulseKeys = 0
@@ -364,6 +384,12 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val w = dp(72f)
         val h = dp(32f)
         return RectF(dp(12f), height - h - dp(12f), dp(12f) + w, height - dp(12f))
+    }
+
+    private fun onlineRect(): RectF {
+        val w = dp(154f).coerceAtMost(width * 0.42f)
+        val h = dp(38f)
+        return RectF(width - w - dp(12f), dp(12f), width - dp(12f), dp(12f) + h)
     }
 
     private fun resetStickToHome() {
@@ -565,6 +591,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     private fun drawOverlay(canvas: Canvas) {
         when (uiScreen) {
+            NativeGame.SCREEN_MAIN_MENU -> drawOnlineChip(canvas)
             NativeGame.SCREEN_PLAYING -> if (!usingController()) drawGameplayPad(canvas)
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
@@ -572,6 +599,39 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_OPTIONS,
             NativeGame.SCREEN_MODE_SELECT -> drawBackChip(canvas)
         }
+    }
+
+    private fun drawOnlineChip(canvas: Canvas) {
+        val r = onlineRect()
+        val accent = when (eosStatus) {
+            NativeGame.EOS_READY -> 0xFF52E690.toInt()
+            NativeGame.EOS_MATCHED -> 0xFF23D6FF.toInt()
+            NativeGame.EOS_ERROR -> 0xFFFF665A.toInt()
+            NativeGame.EOS_CONFIG_REQUIRED -> 0xFFFFC84A.toInt()
+            else -> 0xFF9B8CFF.toInt()
+        }
+        val title = when (eosStatus) {
+            NativeGame.EOS_CONFIG_REQUIRED -> "ONLINE SETUP"
+            NativeGame.EOS_INITIALIZING, NativeGame.EOS_SIGNING_IN -> "EPIC CONNECTING..."
+            NativeGame.EOS_READY -> "QUICK MATCH"
+            NativeGame.EOS_MATCHMAKING -> "SEARCHING..."
+            NativeGame.EOS_WAITING_FOR_PLAYER -> "WAITING 1 / 2"
+            NativeGame.EOS_MATCHED -> "CO-OP 2 / 2"
+            NativeGame.EOS_ERROR -> "ONLINE ERROR"
+            else -> "ONLINE CO-OP"
+        }
+        overlay.style = Paint.Style.FILL
+        overlay.color = 0xCC121B2A.toInt()
+        canvas.drawRoundRect(r, dp(18f), dp(18f), overlay)
+        overlay.style = Paint.Style.STROKE
+        overlay.strokeWidth = dp(2f)
+        overlay.color = accent
+        canvas.drawRoundRect(r, dp(18f), dp(18f), overlay)
+        overlay.style = Paint.Style.FILL
+        canvas.drawCircle(r.left + dp(15f), r.centerY(), dp(4f), overlay)
+        labelPaint.textSize = dp(11.5f)
+        labelPaint.color = 0xF2FFFFFF.toInt()
+        canvas.drawText(title, r.centerX() + dp(6f), r.centerY() + dp(4f), labelPaint)
     }
 
     private fun drawGameplayPad(canvas: Canvas) {
@@ -798,6 +858,11 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     }
 
     private fun performMenuTap(x: Float, y: Float) {
+        if (uiScreen == NativeGame.SCREEN_MAIN_MENU && onlineRect().contains(x, y)) {
+            pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
+            handleOnlineChip()
+            return
+        }
         if (needsBackChip() && backRect().contains(x, y)) {
             pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
             NativeGame.nativeGoBack()
@@ -806,6 +871,59 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val mapped = mapToGame(x, y) ?: return
         pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
         NativeGame.nativeQueueTap(mapped.first, mapped.second)
+    }
+
+    private fun handleOnlineChip() {
+        try {
+            eosStatus = NativeGame.nativeEosGetStatus()
+            eosStatusText = NativeGame.nativeEosGetStatusText()
+            when (eosStatus) {
+                NativeGame.EOS_READY -> {
+                    if (NativeGame.nativeEosQuickMatch() == 1) {
+                        eosStatus = NativeGame.EOS_MATCHMAKING
+                        eosStatusText = "Searching for a public co-op game..."
+                        Toast.makeText(context, "Quick Match started", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                NativeGame.EOS_CONFIG_REQUIRED -> showOnlineDialog(
+                    "ONLINE SETUP NEEDED",
+                    "Add your Epic Product, Sandbox, Deployment, Client ID, and Client Secret to android/eos.properties, then rebuild the app.",
+                    false
+                )
+                NativeGame.EOS_ERROR -> showOnlineDialog(
+                    "EPIC ONLINE ERROR",
+                    eosStatusText,
+                    true
+                )
+                NativeGame.EOS_MATCHED -> {
+                    val role = if (NativeGame.nativeEosIsHost() == 1) "Host" else "Guest"
+                    showOnlineDialog(
+                        "CO-OP LOBBY CONNECTED",
+                        "$role • ${NativeGame.nativeEosMemberCount()} / 2 players\n\n$eosStatusText",
+                        true
+                    )
+                }
+                else -> showOnlineDialog("ONLINE CO-OP", eosStatusText, true)
+            }
+        } catch (error: Throwable) {
+            Toast.makeText(context, "EOS unavailable: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showOnlineDialog(title: String, message: String, canCancelMatch: Boolean) {
+        val builder = AlertDialog.Builder(context)
+            .setTitle(title)
+            .setMessage(message)
+            .setNegativeButton("CLOSE", null)
+        if (canCancelMatch) {
+            builder.setPositiveButton("LEAVE / RESET") { _, _ ->
+                try {
+                    NativeGame.nativeEosCancelMatch()
+                    eosStatusText = NativeGame.nativeEosGetStatusText()
+                } catch (_: Throwable) {}
+            }
+        }
+        builder.show()
     }
 
     // ── Smooth scroll animation (run from doFrame) ──────────────────────
