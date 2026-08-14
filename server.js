@@ -66,5 +66,5 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`Space Unlimited Web Server listening on http://0.0.0.0:${PORT}`);
     console.log(`- GBA Web Player: http://0.0.0.0:${PORT}/`);
-    console.log(`- Android native host: build with android/gradlew (same gba/ C sources)`);
+    console.log(`- Android multiplayer host: build with android/gradlew (shared gba/ C sources)`);
 });

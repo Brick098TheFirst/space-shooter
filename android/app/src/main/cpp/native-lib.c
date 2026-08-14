@@ -9,6 +9,8 @@
 #include "game.h"
 #include "menu.h"
 #include "audio_data.h"
+#include "eos_online.h"
+#include "coop.h"
 
 #ifndef HOST_OUT_RATE
 #define HOST_OUT_RATE 44100
@@ -31,6 +33,7 @@ Java_com_brick_spaceshooter_NativeGame_nativeInit(JNIEnv* env, jclass clazz, jst
     starfield_init();
     game_init();
     menu_init();
+    coop_init();
     audio_start();
 }
 
@@ -40,13 +43,30 @@ Java_com_brick_spaceshooter_NativeGame_nativeSetKeys(JNIEnv* env, jclass clazz, 
     platform_set_keys((u16)keys);
 }
 
+/* Tracks the last EOS match state so the co-op layer is told exactly once
+ * when a lobby is joined / left. */
+static int s_coop_prev_matched = 0;
+
 JNIEXPORT void JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeTick(JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
     menu_update();
+    /* Co-op glue: runs after the local keys are polled and before the frame
+     * is drawn, so the guest renders the freshest host snapshot and the host
+     * broadcasts its current simulation state. */
+    coop_tick();
     menu_draw();
     audio_update();
     gfx_flip();
+
+    /* Keep the co-op session lifecycle tied to the EOS match state. */
+    int matched = (eos_online_status() == EOS_ONLINE_MATCHED);
+    if (matched && !s_coop_prev_matched) {
+        coop_on_matched(eos_online_is_host());
+    } else if (!matched && s_coop_prev_matched) {
+        coop_on_unmatched();
+    }
+    s_coop_prev_matched = matched;
 }
 
 JNIEXPORT void JNICALL
@@ -228,4 +248,122 @@ Java_com_brick_spaceshooter_NativeGame_nativeResetAllData(JNIEnv* env, jclass cl
     (void)env; (void)clazz;
     save_reset_all();
     menu_request_full_redraw();
+}
+
+/* ── Epic Online Services (Android only) ─────────────────────────────── */
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosInitialize(
+        JNIEnv* env, jclass clazz,
+        jstring internalDir, jstring externalDir, jstring productId,
+        jstring sandboxId, jstring deploymentId, jstring clientId,
+        jstring clientSecret, jstring displayName) {
+    (void)clazz;
+    const char* internal_dir = internalDir ? (*env)->GetStringUTFChars(env, internalDir, NULL) : NULL;
+    const char* external_dir = externalDir ? (*env)->GetStringUTFChars(env, externalDir, NULL) : NULL;
+    const char* product_id = productId ? (*env)->GetStringUTFChars(env, productId, NULL) : NULL;
+    const char* sandbox_id = sandboxId ? (*env)->GetStringUTFChars(env, sandboxId, NULL) : NULL;
+    const char* deployment_id = deploymentId ? (*env)->GetStringUTFChars(env, deploymentId, NULL) : NULL;
+    const char* client_id = clientId ? (*env)->GetStringUTFChars(env, clientId, NULL) : NULL;
+    const char* client_secret = clientSecret ? (*env)->GetStringUTFChars(env, clientSecret, NULL) : NULL;
+    const char* display_name = displayName ? (*env)->GetStringUTFChars(env, displayName, NULL) : NULL;
+
+    EosOnlineConfig config = {
+        internal_dir, external_dir, product_id, sandbox_id, deployment_id,
+        client_id, client_secret, display_name
+    };
+    int result = eos_online_initialize(&config);
+
+    if (internal_dir) (*env)->ReleaseStringUTFChars(env, internalDir, internal_dir);
+    if (external_dir) (*env)->ReleaseStringUTFChars(env, externalDir, external_dir);
+    if (product_id) (*env)->ReleaseStringUTFChars(env, productId, product_id);
+    if (sandbox_id) (*env)->ReleaseStringUTFChars(env, sandboxId, sandbox_id);
+    if (deployment_id) (*env)->ReleaseStringUTFChars(env, deploymentId, deployment_id);
+    if (client_id) (*env)->ReleaseStringUTFChars(env, clientId, client_id);
+    if (client_secret) (*env)->ReleaseStringUTFChars(env, clientSecret, client_secret);
+    if (display_name) (*env)->ReleaseStringUTFChars(env, displayName, display_name);
+    return (jint)result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosTick(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    eos_online_tick();
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosSetForeground(JNIEnv* env, jclass clazz, jboolean foreground) {
+    (void)env; (void)clazz;
+    eos_online_set_foreground(foreground ? 1 : 0);
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosShutdown(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    eos_online_shutdown();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosGetStatus(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)eos_online_status();
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosGetStatusText(JNIEnv* env, jclass clazz) {
+    (void)clazz;
+    return (*env)->NewStringUTF(env, eos_online_status_text());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosQuickMatch(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)eos_online_quick_match();
+}
+
+JNIEXPORT void JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosCancelMatch(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    eos_online_cancel_match();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosIsHost(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)eos_online_is_host();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosMemberCount(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)eos_online_member_count();
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosSendPacket(
+        JNIEnv* env, jclass clazz, jbyteArray packet, jint channel, jboolean reliable) {
+    (void)clazz;
+    if (!packet) return 0;
+    jsize size = (*env)->GetArrayLength(env, packet);
+    if (size <= 0 || size > 1170) return 0;
+    jbyte* bytes = (*env)->GetByteArrayElements(env, packet, NULL);
+    if (!bytes) return 0;
+    int sent = eos_online_send_packet(bytes, (uint32_t)size, (uint8_t)channel, reliable ? 1 : 0);
+    (*env)->ReleaseByteArrayElements(env, packet, bytes, JNI_ABORT);
+    return (jint)sent;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeEosReceivePacket(
+        JNIEnv* env, jclass clazz, jbyteArray out) {
+    (void)clazz;
+    if (!out) return 0;
+    jsize capacity = (*env)->GetArrayLength(env, out);
+    if (capacity <= 0) return 0;
+    jbyte* bytes = (*env)->GetByteArrayElements(env, out, NULL);
+    if (!bytes) return 0;
+    uint8_t channel = 0;
+    int received = eos_online_receive_packet(bytes, (uint32_t)capacity, &channel);
+    (*env)->ReleaseByteArrayElements(env, out, bytes, 0);
+    if (received <= 0) return 0;
+    return (jint)(((uint32_t)channel << 24) | (uint32_t)received);
 }

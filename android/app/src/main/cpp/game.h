@@ -220,8 +220,8 @@ void game_update(void);
 void game_draw(void);
 
 /* ── Co-op (host-authoritative) integration hooks ───────────────────────
- * These are called from the multiplayer-test network layer (coop.c) and are
- * no-ops / inert on the normal single-player build.  On the HOST the game
+ * These are called from the Android multiplayer network layer (coop.c) and are
+ * no-ops / inert during an offline single-player session. On the HOST the game
  * simulates a second ship from the guest's streamed input; on the GUEST the
  * game stops simulating and only renders the host's snapshots. */
 void game_coop_set_guest_active(int active);        // host: start simulating player 2

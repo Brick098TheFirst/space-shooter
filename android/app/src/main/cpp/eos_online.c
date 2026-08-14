@@ -490,7 +490,7 @@ int eos_online_initialize(const EosOnlineConfig* config) {
         !valid_text(config->deployment_id) || !valid_text(config->client_id) ||
         !valid_text(config->client_secret)) {
         set_status(EOS_ONLINE_CONFIG_REQUIRED,
-                   "Online co-op needs multiplayer-test/eos.properties");
+                   "Online co-op needs android/eos.properties");
         return 0;
     }
     if (s_platform) return 1;

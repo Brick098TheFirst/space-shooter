@@ -50,9 +50,9 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 
 ---
 
-## 📱 Android (same C game, NDK host)
+## 📱 Android (multiplayer NDK host)
 
-The Android app compiles the **same sources in `gba/`** with the NDK (`PLATFORM_HOST`). No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus (including shop tabs), and shows a circular virtual stick only while playing.
+The primary Android app is the multiplayer edition. It shares the renderer, audio, save, menu, and asset sources in `gba/`, and compiles an Android-specific fork of `game.c` with two-player support using the NDK (`PLATFORM_HOST`). Epic Online Services provides Device-ID sign-in, public Quick Match lobbies, and P2P networking; the game remains playable offline when EOS credentials are not configured. No WebView, no emulator. A Kotlin `GameView` presents the 16:9 widescreen 284×160 framebuffer scaled to the phone, runs at 90 Hz, plays the soundtrack at 44.1 kHz, uses native tap targets in menus (including shop tabs), and shows a circular virtual stick only while playing.
 
 Play opens a **mode select** on **both** Android and GBA:
 
@@ -117,8 +117,7 @@ node tools/shot_gba.mjs /tmp/shots  # write PNG screenshots instead
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
-| `android/` | Stable single-player NDK host that compiles `gba/` C for Android (`PLATFORM_HOST`) |
-| `multiplayer-test/` | Isolated Android EOS Device-ID, public lobby, and P2P test edition; reuses `gba/` and `SDK.zip` |
+| `android/` | Primary multiplayer Android NDK host with EOS Device-ID sign-in, public lobbies, P2P co-op, and shared `gba/` sources |
 | `Assets/` | Source images and WAV audio (extracted from `spaceshooter.sb3`) |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |

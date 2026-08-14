@@ -9,7 +9,7 @@ extern "C" {
 
 /* Co-op networking glue.  This layer sits between the EOS P2P bridge
  * (eos_online.c) and the forked host-authoritative game simulation
- * (game.c), and is only compiled into the multiplayer-test edition.
+ * (game.c), and is only compiled into the Android multiplayer edition.
  *
  *    HOST  : simulates both ships, broadcasts full world snapshots.
  *    GUEST : streams input, renders the host's snapshots (no local sim).
