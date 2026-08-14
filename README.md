@@ -117,7 +117,8 @@ node tools/shot_gba.mjs /tmp/shots  # write PNG screenshots instead
 | Path | Description |
 |---|---|
 | `SpaceUnlimited.gba` | Compiled Game Boy Advance ROM |
-| `android/` | NDK host that compiles `gba/` C for Android (`PLATFORM_HOST`) |
+| `android/` | Stable single-player NDK host that compiles `gba/` C for Android (`PLATFORM_HOST`) |
+| `multiplayer-test/` | Isolated Android EOS Device-ID, public lobby, and P2P test edition; reuses `gba/` and `SDK.zip` |
 | `Assets/` | Source images and WAV audio (extracted from `spaceshooter.sb3`) |
 | `gba/` | GBA C source code and headers (`src/`, `include/`) |
 | `tools/` | Asset converter (`generate_gba_data.py`), GBA compiler driver (`build_gba.js`), and bundler (`bundle_web.js`) |

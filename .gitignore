@@ -16,6 +16,15 @@ android/app/build/
 android/app/src/main/assets/www/
 android/local.properties
 
+# Multiplayer test Android / Gradle output
+multiplayer-test/.gradle/
+multiplayer-test/build/
+multiplayer-test/app/build/
+multiplayer-test/local.properties
+
+# Epic Online Services credentials (never commit these)
+multiplayer-test/eos.properties
+
 # OS/editor files
 .DS_Store
 Thumbs.db
