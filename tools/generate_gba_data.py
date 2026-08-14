@@ -130,7 +130,11 @@ game_snd = resample_wav(os.path.join(audio_dir, 'game.wav'), 18157)
 laser_snd = resample_wav(os.path.join(audio_dir, 'laser.wav'), 18157)
 explosion_snd = resample_wav(os.path.join(audio_dir, 'explosion.wav'), 18157)
 pickup_snd = resample_wav(os.path.join(audio_dir, 'pickup.wav'), 18157)
+boss_snd = resample_wav(os.path.join(audio_dir, 'boss.wav'), 18157)
 
+# Keep the established five assets bit-for-bit stable: calculate their shared
+# gain and quantize them in the original order, then quantize boss.wav last.
+# boss.wav is peak-limited independently if its resampler overshoots.
 peak = 0.0
 for track in (menu_snd, game_snd, laser_snd, explosion_snd, pickup_snd):
     peak = max(peak, max(abs(s) for s in track))
@@ -141,8 +145,11 @@ game_snd = quantize_8bit(game_snd, gain)
 laser_snd = quantize_8bit(laser_snd, gain)
 explosion_snd = quantize_8bit(explosion_snd, gain)
 pickup_snd = quantize_8bit(pickup_snd, gain)
+boss_peak = max(abs(s) for s in boss_snd) if boss_snd else 0.0
+boss_gain = min(gain, (0.85 / boss_peak) if boss_peak > 0.0 else gain)
+boss_snd = quantize_8bit(boss_snd, boss_gain)
 
-print(f"Audio resampled: menu={len(menu_snd)}, game={len(game_snd)}, laser={len(laser_snd)}, expl={len(explosion_snd)}, pickup={len(pickup_snd)}")
+print(f"Audio resampled: menu={len(menu_snd)}, game={len(game_snd)}, boss={len(boss_snd)}, laser={len(laser_snd)}, expl={len(explosion_snd)}, pickup={len(pickup_snd)}")
 
 with open('gba/include/audio_data.h', 'w') as f:
     f.write("""#ifndef AUDIO_DATA_H
@@ -160,6 +167,9 @@ extern const u32 snd_menu_len;
 
 extern const s8 snd_game_pcm[];
 extern const u32 snd_game_len;
+
+extern const s8 snd_boss_pcm[];
+extern const u32 snd_boss_len;
 
 extern const s8 snd_laser_pcm[];
 extern const u32 snd_laser_len;
@@ -190,6 +200,7 @@ with open('gba/src/audio_data.c', 'w') as f:
     write_array("snd_laser", laser_snd)
     write_array("snd_explosion", explosion_snd)
     write_array("snd_pickup", pickup_snd)
+    write_array("snd_boss", boss_snd)
 
 def decode_png(path):
     with open(path, 'rb') as f:

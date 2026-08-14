@@ -28,6 +28,8 @@ void gfx_draw_rect(int x, int y, int w, int h, u8 color);
 void gfx_draw_glass_card(int x, int y, int w, int h, u8 border_color, u8 fill_color);
 
 void gfx_draw_sprite(int x, int y, int w, int h, const u8* data);
+/* Animated spectrum recolour used for the all-rainbow asteroid reward. */
+void gfx_draw_sprite_rainbow(int x, int y, int w, int h, const u8* data, int anim_frame);
 void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
 /* Draws any hull style with any paint.  Style 0 delegates to the classic
  * spr_ship fast path; styles 1+ render from the spr_ship_styles templates,

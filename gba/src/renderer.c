@@ -40,38 +40,18 @@ static bool s_laser_ready = false;
  * consistent without changing the global Mode 4 palette at runtime. */
 static const u8 s_rainbow_colors[7] = { 70, 50, 66, 62, 54, 58, 78 };
 
-#ifdef PLATFORM_HOST
-/* 24 Android crystals. First 12 keep the original hues so old unlocks
- * still look like themselves; 12-23 climb into brighter/rarer ramps. */
+/* Five clear crystal tiers.  Index 4 is animated at draw time, so this
+ * palette entry is only its preview/fallback colour. */
 static const u8 s_laser_palette[NUM_LASERS] = {
-    21,  24,  28,  27,  26,  62,  116, 120,
-    70,  54,  66,  78,  50,  184, 58,  120,
-    77,  66,  116, 24,  28,  54,  78,  16
+    21,  // Ion Basic
+    24,  // Solar Gold
+    28,  // Nebula Violet
+    16,  // Quantum White
+    120  // Rainbow Prism (animated)
 };
-#else
-/* 12 laser colours matching expanded crystal list */
-static const u8 s_laser_palette[NUM_LASERS] = {
-    21,  // 0 Ion Cyan - basic weak
-    24,  // 1 Solar Gold
-    28,  // 2 Nebula Violet
-    27,  // 3 Toxic Mint
-    26,  // 4 Crimson Fury
-    62,  // 5 Emerald Surge
-    116, // 6 Void Shadow
-    120, // 7 Rainbow (animated)
-    70,  // 8 Inferno Red
-    54,  // 9 Frost Blue
-    66,  //10 Photon Gold
-    78   //11 Omega Prism - final god laser
-};
-#endif
 
 bool gfx_laser_is_animated(int laser_idx) {
-    if (laser_idx == LASER_RAINBOW_IDX) return true;
-#ifdef PLATFORM_HOST
-    if (laser_idx == 15 || laser_idx == LASER_FINAL_IDX) return true;
-#endif
-    return false;
+    return laser_idx == LASER_RAINBOW_IDX;
 }
 
 const u8* gfx_get_framebuffer(void) {
@@ -191,6 +171,39 @@ IWRAM_CODE void gfx_draw_sprite(int x, int y, int w, int h, const u8* data) {
         }
         src += src_skip;
         dst += dst_skip;
+    }
+}
+
+/* Animated spectrum recolour for asteroids.  Their source ramp is grayscale
+ * (90..100); map that shade onto the same seven paint ramps used by the ship
+ * and trail, preserving highlights while a diagonal colour wave moves. */
+IWRAM_CODE void gfx_draw_sprite_rainbow(int x, int y, int w, int h, const u8* data, int anim_frame) {
+    static const u8 rainbow_accents[7] = { 5, 0, 4, 3, 1, 2, 7 };
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
+    int y1 = y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
+    if (s_clip_on) {
+        if (x0 < s_clip_x0) x0 = s_clip_x0;
+        if (y0 < s_clip_y0) y0 = s_clip_y0;
+        if (x1 > s_clip_x1) x1 = s_clip_x1;
+        if (y1 > s_clip_y1) y1 = s_clip_y1;
+    }
+    for (int py = y0; py < y1; py++) {
+        int sy = py - y;
+        for (int px = x0; px < x1; px++) {
+            int sx = px - x;
+            u8 pix = data[sy * w + sx];
+            if (pix == 0) continue;
+            int shade = (pix >= 90) ? (pix - 90) / 3 : 2;
+            /* Keep even the darkest rock pixels chromatic enough to read as
+             * rainbow against the near-black starfield. */
+            if (shade < 1) shade = 1;
+            if (shade > 3) shade = 3;
+            int phase = ((anim_frame >> 1) + sx + sy) % 28;
+            u8 accent = rainbow_accents[phase / 4];
+            s_rt[py * SCREEN_WIDTH + px] = (u8)(48 + accent * 4 + shade);
+        }
     }
 }
 
@@ -598,29 +611,45 @@ const char* gfx_get_trail_desc(int trail_idx) {
 
 const char* gfx_get_weapon_name(WeaponRig rig) {
     switch (rig) {
-        case WEAPON_SINGLE:  return "Single Blaster";
-        case WEAPON_TWIN:    return "Twin Cannons";
-        case WEAPON_SPREAD:  return "Spread Cannon";
-        case WEAPON_FOCUSED: return "Focused Beam";
-        case WEAPON_TRIPLE:  return "Triple Blaster";
-        case WEAPON_PLASMA:  return "Plasma Flak";
-        case WEAPON_QUANTUM: return "Quantum Core";
-        case WEAPON_NOVA:    return "Nova Annihilator";
-        default:             return "Blaster";
+        case WEAPON_SINGLE:    return "Pulse Blaster";
+        case WEAPON_TWIN:      return "Twin Cannons";
+        case WEAPON_SPREAD:    return "Scatter Array";
+        case WEAPON_FOCUSED:   return "Rail Trident";
+        case WEAPON_TRIPLE:    return "Quad Blaster";
+        case WEAPON_PLASMA:    return "Plasma Lances";
+        case WEAPON_QUANTUM:   return "Quantum Five";
+        case WEAPON_NOVA:      return "Nova Star";
+        case WEAPON_ARC_HEX:   return "Arc Hex";
+        case WEAPON_RIFT:      return "Rift Battery";
+        case WEAPON_COMET:     return "Comet Swarm";
+        case WEAPON_SOLAR:     return "Solar Lances";
+        case WEAPON_STARQUAKE: return "Starquake";
+        case WEAPON_VOID:      return "Void Crown";
+        case WEAPON_PRISM:     return "Prism Storm";
+        case WEAPON_INFINITY:  return "Infinity Beam";
+        default:               return "Blaster";
     }
 }
 
 const char* gfx_get_weapon_desc(WeaponRig rig) {
     switch (rig) {
-        case WEAPON_SINGLE:  return "Weak solo - 1 rock";
-        case WEAPON_TWIN:    return "Dual balanced shot";
-        case WEAPON_SPREAD:  return "3-way broad salvo";
-        case WEAPON_FOCUSED: return "Heavy piercing beam";
-        case WEAPON_TRIPLE:  return "Tri-barrel barrage";
-        case WEAPON_PLASMA:  return "Twin explosive flak";
-        case WEAPON_QUANTUM: return "High-energy drill";
-        case WEAPON_NOVA:    return "5x god piercing!";
-        default:             return "Main cannons";
+        case WEAPON_SINGLE:    return "Starter single pulse";
+        case WEAPON_TWIN:      return "Two straight cannons";
+        case WEAPON_SPREAD:    return "Three-way coverage";
+        case WEAPON_FOCUSED:   return "3 heavy rail bolts";
+        case WEAPON_TRIPLE:    return "Four-barrel barrage";
+        case WEAPON_PLASMA:    return "4 piercing lances";
+        case WEAPON_QUANTUM:   return "Five heavy drills";
+        case WEAPON_NOVA:      return "Five nova projectiles";
+        case WEAPON_ARC_HEX:   return "Six-bolt arc fan";
+        case WEAPON_RIFT:      return "Six focused rippers";
+        case WEAPON_COMET:     return "Seven-comet spread";
+        case WEAPON_SOLAR:     return "7 piercing sunbolts";
+        case WEAPON_STARQUAKE: return "Nine-way shockwave";
+        case WEAPON_VOID:      return "9 void-piercing shots";
+        case WEAPON_PRISM:     return "Eleven-bolt storm";
+        case WEAPON_INFINITY:  return "Hold fire: endless beam";
+        default:               return "Main cannons";
     }
 }
 
@@ -629,33 +658,19 @@ const char* gfx_get_laser_name(int laser_idx) {
         case 0: return "Ion Basic";
         case 1: return "Solar Gold";
         case 2: return "Nebula Violet";
-        case 3: return "Toxic Mint";
-        case 4: return "Crimson Fury";
-        case 5: return "Emerald Surge";
-        case 6: return "Void Shadow";
-        case 7: return "Rainbow Laser";
-        case 8: return "Inferno Red";
-        case 9: return "Frost Blue";
-        case 10: return "Photon Gold";
-        case 11: return "Omega Prism";
+        case 3: return "Quantum White";
+        case 4: return "Rainbow Prism";
         default: return "Beam Crystal";
     }
 }
 
 const char* gfx_get_laser_desc(int laser_idx) {
     switch (laser_idx) {
-        case 0: return "Starter - weak 1dmg";
-        case 1: return "Amber photon +0";
-        case 2: return "Purple bolt +1";
-        case 3: return "Toxin glow +1";
-        case 4: return "Thermal over +2";
-        case 5: return "Gamma green +3";
-        case 6: return "Dark matter +4";
-        case 7: return "Spectrum + pierce +5";
-        case 8: return "Inferno heat +2";
-        case 9: return "Frost bite +3";
-        case 10: return "Photon burst +5";
-        case 11: return "GOD! Pierce +7, 1shot";
+        case 0: return "Starter wavelength +0";
+        case 1: return "Small damage boost +1";
+        case 2: return "Mid-tier energy +4";
+        case 3: return "Endgame crystal +10";
+        case 4: return "Animated spectrum +14";
         default: return "Laser wavelength";
     }
 }

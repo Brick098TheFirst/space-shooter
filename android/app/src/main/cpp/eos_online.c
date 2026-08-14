@@ -18,7 +18,7 @@
 /* Versioned with the coop protocol (coop.c COOP_PROTOCOL_VERSION): builds
  * that speak different packet layouts never matchmake into each other's
  * lobbies, so an old APK can never silently misbehave against a new one. */
-#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V3"
+#define COOP_BUCKET "SPACE_UNLIMITED_COOP_V4"
 #define COOP_SOCKET "SPACECOOP1"
 #define EOS_TEXT_CAP 192
 #define LOBBY_ID_CAP 128

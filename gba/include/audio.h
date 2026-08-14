@@ -18,7 +18,8 @@
 typedef enum {
     BGM_NONE,
     BGM_MENU,
-    BGM_GAME
+    BGM_GAME,
+    BGM_BOSS
 } BgmTrack;
 
 typedef enum {
@@ -31,6 +32,11 @@ void audio_init(void);
 void audio_start(void);
 void audio_update(void);
 void audio_play_bgm(BgmTrack track);
+/* Boss cue: fade the normal track out, leave one second of real silence for
+ * the entrance, then fade boss.wav in.  Ending a boss resumes the gameplay
+ * track at the exact sample where it was paused. */
+void audio_begin_boss_music(void);
+void audio_end_boss_music(void);
 void audio_stop_bgm(void);
 void audio_play_sfx(SfxId sfx);
 void audio_stop_all(void);
