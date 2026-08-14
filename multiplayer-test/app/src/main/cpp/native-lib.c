@@ -10,6 +10,7 @@
 #include "menu.h"
 #include "audio_data.h"
 #include "eos_online.h"
+#include "coop.h"
 
 #ifndef HOST_OUT_RATE
 #define HOST_OUT_RATE 44100
@@ -32,6 +33,7 @@ Java_com_brick_spaceshooter_NativeGame_nativeInit(JNIEnv* env, jclass clazz, jst
     starfield_init();
     game_init();
     menu_init();
+    coop_init();
     audio_start();
 }
 
@@ -41,13 +43,30 @@ Java_com_brick_spaceshooter_NativeGame_nativeSetKeys(JNIEnv* env, jclass clazz, 
     platform_set_keys((u16)keys);
 }
 
+/* Tracks the last EOS match state so the co-op layer is told exactly once
+ * when a lobby is joined / left. */
+static int s_coop_prev_matched = 0;
+
 JNIEXPORT void JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeTick(JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
     menu_update();
+    /* Co-op glue: runs after the local keys are polled and before the frame
+     * is drawn, so the guest renders the freshest host snapshot and the host
+     * broadcasts its current simulation state. */
+    coop_tick();
     menu_draw();
     audio_update();
     gfx_flip();
+
+    /* Keep the co-op session lifecycle tied to the EOS match state. */
+    int matched = (eos_online_status() == EOS_ONLINE_MATCHED);
+    if (matched && !s_coop_prev_matched) {
+        coop_on_matched(eos_online_is_host());
+    } else if (!matched && s_coop_prev_matched) {
+        coop_on_unmatched();
+    }
+    s_coop_prev_matched = matched;
 }
 
 JNIEXPORT void JNICALL

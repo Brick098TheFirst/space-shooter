@@ -19,7 +19,8 @@ add_library(spacegame SHARED
     native-lib.c
     platform_host.c
     eos_online.c
-    ${GBA_DIR}/src/game.c
+    coop.c
+    game.c
     ${GBA_DIR}/src/menu.c
     ${GBA_DIR}/src/renderer.c
     ${GBA_DIR}/src/audio.c
@@ -29,9 +30,13 @@ add_library(spacegame SHARED
     ${GBA_DIR}/src/gfx_data.c
 )
 
+# The multiplayer-test edition compiles its own FORKED copy of game.c/game.h
+# (the one in this folder), which adds the host-authoritative co-op player.
+# Keep this source dir FIRST so every translation unit picks up the forked
+# game.h instead of the unmodified gba/include/game.h.
 target_include_directories(spacegame PRIVATE
-    ${GBA_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${GBA_DIR}/include
     ${EOS_INCLUDE_DIR}
 )
 
