@@ -14,6 +14,7 @@ AUDIO = ROOT / "Audio"
 EXPECTED_AUDIO = (
     "menu.wav",
     "game.wav",
+    "boss.wav",
     "laser.wav",
     "explosion.wav",
     "pickup.wav",
@@ -76,7 +77,8 @@ def main() -> None:
             errors.append(f"{path.name}: invalid WAV ({exc})")
 
     total = sum(path.stat().st_size for path in ROOT.rglob("*") if path.is_file())
-    if total > 7 * 1024 * 1024:
+    # boss.wav is a full 161-second stereo source track (~13.6 MiB).
+    if total > 24 * 1024 * 1024:
         errors.append(f"selected assets are unexpectedly large: {total / 1024 / 1024:.2f} MiB")
 
     if errors:

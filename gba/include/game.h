@@ -177,6 +177,11 @@ typedef struct {
     int beam_charge; // ticks accumulated while charging
     int beam_timer;  // ticks remaining while beam is live
     bool beam_active;
+
+    // Infinity Beam primary fire: no charge/cooldown, active while A is held.
+    // Damage ramps from 20% to full over 0.6s to keep tapping sub-optimal.
+    int primary_beam_ramp;
+    bool primary_beam_active;
 } GameState;
 
 extern GameState g_game;

@@ -37,6 +37,8 @@ typedef struct {
     int beam_charge;
     int beam_timer;
     bool beam_active;
+    int primary_beam_ramp;
+    bool primary_beam_active;
     bool dead; // player 2 lost all lives (host continues with player 1)
 } Player;
 
@@ -208,6 +210,8 @@ typedef struct {
     int beam_charge; // ticks accumulated while charging
     int beam_timer;  // ticks remaining while beam is live
     bool beam_active;
+    int primary_beam_ramp;
+    bool primary_beam_active;
 } GameState;
 
 extern GameState g_game;

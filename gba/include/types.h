@@ -33,29 +33,31 @@ typedef u64 coin_t;
 #define COINS_MAX ((u64)999000000000000ULL)
 #else
 typedef u32 coin_t;
-#define COINS_MAX ((u32)9999999u)
+/* A billion-credit ultimate weapon must also be purchasable on real GBA
+ * hardware.  SRAM already stores this as u32, so no save-layout change is
+ * needed. */
+#define COINS_MAX ((u32)2000000000u)
 #endif
 
 #define NUM_ACCENTS 9
 #define NUM_TRAILS 8
-#define NUM_RIGS 8
+#define NUM_RIGS 16
 /* Hull STYLES in the SHIPS tab: distinct ship silhouettes (not paints).
  * Style index 0 is the classic Cyber Mk I everyone starts with.  The paint
  * (accent) and the style are applied together: every style respects every
  * paint, including the animated rainbow one. */
 #define NUM_SHIP_STYLES 5
 #define SHIP_STYLE_CLASSIC 0
-#ifdef PLATFORM_HOST
-/* Android hangar: 24 crystals, strictly stronger/pricier as the index climbs.
- * Bits 0-11 keep the original 12 unlocks so old saves still make sense. */
-#define NUM_LASERS 24
-#define LASER_RAINBOW_IDX 7
-#define LASER_FINAL_IDX   23
-#else
-#define NUM_LASERS 12
-#define LASER_RAINBOW_IDX 7
-#define LASER_FINAL_IDX   11
-#endif
+/* Laser crystals are deliberately a short, readable five-step ladder.  The
+ * weapon-rig catalog below supplies the broad combat progression; crystals
+ * are a secondary damage/colour choice instead of a second 24-item weapon
+ * list.  The final crystal is also the animated rainbow cosmetic. */
+#define NUM_LASERS 5
+#define LASER_RAINBOW_IDX 4
+#define LASER_FINAL_IDX   LASER_RAINBOW_IDX
+
+#define ACCENT_RAINBOW_IDX 8
+#define TRAIL_RAINBOW_IDX  7
 #define NUM_UPGRADES 8
 #define UPG_MAX_LEVEL 5
 
@@ -66,14 +68,22 @@ typedef enum {
 } Difficulty;
 
 typedef enum {
-    WEAPON_SINGLE    = 0, // starter: 1 weak bullet
-    WEAPON_TWIN      = 1,
-    WEAPON_SPREAD    = 2,
-    WEAPON_FOCUSED   = 3,
-    WEAPON_TRIPLE    = 4,
-    WEAPON_PLASMA    = 5,
-    WEAPON_QUANTUM   = 6,
-    WEAPON_NOVA      = 7  // final mega weapon
+    WEAPON_SINGLE     = 0,  // starter pulse
+    WEAPON_TWIN       = 1,
+    WEAPON_SPREAD     = 2,
+    WEAPON_FOCUSED    = 3,
+    WEAPON_TRIPLE     = 4,
+    WEAPON_PLASMA     = 5,
+    WEAPON_QUANTUM    = 6,
+    WEAPON_NOVA       = 7,
+    WEAPON_ARC_HEX    = 8,
+    WEAPON_RIFT       = 9,
+    WEAPON_COMET      = 10,
+    WEAPON_SOLAR      = 11,
+    WEAPON_STARQUAKE  = 12,
+    WEAPON_VOID       = 13,
+    WEAPON_PRISM      = 14,
+    WEAPON_INFINITY   = 15  // $1B hold-to-fire continuous beam
 } WeaponRig;
 
 typedef enum {

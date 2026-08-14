@@ -20,7 +20,7 @@ game deliberately renders every asset at a fixed, measured gameplay size:
 The render canvas is 1280 × 720 and always letterboxes to 16:9, so resizing or
 fullscreen mode cannot stretch the art or make objects unexpectedly huge.
 
-The five WAV files in `Audio/` are also the checked-in source assets for the GBA
-build. `tools/generate_gba_data.py` converts them to 16.384 kHz signed 8-bit PCM
-arrays in `gba/src/audio_data.c`; GBA hardware cannot play the WAV containers
-directly.
+The six WAV files in `Audio/` are also the checked-in source assets for the GBA
+build, including the dedicated `boss.wav` cue. `tools/generate_gba_data.py`
+converts them to 18.157 kHz signed 8-bit PCM arrays in `gba/src/audio_data.c`;
+GBA hardware cannot play the WAV containers directly.

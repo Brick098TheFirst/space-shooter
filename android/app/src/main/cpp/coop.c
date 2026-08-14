@@ -18,9 +18,8 @@
 
 /* Bump whenever the packet layouts change.  The lobby bucket is versioned
  * too, so builds with different protocols never matchmake together.
- * v3: hull-style in loadout/INPUT, synced explosion/fx tail in snapshots,
- *     spectate-on-death semantics. */
-#define COOP_PROTOCOL_VERSION 3
+ * v4: Infinity Beam active/ramp state in world snapshots. */
+#define COOP_PROTOCOL_VERSION 4
 
 /* Reuse the game.c constants for cadence / chunk size. */
 #define COOP_SNAPSHOT_EVERY 3
@@ -60,6 +59,7 @@ static int s_guest_fire_cd = 0;      /* ticks until the host fires our next shot
 static int s_guest_beam_charge = 0;  /* big-laser charge mirror */
 static int s_guest_beam_timer = 0;   /* big-laser firing mirror */
 static int s_guest_beam_firing = 0;
+static int s_guest_primary_beam_audio = 0;
 static int s_input_packets_sent = 0; /* first packets go reliable (NAT warm-up) */
 
 static void guest_local_audio(u16 k) {
@@ -70,12 +70,21 @@ static void guest_local_audio(u16 k) {
         s_guest_fire_cd = 0;
         s_guest_beam_charge = 0;
         s_guest_beam_firing = 0;
+        s_guest_primary_beam_audio = 0;
         return;
     }
-    if (s_guest_fire_cd > 0) s_guest_fire_cd--;
-    if ((k & KEY_A) && s_guest_fire_cd == 0) {
-        audio_play_sfx(SFX_LASER);
-        s_guest_fire_cd = game_coop_local_shot_cooldown();
+    if (g_settings.weapon_rig == WEAPON_INFINITY) {
+        int held = (k & KEY_A) != 0;
+        if (held && !s_guest_primary_beam_audio) audio_play_sfx(SFX_LASER);
+        s_guest_primary_beam_audio = held;
+        s_guest_fire_cd = 0;
+    } else {
+        s_guest_primary_beam_audio = 0;
+        if (s_guest_fire_cd > 0) s_guest_fire_cd--;
+        if ((k & KEY_A) && s_guest_fire_cd == 0) {
+            audio_play_sfx(SFX_LASER);
+            s_guest_fire_cd = game_coop_local_shot_cooldown();
+        }
     }
 
     bool beam_held = (k & (KEY_B | KEY_R | KEY_L)) != 0;
@@ -220,6 +229,8 @@ static void handle_input(const u8* data, int len) {
     lo.accent_index = (int)data[4];
     lo.laser_index = (int)data[5];
     lo.weapon_rig = (WeaponRig)data[6];
+    if (lo.laser_index < 0 || lo.laser_index >= NUM_LASERS) lo.laser_index = 0;
+    if (lo.weapon_rig < 0 || lo.weapon_rig >= NUM_RIGS) lo.weapon_rig = WEAPON_SINGLE;
     lo.trail_index = (int)data[7];
     lo.ship_index = (int)data[8]; /* hull style (protocol v3) */
     if (lo.ship_index < 0 || lo.ship_index >= NUM_SHIP_STYLES) lo.ship_index = 0;
@@ -313,6 +324,7 @@ static void reset_session_state(void) {
     s_guest_beam_charge = 0;
     s_guest_beam_timer = 0;
     s_guest_beam_firing = 0;
+    s_guest_primary_beam_audio = 0;
     s_input_packets_sent = 0;
 }
 

@@ -12,14 +12,15 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
 ### GBA Features
 
 - **Native Mode 4 Graphics Engine:** 240×160 60 FPS double-buffered page-flipped renderer with zero screen tearing and a custom 256-color palette.
-- **18.157 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for the full soundtrack (`menu.wav` and `game.wav`) plus polyphonic sound effects (lasers, explosions, shield pickups, and impacts).
+- **18.157 kHz DirectSound Audio Engine:** Hardware-timed signed PCM playback on both speakers for `menu.wav`, `game.wav`, and the dedicated `boss.wav` cue, plus polyphonic sound effects. Boss waves fade the normal track out, hold one second of entrance silence, fade the boss cue in, then resume gameplay music from its paused sample when the boss falls or the one-shot cue ends.
 - **2× Arcade Pace:** Gameplay advances two simulation ticks per displayed frame, while audio remains on its independent hardware timer so faster action does not pitch-shift or starve the soundtrack.
 - **Expanded Shop & Deep Progression Grind:**
   Earn coins by destroying asteroids, enemy fighters, completing waves, and racking up combo chains. Coins persist in SRAM and are spent in the **Upgrade Hangar** on permanent unlocks & upgrades:
   - **9 Ship Paints** (Solar Orange 800c, Ion Cyan [Starter 0c], Nova Violet 2,500c, Plasma Mint 5,500c, Pulsar Gold 14,000c, Crimson Void 30,000c, Obsidian Shadow 65,000c, Quantum Neon 120,000c, and the ultimate animated **Rainbow Prism** 1,000,000c)
-  - **8 Engine Trails** (Ember Fire 1,000c, Ion Cyan [Starter 0c], Nova Purple 3,200c, Aurora Mint 7,000c, Solar Gold 16,000c, Crimson Flame 35,000c, Void Shadow 70,000c, animated **Rainbow Trail** 130,000c)
-  - **6 Weapon Rigs** (Twin Cannons [Starter 0c], Spread Cannon 2,500c, Focused Beam 7,500c, Triple Blaster 20,000c, Plasma Wave 50,000c, Quantum Core 100,000c)
-  - **8 Laser Crystals** (Ion Cyan [0c], Solar Gold 1,800c, Nebula Violet 4,500c, Toxic Mint 9,500c, Crimson Fury 22,000c, Emerald Surge 48,000c, Void Shadow 85,000c, animated **Rainbow Laser** 150,000c)
+  - **8 Engine Trails**, capped by the animated **Rainbow Trail** at 1,000,000c.
+  - **16 strictly ordered Weapon Rigs:** Pulse Blaster [Starter], Twin Cannons, Scatter Array, Rail Trident, Quad Blaster, Plasma Lances, Quantum Five, Nova Star, Arc Hex, Rift Battery, Comet Swarm, Solar Lances, Starquake, Void Crown, Prism Storm, and the 1,000,000,000c **Infinity Beam**. The final rig fires a full-height continuous beam for as long as Fire is held, ramping from 20% to full damage over 0.6 seconds.
+  - **5 Laser Crystals:** Ion Basic [0c], Solar Gold [5,000c], Nebula Violet [50,000c], Quantum White [500,000c], and animated **Rainbow Prism** [1,000,000c].
+  - Equipping the 1,000,000c rainbow paint, trail, and crystal together turns every asteroid into an animated rainbow asteroid.
   - **8 Plain Stat Upgrades (5 Levels Each):** Speed, Fire Rate, Damage, Shield, Lives, Beam, Coins, Rapid. Names are the stat — no hull/reactor flavor text.
 - **Spacious & Polished Shop UI:**
   - Tabbed category navigation (`PAINTS`, `TRAILS`, `WEAPON`, `LASERS`, `TECH`) with `L` and `R` triggers or D-pad.
@@ -30,7 +31,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
-- **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is a **mini-boss** (same kit as the battleship, about **4× less HP**, smaller hull, no dive lunge). Every **10th** wave is the full crimson battleship. Both clear the field and show a top-of-screen HP bar. The full boss takes ~**15 shots** from a maxed Focused Beam (more with a starter laser — you need good gear); the charged mega-beam cannot one-shot it. Killing a full boss pays a big score/coin bonus and drops three powerups; the mini-boss pays less and drops two. Runs on **both** GBA and Android.
+- **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is a mini-boss and every **10th** wave is the full battleship. Both use `boss.wav`: gameplay music fades out, the entrance gets one second of silence, the boss cue fades in, and the normal track resumes at its paused position after victory. Boss HP now scales with wave/difficulty rather than the equipped gun, so every weapon purchase produces a real time-to-kill improvement.
 - **Three Game Modes:** Play opens a mode select on both platforms — **Waves** (with bosses), **Endless**, and **Overdrive** (90-second score rush).
 - **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for **2 seconds** to charge a full-screen piercing beam that fires for 3 seconds and reaches the top of the screen. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
 - **Settings Screen:** Difficulty (**Easy / Medium / Hard**), Music & SFX volume, and Screen Shake — plus an **Android-only Haptics** (vibration feedback) toggle. Persisted in the save file. Gyro / tilt steering has been removed.
@@ -57,7 +58,7 @@ The primary Android app is the multiplayer edition. It shares the renderer, audi
 ### Co-op reliability & fairness
 
 - **Host-authoritative co-op with self-healing sync:** the host simulates both ships from the guest's streamed input and broadcasts full-world snapshots every 3 ticks. If packets are lost (NAT warm-up, queue overflow, UI jank), the guest detects the stale stream within ~1.3 s and asks the host to resend the world — no more getting stuck on a frozen screen.
-- **Your loadout travels with you:** the guest's paint, laser crystal, weapon rig, trail, and all stat upgrades are streamed to the host (first packets reliable so they can't be dropped during connection setup), and each player fights with their own gear. Snapshot and input packets are protocol-versioned and the lobby bucket is versioned too, so mismatched app builds fail cleanly instead of misbehaving.
+- **Your loadout travels with you:** the guest's paint, laser crystal, weapon rig, trail, and all stat upgrades are streamed to the host, including Infinity Beam state/ramp. The host's complete rainbow set is carried in every world snapshot, so rainbow asteroids render identically for the client. Packets and the lobby bucket are protocol-versioned so mismatched builds fail cleanly.
 - **Both players progress:** the host's coin balance rides in every snapshot; the guest banks co-op earnings into its own save (the host's pre-join fortune is never transferred) and records its new best score at game over.
 - **P2P queues sized for 90 Hz:** the EOS P2P packet queues are raised from the tiny default so the snapshot stream survives Android frame hiccups.
 - **Laser SFX matches your real fire rate:** the guest plays its own laser sound at the exact cadence the host fires for it (including big-laser charge timing), and the SFX mixer never restarts a still-playing laser sample — no more machine-gun stutter.
@@ -91,7 +92,7 @@ Play opens a **mode select** on **both** Android and GBA:
 
 The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits, kills, beam charge-up, beam fire, and button presses), a **CODES** row — tap it to open the cheat-code dialog (native Android text input) — and **ERASE DATA** to wipe the save after a confirm dialog. Known code: **`GIMMEMONEY`** tops your coin balance up to **$999,000,000,000,000** (999 trillion — the coin counter is 64-bit on Android and the save file upgrades to the V7 layout automatically). Haptics stay **Android-only** — the GBA has no vibration motor, so `platform_queue_haptic()` compiles to a no-op there. Gyro / tilt steering is gone. The big-laser button replaces DASH on the touch pad.
 
-Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fire, B/X/LB beam, Start pause). The hangar has **24 laser crystals** that get stronger and more expensive as they go up, with a working live laser preview. Wave bosses use the mini-drone sprite in a distinct gold/cyan paint so they don't look like hunters.
+Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fire, B/X/LB beam, Start pause). Its hangar uses the same 16-rig weapon ladder and focused five-crystal laser catalog as GBA, with working live previews. Wave bosses use the mini-drone sprite in distinct gold/cyan paint so they cannot be mistaken for hunters.
 
 ### Android-only gameplay differences
 

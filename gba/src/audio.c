@@ -42,6 +42,25 @@ static const s8* s_bgm_data = NULL;
 static u32 s_bgm_len = 0;
 static u32 s_bgm_pos = 0;
 
+/* Sample-accurate boss-music state machine.  Gain is 16.16 fixed point so
+ * fades remain smooth on the GBA without a division in the inner mixer. */
+typedef enum {
+    MUSIC_XFADE_NONE,
+    MUSIC_BOSS_FADE_OUT,
+    MUSIC_BOSS_SILENCE,
+    MUSIC_BOSS_FADE_IN,
+    MUSIC_GAME_FADE_OUT,
+    MUSIC_GAME_FADE_IN
+} MusicTransition;
+
+static MusicTransition s_music_transition = MUSIC_XFADE_NONE;
+static u32 s_transition_samples = 0;
+static u32 s_transition_remaining = 0;
+static u32 s_music_gain_fp = 65536;
+static u32 s_gain_step_fp = 0;
+static u32 s_game_resume_pos = 0;
+static bool s_boss_requested = false;
+
 static SfxChannel s_sfx_channels[MAX_ACTIVE_SFX];
 
 #ifndef PLATFORM_HOST
@@ -64,11 +83,45 @@ IWRAM_CODE static void audio_vblank_isr(void) {
 }
 #endif
 
+static void select_bgm(BgmTrack track, u32 position) {
+    s_current_bgm = track;
+    if (track == BGM_MENU) {
+        s_bgm_data = snd_menu_pcm;
+        s_bgm_len = snd_menu_len;
+    } else if (track == BGM_GAME) {
+        s_bgm_data = snd_game_pcm;
+        s_bgm_len = snd_game_len;
+    } else if (track == BGM_BOSS) {
+        s_bgm_data = snd_boss_pcm;
+        s_bgm_len = snd_boss_len;
+    } else {
+        s_bgm_data = NULL;
+        s_bgm_len = 0;
+    }
+    s_bgm_pos = (s_bgm_len > 0) ? (position % s_bgm_len) : 0;
+}
+
+static void begin_transition(MusicTransition transition, u32 samples, u32 gain_fp) {
+    if (samples < 1) samples = 1;
+    s_music_transition = transition;
+    s_transition_samples = samples;
+    s_transition_remaining = samples;
+    s_music_gain_fp = gain_fp;
+    s_gain_step_fp = (65536u + samples - 1) / samples;
+}
+
 void audio_init(void) {
     s_current_bgm = BGM_NONE;
     s_bgm_data = NULL;
     s_bgm_len = 0;
     s_bgm_pos = 0;
+    s_music_transition = MUSIC_XFADE_NONE;
+    s_transition_samples = 0;
+    s_transition_remaining = 0;
+    s_music_gain_fp = 65536;
+    s_gain_step_fp = 0;
+    s_game_resume_pos = 0;
+    s_boss_requested = false;
     s_audio_started = false;
     s_active_buf = 0;
     s_mix_buf = &s_audio_buf[0];
@@ -130,27 +183,47 @@ void audio_start(void) {
 }
 
 void audio_play_bgm(BgmTrack track) {
-    if (s_current_bgm == track) return;
+    if (s_current_bgm == track && s_music_transition == MUSIC_XFADE_NONE) return;
+    s_boss_requested = false;
+    s_music_transition = MUSIC_XFADE_NONE;
+    s_transition_remaining = 0;
+    s_music_gain_fp = 65536;
+    select_bgm(track, 0);
+}
 
-    s_current_bgm = track;
-    s_bgm_pos = 0;
-    if (track == BGM_MENU) {
-        s_bgm_data = snd_menu_pcm;
-        s_bgm_len = snd_menu_len;
-    } else if (track == BGM_GAME) {
-        s_bgm_data = snd_game_pcm;
-        s_bgm_len = snd_game_len;
+void audio_begin_boss_music(void) {
+    if (s_boss_requested || s_current_bgm == BGM_BOSS) return;
+    s_boss_requested = true;
+    if (s_current_bgm == BGM_GAME) {
+        /* A short fade avoids a click, followed by the requested one-second
+         * dramatic gap while the boss descends. */
+        begin_transition(MUSIC_BOSS_FADE_OUT, AUDIO_SAMPLE_RATE / 5, 65536);
     } else {
-        s_bgm_data = NULL;
-        s_bgm_len = 0;
+        s_game_resume_pos = 0;
+        select_bgm(BGM_NONE, 0);
+        begin_transition(MUSIC_BOSS_SILENCE, AUDIO_SAMPLE_RATE, 0);
+    }
+}
+
+void audio_end_boss_music(void) {
+    if (!s_boss_requested && s_current_bgm != BGM_BOSS) return;
+    s_boss_requested = false;
+    if (s_current_bgm == BGM_BOSS) {
+        begin_transition(MUSIC_GAME_FADE_OUT, AUDIO_SAMPLE_RATE / 4, s_music_gain_fp);
+    } else {
+        /* Boss died during its entrance: cancel the silence cleanly and bring
+         * the exact paused gameplay position back. */
+        select_bgm(BGM_GAME, s_game_resume_pos);
+        begin_transition(MUSIC_GAME_FADE_IN, AUDIO_SAMPLE_RATE / 3, 0);
     }
 }
 
 void audio_stop_bgm(void) {
-    s_current_bgm = BGM_NONE;
-    s_bgm_data = NULL;
-    s_bgm_len = 0;
-    s_bgm_pos = 0;
+    s_boss_requested = false;
+    s_music_transition = MUSIC_XFADE_NONE;
+    s_transition_remaining = 0;
+    s_music_gain_fp = 65536;
+    select_bgm(BGM_NONE, 0);
 }
 
 void audio_play_sfx(SfxId sfx) {
@@ -214,15 +287,57 @@ const s8* audio_host_mix_buffer(void) {
 }
 #endif
 
+IWRAM_CODE static void advance_music_transition(void) {
+    if (s_music_transition == MUSIC_XFADE_NONE || s_transition_remaining == 0) return;
+
+    s_transition_remaining--;
+    if (s_music_transition == MUSIC_BOSS_FADE_OUT ||
+        s_music_transition == MUSIC_GAME_FADE_OUT) {
+        if (s_music_gain_fp > s_gain_step_fp) s_music_gain_fp -= s_gain_step_fp;
+        else s_music_gain_fp = 0;
+    } else if (s_music_transition == MUSIC_BOSS_FADE_IN ||
+               s_music_transition == MUSIC_GAME_FADE_IN) {
+        s_music_gain_fp += s_gain_step_fp;
+        if (s_music_gain_fp > 65536u) s_music_gain_fp = 65536u;
+    }
+
+    if (s_transition_remaining != 0) return;
+
+    switch (s_music_transition) {
+        case MUSIC_BOSS_FADE_OUT:
+            s_game_resume_pos = s_bgm_pos;
+            select_bgm(BGM_NONE, 0);
+            begin_transition(MUSIC_BOSS_SILENCE, AUDIO_SAMPLE_RATE, 0);
+            break;
+        case MUSIC_BOSS_SILENCE:
+            if (s_boss_requested) {
+                select_bgm(BGM_BOSS, 0);
+                begin_transition(MUSIC_BOSS_FADE_IN, AUDIO_SAMPLE_RATE / 3, 0);
+            } else {
+                select_bgm(BGM_GAME, s_game_resume_pos);
+                begin_transition(MUSIC_GAME_FADE_IN, AUDIO_SAMPLE_RATE / 3, 0);
+            }
+            break;
+        case MUSIC_BOSS_FADE_IN:
+        case MUSIC_GAME_FADE_IN:
+            s_music_gain_fp = 65536;
+            s_music_transition = MUSIC_XFADE_NONE;
+            break;
+        case MUSIC_GAME_FADE_OUT:
+            select_bgm(BGM_GAME, s_game_resume_pos);
+            begin_transition(MUSIC_GAME_FADE_IN, AUDIO_SAMPLE_RATE / 3, 0);
+            break;
+        default:
+            s_music_transition = MUSIC_XFADE_NONE;
+            break;
+    }
+}
+
 IWRAM_CODE void audio_update(void) {
     if (!s_audio_started) return;
 
     s8* dst = s_mix_buf;
     if (!dst) return;
-
-    const s8* bgm = s_bgm_data;
-    u32 bgm_len = s_bgm_len;
-    u32 bgm_pos = s_bgm_pos;
 
     // Collect active SFX channels
     int active_sfx[MAX_ACTIVE_SFX];
@@ -233,7 +348,7 @@ IWRAM_CODE void audio_update(void) {
         }
     }
 
-    if (!bgm && active_sfx_count == 0) {
+    if (!s_bgm_data && active_sfx_count == 0 && s_music_transition == MUSIC_XFADE_NONE) {
         memset(dst, 0, AUDIO_SAMPLES_PER_FRAME);
         return;
     }
@@ -255,11 +370,21 @@ IWRAM_CODE void audio_update(void) {
     for (int i = 0; i < AUDIO_SAMPLES_PER_FRAME; i++) {
         int mixed = 0;
 
-        if (bgm && bgm_len > 0) {
-            mixed += (bgm[bgm_pos] * music_scale) >> 8;
-            bgm_pos++;
-            if (bgm_pos >= bgm_len) {
-                bgm_pos = 0;
+        if (s_bgm_data && s_bgm_len > 0) {
+            int faded_music_scale = (int)(((u32)music_scale * s_music_gain_fp) >> 16);
+            mixed += (s_bgm_data[s_bgm_pos] * faded_music_scale) >> 8;
+            s_bgm_pos++;
+            if (s_bgm_pos >= s_bgm_len) {
+                if (s_current_bgm == BGM_BOSS) {
+                    /* boss.wav is a one-shot cue. If an unusually long boss
+                     * outlives it, return to the paused gameplay track rather
+                     * than looping the cue forever. */
+                    s_boss_requested = false;
+                    select_bgm(BGM_GAME, s_game_resume_pos);
+                    begin_transition(MUSIC_GAME_FADE_IN, AUDIO_SAMPLE_RATE / 3, 0);
+                } else {
+                    s_bgm_pos = 0;
+                }
             }
         }
 
@@ -278,7 +403,6 @@ IWRAM_CODE void audio_update(void) {
         else if (mixed < -128) mixed = -128;
 
         dst[i] = (s8)mixed;
+        advance_music_transition();
     }
-
-    s_bgm_pos = bgm_pos;
 }

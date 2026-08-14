@@ -297,6 +297,8 @@ void save_init_defaults(void) {
     g_settings.owned_trails  = (1 << 1); // Ion
     g_settings.owned_rigs    = (1 << WEAPON_SINGLE); // only single
     g_settings.owned_lasers  = (1 << 0); // Ion Basic
+    if (g_settings.owned_lasers & (1u << 7))
+        g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
     g_settings.owned_ships   = (1 << SHIP_STYLE_CLASSIC); // classic hull
     for (int i = 0; i < NUM_UPGRADES; i++) {
         g_settings.upgrade_levels[i] = 0;
@@ -311,6 +313,26 @@ static void repair_ship_loadout(void) {
     if (g_settings.ship_index < 0 || g_settings.ship_index >= NUM_SHIP_STYLES ||
         !(g_settings.owned_ships & (1 << g_settings.ship_index))) {
         g_settings.ship_index = SHIP_STYLE_CLASSIC;
+    }
+
+    /* Catalog migration: old saves had rainbow at laser bit 7 and up to 24
+     * crystals. Preserve that expensive unlock as the new bit-4 rainbow,
+     * then discard removed entries. Weapon bits 0..15 already fit the
+     * existing u16 save field, so the expanded rig catalog needs no V9. */
+    if (g_settings.owned_lasers & (1u << 7))
+        g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
+    g_settings.owned_lasers &= (1u << NUM_LASERS) - 1u;
+    g_settings.owned_lasers |= 1u;
+    if (g_settings.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+    if (g_settings.laser_index < 0 || g_settings.laser_index >= NUM_LASERS ||
+        !(g_settings.owned_lasers & (1u << g_settings.laser_index))) {
+        g_settings.laser_index = 0;
+    }
+
+    g_settings.owned_rigs |= (1u << WEAPON_SINGLE);
+    if (g_settings.weapon_rig < 0 || g_settings.weapon_rig >= NUM_RIGS ||
+        !(g_settings.owned_rigs & (1u << g_settings.weapon_rig))) {
+        g_settings.weapon_rig = WEAPON_SINGLE;
     }
 }
 
@@ -335,7 +357,8 @@ void save_load(void) {
         if (d8.accent_index < NUM_ACCENTS) g_settings.accent_index = d8.accent_index;
         if (d8.trail_index < NUM_TRAILS) g_settings.trail_index = d8.trail_index;
         if (d8.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d8.weapon_rig;
-        if (d8.laser_index < NUM_LASERS) g_settings.laser_index = d8.laser_index;
+        if (d8.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d8.laser_index < NUM_LASERS) g_settings.laser_index = d8.laser_index;
         g_settings.high_score = d8.high_score;
         g_settings.coins = ((coin_t)d8.coins_hi << 32) | (coin_t)d8.coins_lo;
         if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
@@ -343,6 +366,8 @@ void save_load(void) {
         g_settings.owned_trails  = d8.owned_trails  ? d8.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d8.owned_rigs    ? d8.owned_rigs    : (1<<WEAPON_SINGLE);
         g_settings.owned_lasers  = ((u32)d8.owned_lasers_hi << 16) | (u32)d8.owned_lasers_lo;
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
         g_settings.ship_index    = d8.ship_index;
         g_settings.owned_ships   = d8.owned_ships_lo ? d8.owned_ships_lo : (1<<SHIP_STYLE_CLASSIC);
@@ -374,7 +399,8 @@ void save_load(void) {
         if (d7.accent_index < NUM_ACCENTS) g_settings.accent_index = d7.accent_index;
         if (d7.trail_index < NUM_TRAILS) g_settings.trail_index = d7.trail_index;
         if (d7.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d7.weapon_rig;
-        if (d7.laser_index < NUM_LASERS) g_settings.laser_index = d7.laser_index;
+        if (d7.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d7.laser_index < NUM_LASERS) g_settings.laser_index = d7.laser_index;
         g_settings.high_score = d7.high_score;
         g_settings.coins = ((coin_t)d7.coins_hi << 32) | (coin_t)d7.coins_lo;
         if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
@@ -382,6 +408,8 @@ void save_load(void) {
         g_settings.owned_trails  = d7.owned_trails  ? d7.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d7.owned_rigs    ? d7.owned_rigs    : (1<<WEAPON_SINGLE);
         g_settings.owned_lasers  = ((u32)d7.owned_lasers_hi << 16) | (u32)d7.owned_lasers_lo;
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
         for (int i = 0; i < NUM_UPGRADES; i++) {
             int lv = d7.upgrade_levels[i];
@@ -412,7 +440,8 @@ void save_load(void) {
         if (d6.accent_index < NUM_ACCENTS) g_settings.accent_index = d6.accent_index;
         if (d6.trail_index < NUM_TRAILS) g_settings.trail_index = d6.trail_index;
         if (d6.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d6.weapon_rig;
-        if (d6.laser_index < NUM_LASERS) g_settings.laser_index = d6.laser_index;
+        if (d6.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d6.laser_index < NUM_LASERS) g_settings.laser_index = d6.laser_index;
         g_settings.high_score = d6.high_score;
         g_settings.coins = ((coin_t)d6.coins_hi << 32) | (coin_t)d6.coins_lo;
         if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
@@ -420,6 +449,8 @@ void save_load(void) {
         g_settings.owned_trails  = d6.owned_trails  ? d6.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d6.owned_rigs    ? d6.owned_rigs    : (1<<WEAPON_SINGLE);
         g_settings.owned_lasers  = d6.owned_lasers  ? (u32)d6.owned_lasers  : (1u<<0);
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         for (int i = 0; i < NUM_UPGRADES; i++) {
             int lv = d6.upgrade_levels[i];
             if (lv < 0) lv = 0;
@@ -450,13 +481,16 @@ void save_load(void) {
         if (d5.accent_index < NUM_ACCENTS) g_settings.accent_index = d5.accent_index;
         if (d5.trail_index < NUM_TRAILS) g_settings.trail_index = d5.trail_index;
         if (d5.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d5.weapon_rig;
-        if (d5.laser_index < NUM_LASERS) g_settings.laser_index = d5.laser_index;
+        if (d5.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d5.laser_index < NUM_LASERS) g_settings.laser_index = d5.laser_index;
         g_settings.high_score = d5.high_score;
         g_settings.coins = d5.coins;
         g_settings.owned_accents = d5.owned_accents ? d5.owned_accents : (1<<1);
         g_settings.owned_trails  = d5.owned_trails  ? d5.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d5.owned_rigs    ? d5.owned_rigs    : (1<<WEAPON_SINGLE);
         g_settings.owned_lasers  = d5.owned_lasers  ? d5.owned_lasers  : (1<<0);
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         for (int i = 0; i < NUM_UPGRADES; i++) {
             int lv = d5.upgrade_levels[i];
             if (lv < 0) lv = 0;
@@ -491,13 +525,16 @@ void save_load(void) {
         if (d4.accent_index < NUM_ACCENTS) g_settings.accent_index = d4.accent_index;
         if (d4.trail_index < NUM_TRAILS) g_settings.trail_index = d4.trail_index;
         if (d4.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d4.weapon_rig;
-        if (d4.laser_index < NUM_LASERS) g_settings.laser_index = d4.laser_index;
+        if (d4.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d4.laser_index < NUM_LASERS) g_settings.laser_index = d4.laser_index;
         g_settings.high_score = d4.high_score;
         g_settings.coins = d4.coins;
         g_settings.owned_accents = d4.owned_accents ? d4.owned_accents : (1<<1);
         g_settings.owned_trails  = d4.owned_trails  ? d4.owned_trails  : (1<<1);
         g_settings.owned_rigs    = d4.owned_rigs    ? d4.owned_rigs    : (1<<WEAPON_SINGLE);
         g_settings.owned_lasers  = d4.owned_lasers  ? d4.owned_lasers  : (1<<0);
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         for (int i = 0; i < NUM_UPGRADES; i++) {
             int lv = d4.upgrade_levels[i];
             if (lv < 0) lv = 0;
@@ -530,7 +567,8 @@ void save_load(void) {
         if (old_rig >= 0 && old_rig <= 5) {
             g_settings.weapon_rig = (WeaponRig)(old_rig + 1);
         }
-        if (d3.laser_index < 8) g_settings.laser_index = d3.laser_index;
+        if (d3.laser_index == 7) g_settings.laser_index = LASER_RAINBOW_IDX;
+        else if (d3.laser_index < NUM_LASERS) g_settings.laser_index = d3.laser_index;
 
         g_settings.high_score = d3.high_score;
         g_settings.coins = d3.coins;
@@ -544,6 +582,8 @@ void save_load(void) {
             }
         }
         g_settings.owned_lasers  = d3.owned_lasers  ? d3.owned_lasers  : (1<<0);
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
 
         // Upgrade levels migration
         // Old mapping: 0 shield,1 hull,2 thrusters,3 scavenger,4 damage,5 overdrive,6 combo
@@ -587,6 +627,8 @@ void save_load(void) {
             }
         }
         g_settings.owned_lasers  = d2.owned_lasers  ? d2.owned_lasers  : (1<<0);
+        if (g_settings.owned_lasers & (1u << 7))
+            g_settings.owned_lasers |= (1u << LASER_RAINBOW_IDX);
         repair_ship_loadout();
         save_write();
         return;
@@ -684,7 +726,6 @@ void save_write(void) {
 #endif
 }
 
-#ifdef PLATFORM_HOST
 /* Append an unsigned value as plain decimal. Returns the new position. */
 static int fmt_append_u32(char* dst, int dst_cap, int out, unsigned v) {
     char tmp[10]; int n = 0;
@@ -706,7 +747,6 @@ static void fmt_magnitude(char* dst, int dst_cap, coin_t c, coin_t unit, char su
     if (out < dst_cap - 1) dst[out++] = suffix;
     dst[out] = '\0';
 }
-#endif
 
 void save_format_coins(char* dst, int dst_cap) {
     if (!dst || dst_cap < 2) return;
@@ -715,11 +755,11 @@ void save_format_coins(char* dst, int dst_cap) {
     if (c > COINS_MAX) c = COINS_MAX;
 
 #ifdef PLATFORM_HOST
-    /* Android balances can reach 999 trillion (cheat codes), far wider than
-     * any HUD slot — shorten the giant magnitudes. */
+    /* Android balances can reach 999 trillion (cheat codes). */
     if (c >= 1000000000000ULL) { fmt_magnitude(dst, dst_cap, c, 1000000000000ULL, 'T'); return; }
-    if (c >= 1000000000ULL)    { fmt_magnitude(dst, dst_cap, c, 1000000000ULL,    'B'); return; }
 #endif
+    /* Both platforms can now afford the billion-credit Infinity Beam. */
+    if (c >= (coin_t)1000000000u) { fmt_magnitude(dst, dst_cap, c, (coin_t)1000000000u, 'B'); return; }
 
     /* Grouped decimal: 1,234,567 */
     char digits[24]; int n = 0;
@@ -774,7 +814,7 @@ int shop_get_accent_price(int idx) {
         case 5: return 60000;
         case 6: return 130000;
         case 7: return 260000;
-        case 8: return 1500000;
+        case 8: return 1000000;
         default: return 9999999;
     }
 #else
@@ -803,7 +843,7 @@ int shop_get_trail_price(int idx) {
         case 4: return 32000;
         case 5: return 70000;
         case 6: return 140000;
-        case 7: return 280000;
+        case 7: return 1000000;
         default: return 999999;
     }
 #else
@@ -815,89 +855,45 @@ int shop_get_trail_price(int idx) {
         case 4: return 16000;   // Solar Gold
         case 5: return 35000;   // Crimson Flame
         case 6: return 70000;   // Void Shadow
-        case 7: return 130000;  // Rainbow Trail
+        case 7: return 1000000; // Rainbow Trail
         default: return 999999;
     }
 #endif
 }
 
 int shop_get_rig_price(WeaponRig rig) {
-#ifdef PLATFORM_HOST
-    // Android: weapons are an investment. Early cheap, endgame costs real grind.
+    /* Hybrid exponential/milestone curve: every rig is stronger than the
+     * previous one, while the large jumps mark new endgame tiers. */
     switch (rig) {
-        case WEAPON_SINGLE:  return 0;        // starter
-        case WEAPON_TWIN:    return 1200;
-        case WEAPON_SPREAD:  return 5500;
-        case WEAPON_FOCUSED: return 14000;
-        case WEAPON_TRIPLE:  return 32000;
-        case WEAPON_PLASMA:  return 70000;
-        case WEAPON_QUANTUM: return 150000;
-        case WEAPON_NOVA:    return 400000;
-        default: return 999999;
+        case WEAPON_SINGLE:     return 0;
+        case WEAPON_TWIN:       return 1000;
+        case WEAPON_SPREAD:     return 3000;
+        case WEAPON_FOCUSED:    return 8000;
+        case WEAPON_TRIPLE:     return 20000;
+        case WEAPON_PLASMA:     return 50000;
+        case WEAPON_QUANTUM:    return 120000;
+        case WEAPON_NOVA:       return 300000;
+        case WEAPON_ARC_HEX:    return 750000;
+        case WEAPON_RIFT:       return 2000000;
+        case WEAPON_COMET:      return 6000000;
+        case WEAPON_SOLAR:      return 15000000;
+        case WEAPON_STARQUAKE:  return 40000000;
+        case WEAPON_VOID:       return 120000000;
+        case WEAPON_PRISM:      return 400000000;
+        case WEAPON_INFINITY:   return 1000000000;
+        default:                return 1000000000;
     }
-#else
-    switch (rig) {
-        case WEAPON_SINGLE:  return 0;       // Single weak starter
-        case WEAPON_TWIN:    return 500;     // Twin
-        case WEAPON_SPREAD:  return 2500;    // Spread
-        case WEAPON_FOCUSED: return 6500;    // Focused
-        case WEAPON_TRIPLE:  return 14000;   // Triple
-        case WEAPON_PLASMA:  return 30000;   // Plasma
-        case WEAPON_QUANTUM: return 65000;   // Quantum
-        case WEAPON_NOVA:    return 150000;  // Nova final god
-        default: return 999999;
-    }
-#endif
 }
 
 int shop_get_laser_price(int idx) {
-#ifdef PLATFORM_HOST
-    /* Strictly more expensive as the index climbs. Early crystals are a
-     * real investment; the last few are late-game flex buys. */
     switch (idx) {
-        case 0:  return 0;
-        case 1:  return 4000;
-        case 2:  return 9000;
-        case 3:  return 18000;
-        case 4:  return 36000;
-        case 5:  return 70000;
-        case 6:  return 120000;
-        case 7:  return 190000;
-        case 8:  return 280000;
-        case 9:  return 400000;
-        case 10: return 560000;
-        case 11: return 780000;
-        case 12: return 1100000;
-        case 13: return 1500000;
-        case 14: return 2100000;
-        case 15: return 2900000;
-        case 16: return 4000000;
-        case 17: return 5500000;
-        case 18: return 7600000;
-        case 19: return 10500000;
-        case 20: return 14500000;
-        case 21: return 20000000;
-        case 22: return 28000000;
-        case 23: return 40000000;
-        default: return 99999999;
+        case 0: return 0;       // starter
+        case 1: return 5000;    // small damage step
+        case 2: return 50000;
+        case 3: return 500000;
+        case 4: return 1000000; // animated rainbow capstone
+        default: return 1000000;
     }
-#else
-    switch (idx) {
-        case 0: return 0;       // Ion Basic starter weak
-        case 1: return 1200;    // Solar Gold
-        case 2: return 3500;    // Nebula Violet
-        case 3: return 7500;    // Toxic Mint
-        case 4: return 15000;   // Crimson Fury
-        case 5: return 30000;   // Emerald Surge
-        case 6: return 60000;   // Void Shadow
-        case 7: return 100000;  // Rainbow Laser
-        case 8: return 40000;   // Inferno Red alt path
-        case 9: return 70000;   // Frost Blue
-        case 10: return 110000; // Photon Gold
-        case 11: return 250000; // Omega Prism final god
-        default: return 999999;
-    }
-#endif
 }
 
 // Upgrade pricing: 5 levels (0->1,1->2,2->3,3->4,4->5)

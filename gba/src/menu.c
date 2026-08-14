@@ -306,15 +306,17 @@ static void hangar_select_item(int idx) {
 
 static void format_price(char* dst, int price) {
     char tmp[12];
+    if (price >= 1000000000) {
+        siprintf(tmp, "%dB", price / 1000000000);
 #ifdef PLATFORM_HOST
-    if (price >= 1000000) {
+    } else if (price >= 1000000) {
         int m = price / 1000000;
         int tenth = (price % 1000000) / 100000;
         if (tenth && m < 100) siprintf(tmp, "%d.%dM", m, tenth);
         else siprintf(tmp, "%dM", m);
     } else if (price >= 1000) {
 #else
-    if (price >= 1000000) siprintf(tmp, "%dM", price / 1000000);
+    } else if (price >= 1000000) siprintf(tmp, "%dM", price / 1000000);
     else if (price >= 1000) {
 #endif
         if (price % 1000 == 0) siprintf(tmp, "%dk", price / 1000);
@@ -1241,6 +1243,7 @@ static void render_hangar_dynamic(void) {
     int preview_accent = (cat == 0) ? selected : g_settings.accent_index;
     int preview_trail  = (cat == 1) ? selected : g_settings.trail_index;
     int preview_laser  = (cat == 3) ? selected : g_settings.laser_index;
+    WeaponRig preview_rig = (cat == 2) ? (WeaponRig)selected : g_settings.weapon_rig;
     int preview_hull   = (cat == SHOP_CAT_SHIPS) ? selected : g_settings.ship_index;
     if (preview_accent < 0 || preview_accent >= NUM_ACCENTS) preview_accent = 1;
     int ship_x = right_x + (right_w - 20) / 2;
@@ -1248,11 +1251,20 @@ static void render_hangar_dynamic(void) {
     gfx_draw_ship_styled(ship_x, ship_y, preview_accent, s_anim_frame, preview_hull);
     draw_preview_engine_trail(ship_x, ship_y, preview_trail);
     if (cat == 2 || cat == 3) {
-        int travel = (s_anim_frame * 2) % 18;
-        int laser_center_y = ship_y - 2 - travel;
-        if (laser_center_y >= 38) {
-            gfx_draw_laser(ship_x + 6, laser_center_y, false, preview_laser, s_anim_frame, false);
-            gfx_draw_laser(ship_x + 14, laser_center_y, false, preview_laser, s_anim_frame, false);
+        if (preview_rig == WEAPON_INFINITY) {
+            u8 col = (preview_laser == LASER_RAINBOW_IDX)
+                ? gfx_get_rainbow_color(s_anim_frame >> 1)
+                : gfx_get_laser_color(preview_laser);
+            int bw = (s_anim_frame & 2) ? 4 : 3;
+            gfx_fill_rect(ship_x + 10 - bw / 2, 34, bw, ship_y - 38, col);
+            gfx_fill_rect(ship_x + 10, 34, 1, ship_y - 38, PAL_TEXT_WHITE);
+        } else {
+            int travel = (s_anim_frame * 2) % 18;
+            int laser_center_y = ship_y - 2 - travel;
+            if (laser_center_y >= 38) {
+                gfx_draw_laser(ship_x + 6, laser_center_y, false, preview_laser, s_anim_frame, false);
+                gfx_draw_laser(ship_x + 14, laser_center_y, false, preview_laser, s_anim_frame, false);
+            }
         }
     }
     gfx_fill_rect(right_x + 4, 70, right_w - 8, 1, 20);

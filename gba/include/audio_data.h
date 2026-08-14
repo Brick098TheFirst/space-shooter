@@ -14,6 +14,9 @@ extern const u32 snd_menu_len;
 extern const s8 snd_game_pcm[];
 extern const u32 snd_game_len;
 
+extern const s8 snd_boss_pcm[];
+extern const u32 snd_boss_len;
+
 extern const s8 snd_laser_pcm[];
 extern const u32 snd_laser_len;
 

@@ -110,104 +110,53 @@ static int get_damage_bonus(void) {
     return lv; // 0 .. 5 extra damage
 }
 
-#ifdef PLATFORM_HOST
-/* True endgame build: NOVA rig + the final Apex crystal. Rocks still
- * evaporate; boss HP scales up so the same volley takes ~15 shots. */
-static bool is_oneshot_build(void) {
-    return (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == LASER_FINAL_IDX);
-}
-#endif
-
-#ifdef PLATFORM_HOST
-/* Android damage ladder: each crystal is strictly stronger than the last.
- * Early lasers are tiny; Apex (23) is the only true nuke. */
+/* Five laser tiers: secondary damage grows monotonically and the final
+ * rainbow crystal is a strong capstone without creating a hidden one-shot
+ * combination that makes an earlier weapon outperform a later one. */
 static int get_laser_bonus(void) {
-    static const int bonus[24] = {
-        0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6,
-        7, 8, 9, 10, 12, 14, 16, 18, 20, 23, 26, 32
-    };
+    static const int bonus[NUM_LASERS] = { 0, 1, 4, 10, 14 };
     int idx = g_settings.laser_index;
     if (idx < 0 || idx >= NUM_LASERS) return 0;
     return bonus[idx];
 }
 
-/* Returns true for rigs at the "god tier" that pierce everything without one-shot */
 static bool is_top_tier_build(void) {
-    return g_settings.weapon_rig >= WEAPON_QUANTUM;
+    return g_settings.weapon_rig >= WEAPON_PLASMA;
 }
-#else
-static int get_laser_bonus(void) {
-    // 12 lasers - starter is weak, final Omega one-shots everything.
-    static const int bonus[12] = { 0, 0, 1, 1, 2, 3, 4, 5, 2, 3, 5, 7 };
-    int idx = g_settings.laser_index;
-    if (idx < 0 || idx >= 12) return 0;
-    return bonus[idx];
-}
-#endif
 
-/* Base damage of a single main bullet for the equipped rig. */
+/* Per-projectile base damage. Projectile count never decreases as the catalog
+ * advances; tied counts get a damage bump, giving a strictly rising DPS
+ * ladder even after laser/damage upgrades are included. */
 static int get_weapon_base_damage(WeaponRig rig) {
-#ifdef PLATFORM_HOST
-    /* Android rebalance:
-     *   SINGLE/TWIN/SPREAD = 1 (peashooter - needs ~5 hits on big rock early)
-     *   FOCUSED/TRIPLE     = 2
-     *   PLASMA             = 3
-     *   QUANTUM            = 5  (strong, not oneshot)
-     *   NOVA base          = 8  (strong base; +omega crystal = 28 -> oneshot everything)
-     * The "oneshot everything" threshold is NOVA+OMEGA only (see is_oneshot_build).
-     */
     switch (rig) {
         case WEAPON_SINGLE:
         case WEAPON_TWIN:
-        case WEAPON_SPREAD:  return 1;
-        case WEAPON_FOCUSED:
-        case WEAPON_TRIPLE:  return 2;
-        case WEAPON_PLASMA:  return 3;
-        case WEAPON_QUANTUM: return 5;
-        case WEAPON_NOVA:    return 8;
-        default:             return 1;
+        case WEAPON_SPREAD:    return 1;
+        case WEAPON_FOCUSED:   return 2;
+        case WEAPON_TRIPLE:    return 3;
+        case WEAPON_PLASMA:    return 4;
+        case WEAPON_QUANTUM:   return 5;
+        case WEAPON_NOVA:      return 6;
+        case WEAPON_ARC_HEX:   return 7;
+        case WEAPON_RIFT:      return 8;
+        case WEAPON_COMET:     return 9;
+        case WEAPON_SOLAR:     return 10;
+        case WEAPON_STARQUAKE: return 11;
+        case WEAPON_VOID:      return 12;
+        case WEAPON_PRISM:     return 14;
+        case WEAPON_INFINITY:  return 20;
+        default:               return 1;
     }
-#else
-    switch (rig) {
-        case WEAPON_SINGLE:
-        case WEAPON_TWIN:
-        case WEAPON_SPREAD:  return 1;
-        case WEAPON_FOCUSED:
-        case WEAPON_TRIPLE:  return 2;
-        case WEAPON_PLASMA:  return 3;
-        case WEAPON_QUANTUM: return 4;
-        case WEAPON_NOVA:    return 5;
-        default:             return 1;
-    }
-#endif
 }
 
-/* Big laser beam damage = bullet damage per tick (divided by tick divisor so
- * it doesn't instantly mulch the field). Beam upgrade (UPG_DASH) boosts it
- * +25% per level. */
+/* Big charged laser remains tied to the current loadout and Beam upgrade. */
 static int get_beam_damage(void) {
-#ifdef PLATFORM_HOST
     int dmg = get_weapon_base_damage(g_settings.weapon_rig)
             + get_damage_bonus() + get_laser_bonus();
-    /* NOVA+OMEGA beam is the endgame nuke - it tears through anything */
-    if (is_oneshot_build()) dmg = 200;
     int lv = g_settings.upgrade_levels[UPG_DASH];
     if (lv < 0) lv = 0;
     if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
-    dmg = (dmg * (100 + lv * 25)) / 100;
-    return dmg;
-#else
-    int dmg = get_weapon_base_damage(g_settings.weapon_rig)
-            + get_damage_bonus() + get_laser_bonus();
-    if (g_settings.weapon_rig == WEAPON_NOVA && g_settings.laser_index == 11) {
-        dmg += 2; // omega crystal + nova synergy
-    }
-    int lv = g_settings.upgrade_levels[UPG_DASH];
-    if (lv < 0) lv = 0;
-    if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
-    dmg = (dmg * (100 + lv * 25)) / 100;
-    return dmg;
-#endif
+    return (dmg * (100 + lv * 25)) / 100;
 }
 
 /* Big laser timing: 2s charge, 3s beam. Ticks run at 90/s on the Android
@@ -216,7 +165,7 @@ static int get_beam_damage(void) {
 #define BEAM_CHARGE_TICKS (2 * 90)
 #define BEAM_DURATION_TICKS (3 * 90)
 /* Beam ticks 90/s; divide dmg so a 5HP big rock at base gear takes ~1s of
- * sustained beam, while the oneshot build melts instantly. */
+ * sustained beam, while later rigs improve it steadily. */
 #define BEAM_DMG_DIVISOR 45
 #define BEAM_DMG_ROUND   22
 #else
@@ -229,6 +178,25 @@ static int get_beam_damage(void) {
 /* Per-tick beam damage in 8.8 fixed point, normalized for the platform's
  * simulation rate so the beam feels the same on both. */
 #define BEAM_TICK_DAMAGE() (((get_beam_damage() << 8) + BEAM_DMG_ROUND) / BEAM_DMG_DIVISOR)
+
+/* The $1B Infinity Beam is normal primary fire, not the rechargeable B-beam.
+ * Following continuous-weapon balancing practice, it begins at 20% output
+ * and reaches full power after 0.6 seconds of uninterrupted fire. */
+#ifdef PLATFORM_HOST
+#define PRIMARY_BEAM_TICK_RATE 90
+#define PRIMARY_BEAM_RAMP_TICKS 54
+#else
+#define PRIMARY_BEAM_TICK_RATE 120
+#define PRIMARY_BEAM_RAMP_TICKS 72
+#endif
+
+static int primary_beam_tick_damage(int ramp) {
+    if (ramp < 0) ramp = 0;
+    if (ramp > PRIMARY_BEAM_RAMP_TICKS) ramp = PRIMARY_BEAM_RAMP_TICKS;
+    int full_dps = 6000 + get_laser_bonus() * 20 + get_damage_bonus() * 40;
+    int pct = 20 + (80 * ramp) / PRIMARY_BEAM_RAMP_TICKS;
+    return (full_dps * pct * 256) / (100 * PRIMARY_BEAM_TICK_RATE);
+}
 
 /* Rock speeds: big rocks drift slow, medium keep current speed, small/tiny
  * scream past. 256 = 1.0x. */
@@ -452,8 +420,8 @@ static void spawn_asteroid(AsteroidType type, int x, int y, int vx, int vy) {
             if (type == AST_LARGE) {
                 g_game.asteroids[i].radius = 12;
 #ifdef PLATFORM_HOST
-                /* Android: starter laser does 1dmg, need 5 hits. HP scales
-                 * slowly with wave; NOVA+OMEGA overrides to oneshot. */
+                /* Starter needs several hits; HP rises gently with wave while
+                 * the strictly ordered weapon ladder cuts the time-to-kill. */
                 g_game.asteroids[i].hp = 5 + (g_game.wave / 4);
                 if (g_game.asteroids[i].hp > 30) g_game.asteroids[i].hp = 30;
 #else
@@ -837,75 +805,28 @@ static bool add_boss_bullet(int x, int y, int vx, int vy, int heavy) {
     return false;
 }
 
-/* Damage of one trigger-pull with the current loadout (all bullets that
- * fire_player_weapon() would spawn). Used so a maxed NOVA volley still
- * takes ~15 shots instead of deleting the bar. */
-static int current_volley_damage(void) {
-    WeaponRig rig = g_settings.weapon_rig;
-    int dmg_bonus = get_damage_bonus() + get_laser_bonus();
-    int base = get_weapon_base_damage(rig);
-#ifdef PLATFORM_HOST
-    if (is_oneshot_build()) base = 99;
-#endif
-    int d = base + dmg_bonus;
-    if (d < 1) d = 1;
-    switch (rig) {
-        case WEAPON_SINGLE:  return d;
-        case WEAPON_TWIN:    return d * 2;
-        case WEAPON_SPREAD:  return d * 3;
-        case WEAPON_FOCUSED: return d;
-        case WEAPON_TRIPLE:  return (1 + dmg_bonus) * 2 + d;
-        case WEAPON_PLASMA:  return d * 2;
-        case WEAPON_QUANTUM: return d * 3;
-        case WEAPON_NOVA: {
-            int nd = d;
-            if (g_settings.laser_index == LASER_FINAL_IDX) nd += 2;
-            return nd * 3 + (nd - 1) * 2;
-        }
-        default: return d;
-    }
-}
-
-/* One maxed Focused Beam shot (beam rig + Damage 5 + best crystal). Weak
- * loadouts are measured against this floor so a starter laser cannot
- * reasonably solo the boss — you need good stuff. */
-static int maxed_beam_shot_damage(void) {
-    int dmg = get_weapon_base_damage(WEAPON_FOCUSED) + UPG_MAX_LEVEL;
-#ifdef PLATFORM_HOST
-    dmg += 32; /* Apex crystal floor for boss HP */
-#else
-    dmg += 7;
-#endif
-    if (dmg < 1) dmg = 1;
-    return dmg;
-}
-
-/* Full boss: ~15 shots of a maxed Focused Beam (or 15 volleys of whatever
- * stronger rig you brought). Mini-bosses are 4× easier. Never shrink HP
- * for the NOVA+OMEGA trash-mob nuke — that combo must still work for it. */
+/* Boss HP is based on wave and selected difficulty, never on the equipped
+ * weapon.  The old loadout-scaling formula erased the value of buying a
+ * stronger rig: every upgrade still took roughly the same 15 shots. */
 static int boss_max_hp(void) {
-    int per_shot = current_volley_damage();
-    int beam_floor = maxed_beam_shot_damage();
-    if (per_shot < beam_floor) per_shot = beam_floor;
-
-    int boss_tier;
-    if (is_mini_boss_wave(g_game.wave))
-        boss_tier = (g_game.wave / 10) + 1; /* wave 5 → 1, wave 15 → 2 */
-    else
-        boss_tier = (g_game.wave > 0) ? (g_game.wave / 10) : 1;
-    if (boss_tier < 1) boss_tier = 1;
-
-    int hp = per_shot * 15 * boss_tier;
-    if (is_mini_boss_wave(g_game.wave))
-        hp = (hp + 3) / 4;
-    if (hp < 8) hp = 8;
+    int tier = is_mini_boss_wave(g_game.wave)
+        ? (g_game.wave / 10) + 1
+        : g_game.wave / 10;
+    if (tier < 1) tier = 1;
+    int hp = (is_mini_boss_wave(g_game.wave) ? 1250 : 5000) * tier;
+    if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
+    else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
     return hp;
 }
 
 static void spawn_boss(void) {
     memset(&g_game.boss, 0, sizeof(Boss));
     g_game.boss.x = TO_FIXED(SCREEN_WIDTH / 2);
-    g_game.boss.y = -TO_FIXED(40);
+#ifdef PLATFORM_HOST
+    g_game.boss.y = -TO_FIXED(70);
+#else
+    g_game.boss.y = -TO_FIXED(105);
+#endif
     g_game.boss.vx = TO_FIXED(1) + 40; // ~1.16 pixels/tick drift right
     g_game.boss.vy = TO_FIXED(1) + 40; // ~1.16 pixels/tick descent
     g_game.boss.mini = is_mini_boss_wave(g_game.wave);
@@ -923,6 +844,7 @@ static void spawn_boss(void) {
     g_game.boss.sweep_dir = 1;
     g_game.boss_active = true;
     g_game.boss_hit_flash = 0;
+    audio_begin_boss_music();
     // Clear normal drones/asteroids to make room for the boss entrance
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
 }
@@ -934,6 +856,7 @@ static int boss_hit_radius(const Boss* b) {
 static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     g_game.boss_active = false;
     b->active = false;
+    audio_end_boss_music();
     int blasts = b->mini ? 4 : 6;
     for (int k = 0; k < blasts; k++)
         trigger_explosion(boss_cx + (rand() % 20) - 10, boss_cy + (rand() % 20) - 10);
@@ -1027,119 +950,55 @@ static void boss_fire_spread_at_player(int speed_fixed) {
 }
 
 /* ── Weapon system ──────────────────────────────────────────────────── */
-#ifdef PLATFORM_HOST
-/* Android: fire rate is IDENTICAL across all rigs — it only scales with the
- * Fire Rate upgrade. Rigs differ in DAMAGE and PATTERN only, so your "weapon
- * upgrade" doesn't also secretly give you a faster trigger finger. */
+/* A shared cooldown makes the catalog honest: displayed pattern/damage is
+ * the DPS progression, rather than an early multi-shot rig secretly winning
+ * because cooldown and pellet bonuses compound in opposite directions. */
 static int get_weapon_base_cooldown(WeaponRig rig) {
     (void)rig;
-    return 28; // baseline ~2.1/sec
+    return 28;
 }
-#else
-static int get_weapon_base_cooldown(WeaponRig rig) {
-    switch (rig) {
-        case WEAPON_SINGLE:  return 30; // 2/sec starter
-        case WEAPON_TWIN:    return 26; // 2.3/sec
-        case WEAPON_SPREAD:  return 28; // slightly slower due 3 bullets
-        case WEAPON_FOCUSED: return 22; // focused fast heavy
-        case WEAPON_TRIPLE:  return 20;
-        case WEAPON_PLASMA:  return 18;
-        case WEAPON_QUANTUM: return 14;
-        case WEAPON_NOVA:    return 10; // god fast
-        default: return 30;
+
+static int weapon_projectile_count(WeaponRig rig) {
+    static const u8 count[NUM_RIGS] = {
+        1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 9, 9, 11, 0
+    };
+    int idx = (int)rig;
+    return (idx >= 0 && idx < NUM_RIGS) ? count[idx] : 1;
+}
+
+static void fire_fan(int px, int py, int count, int damage, bool heavy, bool broad) {
+    if (count < 1) count = 1;
+    for (int i = 0; i < count; i++) {
+        int centered = i * 2 - (count - 1);
+        int xoff = (count == 1) ? 0 : (centered * 9) / (count - 1);
+        int vx = centered * (broad ? 34 : 14);
+        int vy = -TO_FIXED(heavy ? 8 : 6);
+        add_player_bullet(px + TO_FIXED(xoff), py - TO_FIXED(7), vx, vy,
+                          damage, heavy);
     }
 }
-#endif
 
 static void fire_player_weapon(void) {
-    bool rapid = (g_game.player.rapid_fire_timer > 0);
-    int px = g_game.player.x;
-    int py = g_game.player.y;
-    int dmg_bonus = get_damage_bonus() + get_laser_bonus();
-    // Omega and Rainbow add extra pierce
-    bool is_omega = (g_settings.laser_index == LASER_FINAL_IDX);
-    /* Rainbow crystal is purely a visual variant (see gfx_draw_laser), so it
-     * intentionally has no effect on the damage/cooldown maths here. */
-
     WeaponRig rig = g_settings.weapon_rig;
-    int base_cd = get_weapon_base_cooldown(rig);
-    int fr_mult = get_fire_rate_cooldown_mult(); // 75..256
-    int cooldown = (base_cd * fr_mult) >> 8;
+    if (rig == WEAPON_INFINITY) return; /* handled continuously in update */
+
+    bool rapid = (g_game.player.rapid_fire_timer > 0);
+    int cooldown = (get_weapon_base_cooldown(rig) * get_fire_rate_cooldown_mult()) >> 8;
+    if (rapid) cooldown = (cooldown * 2) / 5;
 #ifdef PLATFORM_HOST
-    /* Android: laser crystal does NOT affect fire rate at all. Only the
-     * fire-rate upgrade does. Omega still gets no extra rate buff. */
-    if (rapid) cooldown = (cooldown * 2) / 5; // rapid cuts to 40%
-    if (cooldown < 4) cooldown = 4; // absolute min ~15/sec
+    if (cooldown < 4) cooldown = 4;
 #else
-    if (rapid) cooldown = (cooldown * 2) / 5; // rapid cuts to 40%
-    if (cooldown < 3) cooldown = 3; // absolute min 20/sec
-    if (is_omega) { if (cooldown > 3) cooldown--; } // omega tiny buff
+    if (cooldown < 3) cooldown = 3;
 #endif
 
-    int base = get_weapon_base_damage(rig);
-#ifdef PLATFORM_HOST
-    /* NOVA + OMEGA is the ONLY combo that truly oneshots anything.  Force
-     * damage to a huge number so nothing survives even a single bullet. */
-    if (is_oneshot_build()) {
-        base = 99;
-    }
-#endif
-    switch (rig) {
-        case WEAPON_SINGLE: {
-            // One weak laser that can only break 1 small rock at a time (low dmg, no pierce)
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, false);
-            break;
-        }
-        case WEAPON_TWIN: {
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
-            break;
-        }
-        case WEAPON_SPREAD: {
-            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(4), -TO_FIXED(1), -TO_FIXED(4), base + dmg_bonus, false);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(4), TO_FIXED(1), -TO_FIXED(4), base + dmg_bonus, false);
-            break;
-        }
-        case WEAPON_FOCUSED: {
-            // Heavy single that pierces small rocks
-            bool heavy = true;
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, heavy);
-            break;
-        }
-        case WEAPON_TRIPLE: {
-            add_player_bullet(px - TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
-            add_player_bullet(px, py - TO_FIXED(8), 0, -TO_FIXED(6), base + dmg_bonus, true);
-            add_player_bullet(px + TO_FIXED(6), py - TO_FIXED(6), 0, -TO_FIXED(5), 1 + dmg_bonus, false);
-            break;
-        }
-        case WEAPON_PLASMA: {
-            add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(7), -50, -TO_FIXED(5), base + dmg_bonus, true);
-            add_player_bullet(px + TO_FIXED(5), py - TO_FIXED(7), 50, -TO_FIXED(5), base + dmg_bonus, true);
-            break;
-        }
-        case WEAPON_QUANTUM: {
-            add_player_bullet(px - TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), base + dmg_bonus, true);
-            add_player_bullet(px + TO_FIXED(4), py - TO_FIXED(8), 0, -TO_FIXED(7), base + dmg_bonus, true);
-            add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(8), base + dmg_bonus, true);
-            break;
-        }
-        case WEAPON_NOVA: {
-            // Final god weapon: 5 bullets, massive dmg, piercing, fast
-            int d = base + dmg_bonus;
-            if (is_omega) d += 2; // extra crazy with omega crystal
-            add_player_bullet(px, py - TO_FIXED(10), 0, -TO_FIXED(9), d, true);
-            add_player_bullet(px - TO_FIXED(5), py - TO_FIXED(8), -70, -TO_FIXED(8), d, true);
-            add_player_bullet(px + TO_FIXED(5), py - TO_FIXED(8), 70, -TO_FIXED(8), d, true);
-            add_player_bullet(px - TO_FIXED(9), py - TO_FIXED(6), -140, -TO_FIXED(6), d-1, true);
-            add_player_bullet(px + TO_FIXED(9), py - TO_FIXED(6), 140, -TO_FIXED(6), d-1, true);
-            break;
-        }
-        default: {
-            add_player_bullet(px, py - TO_FIXED(6), 0, -TO_FIXED(5), base + dmg_bonus, false);
-            break;
-        }
-    }
+    int damage = get_weapon_base_damage(rig) + get_damage_bonus() + get_laser_bonus();
+    int count = weapon_projectile_count(rig);
+    bool heavy = rig >= WEAPON_FOCUSED;
+    bool broad = (rig == WEAPON_SPREAD || rig == WEAPON_TRIPLE ||
+                  rig == WEAPON_NOVA || rig == WEAPON_ARC_HEX ||
+                  rig == WEAPON_COMET || rig == WEAPON_STARQUAKE ||
+                  rig == WEAPON_PRISM);
+    fire_fan(g_game.player.x, g_game.player.y, count, damage, heavy, broad);
     g_game.player.fire_cooldown = cooldown;
     audio_play_sfx(SFX_LASER);
 }
@@ -1313,8 +1172,21 @@ static void game_update_tick(void) {
         }
     }
 
-    if (key_is_down(KEY_A) && g_game.player.fire_cooldown == 0) {
-        fire_player_weapon();
+    bool primary_held = key_is_down(KEY_A);
+    if (g_settings.weapon_rig == WEAPON_INFINITY) {
+        bool was_active = g_game.primary_beam_active;
+        g_game.primary_beam_active = primary_held;
+        if (primary_held) {
+            if (g_game.primary_beam_ramp < PRIMARY_BEAM_RAMP_TICKS)
+                g_game.primary_beam_ramp++;
+            if (!was_active) audio_play_sfx(SFX_LASER);
+        } else {
+            g_game.primary_beam_ramp = 0;
+        }
+    } else {
+        g_game.primary_beam_active = false;
+        g_game.primary_beam_ramp = 0;
+        if (primary_held && g_game.player.fire_cooldown == 0) fire_player_weapon();
     }
 
     for (int i = 0; i < MAX_BULLETS; i++) {
@@ -1612,8 +1484,7 @@ static void game_update_tick(void) {
             }
         }
 
-        // Big laser vs boss: a full 3s dump is ~20% of the bar (5 beams to
-        // solo). Never oneshots, even with NOVA+OMEGA + max Beam upgrade.
+        // Charged B-beam vs boss: a full 3s dump is ~20% of the bar.
         if (g_game.beam_active) {
             int pbx = FROM_FIXED(g_game.player.x);
             if (boss_cx + boss_r >= pbx - 6 && boss_cx - boss_r <= pbx + 6) {
@@ -1627,9 +1498,17 @@ static void game_update_tick(void) {
                     b->hp--;
                 }
                 b->flash_timer = 4;
-                if (b->hp <= 0) {
-                    defeat_boss(b, boss_cx, boss_cy);
-                }
+                if (b->hp <= 0) defeat_boss(b, boss_cx, boss_cy);
+            }
+        }
+
+        if (g_game.primary_beam_active) {
+            int pbx = FROM_FIXED(g_game.player.x);
+            if (boss_cx + boss_r >= pbx - 6 && boss_cx - boss_r <= pbx + 6) {
+                b->hp_frac += primary_beam_tick_damage(g_game.primary_beam_ramp);
+                while (b->hp_frac >= 256) { b->hp_frac -= 256; b->hp--; }
+                b->flash_timer = 4;
+                if (b->hp <= 0) defeat_boss(b, boss_cx, boss_cy);
             }
         }
     }
@@ -1676,27 +1555,21 @@ static void game_update_tick(void) {
             if (dist_sq <= (br + ar)*(br + ar)) {
                 g_game.asteroids[a].hp -= g_game.bullets[b].damage;
 #ifdef PLATFORM_HOST
-                /* Android pierce rules:
-                 *   - NOVA+OMEGA bullets: pierce EVERYTHING (they oneshot).
-                 *   - QUANTUM/PLASMA heavy bullets: pierce small/medium, stop on large.
-                 *   - Everything else: stops on first rock hit. */
+                /* Higher heavy rigs pierce small/medium rocks; Void and
+                 * Prism tiers also drill through large rocks. */
                 bool pierce = false;
-                if (is_oneshot_build()) {
-                    pierce = true;
-                } else if (g_game.bullets[b].heavy && is_top_tier_build()) {
-                    pierce = (g_game.asteroids[a].type != AST_LARGE);
+                if (g_game.bullets[b].heavy && is_top_tier_build()) {
+                    pierce = (g_game.asteroids[a].type != AST_LARGE) ||
+                             g_settings.weapon_rig >= WEAPON_VOID;
                 }
                 if (!pierce) {
                     g_game.bullets[b].active = false;
                     consumed = true;
                 }
 #else
-                // Heavy / Nova / Omega pierce logic
                 bool pierce = g_game.bullets[b].heavy;
-                // Single weak should NOT pierce - only 1 rock at a time
-                if (g_settings.weapon_rig == WEAPON_SINGLE) pierce = false;
-                // Omega / Nova pierces even large? keep but still consume on large for balance
-                if (!pierce || (g_game.asteroids[a].type == AST_LARGE && g_settings.weapon_rig != WEAPON_NOVA)) {
+                if (!pierce || (g_game.asteroids[a].type == AST_LARGE &&
+                                g_settings.weapon_rig < WEAPON_VOID)) {
                     g_game.bullets[b].active = false;
                     consumed = true;
                 }
@@ -1751,6 +1624,31 @@ static void game_update_tick(void) {
                 dr->hp_frac -= 256;
                 dr->hp--;
             }
+            if (dr->hp <= 0) destroy_drone(d, true);
+        }
+    }
+
+    // Infinity primary beam: the same full-height piercing column, but active
+    // for as long as fire is held and using its 0.6s damage ramp.
+    if (g_game.primary_beam_active) {
+        int bx = FROM_FIXED(g_game.player.x);
+        int beam_dmg = primary_beam_tick_damage(g_game.primary_beam_ramp);
+        for (int a = 0; a < MAX_ASTEROIDS; a++) {
+            Asteroid* ast = &g_game.asteroids[a];
+            if (!ast->active) continue;
+            int ax = FROM_FIXED(ast->x);
+            if (ax + ast->radius < bx - 6 || ax - ast->radius > bx + 6) continue;
+            ast->hp_frac += beam_dmg;
+            while (ast->hp_frac >= 256) { ast->hp_frac -= 256; ast->hp--; }
+            if (ast->hp <= 0) destroy_asteroid(a, true);
+        }
+        for (int d = 0; d < MAX_DRONES; d++) {
+            Drone* dr = &g_game.drones[d];
+            if (!dr->active) continue;
+            int dx = FROM_FIXED(dr->x);
+            if (dx + 8 < bx - 6 || dx - 8 > bx + 6) continue;
+            dr->hp_frac += beam_dmg;
+            while (dr->hp_frac >= 256) { dr->hp_frac -= 256; dr->hp--; }
             if (dr->hp <= 0) destroy_drone(d, true);
         }
     }
@@ -1902,30 +1800,41 @@ void game_draw(void) {
     // Big laser: faint aim line while charging, then a full-height beam
     // that reaches the top of the screen (and the bottom).
     int beam_bx = FROM_FIXED(g_game.player.x) + ox;
-    if (g_game.beam_active) {
+    if (g_game.beam_active || g_game.primary_beam_active) {
         u8 beam_col = gfx_get_laser_color(g_settings.laser_index);
-        int bw = ((s_game_frame & 3) == 0) ? 10 : 8; // subtle flicker
+        int bw = g_game.beam_active ? (((s_game_frame & 3) == 0) ? 10 : 8)
+                                    : (((s_game_frame & 3) == 0) ? 8 : 6);
         gfx_fill_rect(beam_bx - bw / 2, 0, bw, SCREEN_HEIGHT, beam_col);
         gfx_fill_rect(beam_bx - 1, 0, 2, SCREEN_HEIGHT, PAL_TEXT_WHITE);
     } else if (g_game.beam_charge > 0) {
         gfx_fill_rect(beam_bx - 1, 0, 2, SCREEN_HEIGHT, 15);
     }
 
+    bool rainbow_asteroids =
+        g_settings.accent_index == ACCENT_RAINBOW_IDX &&
+        g_settings.trail_index == TRAIL_RAINBOW_IDX &&
+        g_settings.laser_index == LASER_RAINBOW_IDX;
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (g_game.asteroids[i].active) {
             int ax = FROM_FIXED(g_game.asteroids[i].x) + ox;
             int ay = FROM_FIXED(g_game.asteroids[i].y) + oy;
+            const u8* sprite;
+            int size, radius;
             if (g_game.asteroids[i].type == AST_LARGE) {
-                gfx_draw_sprite(ax - 12, ay - 12, 24, 24, spr_ast_large);
+                sprite = spr_ast_large; size = 24; radius = 12;
             } else if (g_game.asteroids[i].type == AST_MED_A) {
-                gfx_draw_sprite(ax - 8, ay - 8, 16, 16, spr_ast_med_a);
+                sprite = spr_ast_med_a; size = 16; radius = 8;
             } else if (g_game.asteroids[i].type == AST_MED_B) {
-                gfx_draw_sprite(ax - 8, ay - 8, 16, 16, spr_ast_med_b);
+                sprite = spr_ast_med_b; size = 16; radius = 8;
             } else if (g_game.asteroids[i].type == AST_SMALL) {
-                gfx_draw_sprite(ax - 5, ay - 5, 10, 10, spr_ast_small);
+                sprite = spr_ast_small; size = 10; radius = 5;
             } else {
-                gfx_draw_sprite(ax - 3, ay - 3, 6, 6, spr_ast_tiny);
+                sprite = spr_ast_tiny; size = 6; radius = 3;
             }
+            if (rainbow_asteroids)
+                gfx_draw_sprite_rainbow(ax - radius, ay - radius, size, size, sprite, s_game_frame);
+            else
+                gfx_draw_sprite(ax - radius, ay - radius, size, size, sprite);
         }
     }
 
