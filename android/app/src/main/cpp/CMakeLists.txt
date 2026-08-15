@@ -27,6 +27,9 @@ add_library(spacegame SHARED
     ${GBA_DIR}/src/renderer.c
     ${GBA_DIR}/src/audio.c
     ${GBA_DIR}/src/audio_data.c
+    # Story Mode's soundtrack (Assets/Audio/story_mode.mp3). Android only -
+    # the GBA ROM has no campaign and never links this blob.
+    audio_story_data.c
     ${GBA_DIR}/src/save.c
     ${GBA_DIR}/src/starfield.c
     ${GBA_DIR}/src/gfx_data.c

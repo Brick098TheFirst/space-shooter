@@ -67,28 +67,55 @@ int main(void){
     CHK(g_story.cleared_count==before.cleared_count,"clears persisted");
     CHK(story_is_cleared(20),"boss clear persisted");
 
-    /* shop: he docks after EVERY level now */
-    for(int lv=1; lv<=STORY_LEVEL_COUNT; lv++) CHK(story_shop_at(lv),"dock at every level");
+    /* ── Mr Chubbs docks every FIFTH level, and each dock is one visit ── */
+    g_story.docks_used = 0;
+    for(int lv=1; lv<=STORY_LEVEL_COUNT; lv++)
+        CHK(story_shop_at(lv) == ((lv % 5) == 4), "dock only every fifth level");
+    CHK(story_shop_at(4) && story_shop_at(9) && story_shop_at(69), "docks at 4/9/69");
+    CHK(!story_shop_at(5) && !story_shop_at(10) && !story_shop_at(70), "no dock off the fives");
+    /* Every dock sits immediately before a boss on the tenth levels. */
     CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(70),"boss docks on the 10s");
     CHK(!story_boss_dock(9) && !story_boss_dock(11),"no boss dock off the 10s");
+    CHK(story_dock_index(4)==0 && story_dock_index(9)==1 && story_dock_index(69)==13,
+        "dock indices run 0..13");
+    CHK(story_dock_index(7)<0, "non-dock levels have no index");
 
-    story_shop_open(10);
+    story_shop_open(9);
     const StoryStockItem* a=story_shop_slot(0);
     CHK(a->kind==SSTOCK_LIFE,"slot 0 sells lives");
     CHK(a->qty>=1,"lives in stock");
-    CHK(story_shop_level()==10,"dock level reported");
+    CHK(story_shop_level()==9,"dock level reported");
     u16 p1=story_shop_slot(2)->price; u8 k1=story_shop_slot(2)->kind;
-    story_shop_open(10);
+    story_shop_open(9);
     CHK(story_shop_slot(2)->price==p1 && story_shop_slot(2)->kind==k1,"re-entering a dock keeps the shelf");
 
-    /* unsold gear rides along to the next dock instead of vanishing */
-    story_shop_open(11);
+    /* Leaving spends the dock for good, but the unsold shelf rides along. */
+    story_shop_close();
+    CHK(story_shop_level()==0, "leaving closes the dock");
+    CHK(!story_shop_can_open(9), "a spent dock never reopens");
+    story_shop_open(9);
+    CHK(story_shop_level()==0, "reopening a spent dock is refused");
+
+    CHK(story_shop_can_open(14), "the next dock is still ahead");
+    CHK(story_shop_next_dock(9)==14, "next dock after 9 is 14");
+    story_shop_open(14);
+    CHK(story_shop_level()==14, "the next dock opens normally");
     CHK(story_shop_slot(2)->price==p1 && story_shop_slot(2)->kind==k1,"unsold stock carries over");
     CHK(story_shop_slot_held_over(2),"carried stock is flagged HELD OVER");
     CHK(!story_shop_slot_held_over(0),"lives restock every dock");
 
+    /* Spent docks survive a save/load round trip. */
+    save_write();
+    memset(&g_story,0,sizeof(g_story));
+    save_load();
+    CHK(!story_shop_can_open(9), "spent dock persisted");
+    CHK(story_shop_can_open(19), "unspent dock persisted");
+
     /* the shelf never offers something already owned */
-    for(int lv=1; lv<=40; lv++){
+    g_story.docks_used = 0;
+    for(int lv=4; lv<=40; lv+=5){
+        story_shop_close();
+        g_story.docks_used = 0;
         story_shop_open(lv);
         for(int i=1;i<STORY_SHOP_SLOTS;i++){
             const StoryStockItem* it=story_shop_slot(i);

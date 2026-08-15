@@ -101,10 +101,31 @@ before the rest of the game unlocks.
 
 - **The opening speech.** First launch types out Jack Arkey's story page by
   page over the starfield. Tap to advance, SKIP to jump it. It only plays once.
-- **70 unique levels across 7 themed sectors** — The Chubb Belt, The Rust
-  Yards, The Ice Fields, The Scrapline, Ember Reach, The Cold Vault and The
-  Reality Gate. Objectives rotate between **clear the field**, **hunt the
-  fighters** and **survive the timer**, so no sector plays like the last.
+  It runs under **Story Mode's own soundtrack** (`Assets/Audio/story_mode.mp3`),
+  which keeps playing across the level map, the dock and the result cards, so
+  the campaign never sounds like the arcade front end.
+- **70 levels across 7 themed sectors** — The Chubb Belt, The Rust Yards,
+  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault and The Reality
+  Gate — and deliberately no two of them play the same. Every level is built
+  from two axes:
+  - **Five objectives:** **clear the field**, **hunt the fighters**,
+    **survive the timer**, **crack the big ones** (break N large rocks; the
+    debris they shed is just weather) and **clear it on the clock** (the only
+    objective you can fail without dying).
+  - **Eight field modifiers:** *Boulder Field* (almost nothing but big rocks),
+    *Shard Storm* (no big rocks at all, fast mediums everywhere), *Hunter
+    Swarm*, *Fast Space*, *Armoured Rock*, *Slow Drip*, *Constant Storm* and
+    *Sharpshooters* (fewer hunters, far more incoming fire).
+
+  Each sector runs its own hand-picked sequence of the two, so no
+  objective+modifier pair ever repeats back to back. The level banner and the
+  map card both name the twist before you launch.
+- **A different sky over every kingdom.** All seven sectors have their own
+  backdrop: the Belt's warm dust, the Rust Yards' brown iron haze, the Ice
+  Fields' blue sleet, the Scrapline's sodium-green glare, Ember Reach's rising
+  embers, the near-black Cold Vault and the Reality Gate's folded violet
+  space. Nebula tints, star colours and a per-theme drifting weather layer all
+  change; the arcade modes keep the original starfield exactly as it was.
 - **A boss every 10 levels, each with its own attacks:** **Rustjaw** (jaw slam
   + scrap spit), **The Twins** (splits in two at 50% and cross-fires),
   **Frostwidow** (ice web + tracking frost lance), **Scrap Titan** (four
@@ -114,11 +135,27 @@ before the rest of the game unlocks.
   where Jack, now the Reality King, fights the Queen's ship.
 - **Level map.** Fly a little ship between the ten nodes of a sector; bosses
   are bigger nodes, cleared levels are ticked, locked ones are greyed out.
-- **Mr Chubbs' Shop.** His ship docks every 5 levels with a small rotating
-  stock — weapons, laser crystals, paints, stat upgrades, and a strictly
-  limited number of **spare lives**. You never see him or any other Chubb;
-  it's just a hull and a voice. Anything you buy is also yours in the arcade
-  hangar afterwards.
+- **The clear counter is in medium rocks.** A big rock counts as exactly the
+  **two mediums** it breaks into, and the small/tiny debris the mediums shed
+  is not counted at all — it still exists and still has to be dodged, it is
+  just not the objective. So five big rocks read `10`, two read `4`, and
+  popping a big one leaves the number where it was until a medium actually
+  dies.
+- **Mr Chubbs' Shop — one dock, one visit.** His ship catches up with you on
+  the clear of every fifth level (4, 9, 14, … 69), which always puts one
+  immediately before each boss. **Leaving the dock undocks him for good**: you
+  fly the next five levels without a shop, and there is no walking back in.
+  Anything you did *not* buy is not lost — the unsold shelf rides along and is
+  still there at the next dock, flagged `HELD OVER`. He sells weapons, laser
+  crystals, paints, stat upgrades and a strictly limited number of **spare
+  lives**; pre-boss docks also hand over one free life. You never see him or
+  any other Chubb; it's just a hull and a voice. Anything you buy is also
+  yours in the arcade hangar afterwards.
+- **The dock uses the full hangar layout.** Mr Chubbs' shop is built on the
+  same geometry as the post-campaign Upgrade Hangar — a stock list on the
+  left, a preview chamber and detail card on the right, 21 px rows and the
+  same baselines — instead of the four squashed full-width strips it used to
+  be.
 - **Chubbcoin** is the story's own currency, earned per level clear (replays
   pay half). Arcade coins are never earned or spent in the campaign.
 - **Lives & checkpoints.** You get 3 story lives. Die and you retry the level;
@@ -128,9 +165,19 @@ before the rest of the game unlocks.
   Waves/Endless/Overdrive modes — until level 70 falls, *or* you open
   **Settings → LET ME BE FREE** and tap it three times.
 
-Story progress lives in the **V9 save block** (levels cleared, chubbcoin,
-lives, unlock flags) and older saves upgrade automatically. The campaign is
-verified by a headless playthrough harness — see `tools/story_sim/`.
+Story progress lives in the **V10 save block** (levels cleared, chubbcoin,
+lives, unlock flags, and which of Mr Chubbs' 14 docks are already spent).
+Older saves — including V9 campaign saves — upgrade automatically on load and
+keep all their progress. The campaign is verified by a headless playthrough
+harness that proves every level still terminates — see `tools/story_sim/`.
+
+Story Mode's soundtrack is the only asset shipped as an MP3, so it has its own
+converter: `python3 tools/generate_story_audio.py` regenerates
+`android/app/src/main/cpp/audio_story_data.c` (committed) whenever
+`Assets/Audio/story_mode.mp3` changes. It needs `miniaudio` + `numpy`, which is
+why it is kept out of the dependency-free `npm run generate-assets` path. Only
+the Android target compiles it — the GBA ROM has no Story Mode and never links
+the samples.
 
 ### Android-only gameplay differences
 

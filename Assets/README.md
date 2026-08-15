@@ -24,3 +24,19 @@ The six WAV files in `Audio/` are also the checked-in source assets for the GBA
 build, including the dedicated `boss.wav` cue. `tools/generate_gba_data.py`
 converts them to 18.157 kHz signed 8-bit PCM arrays in `gba/src/audio_data.c`;
 GBA hardware cannot play the WAV containers directly.
+
+`Audio/story_mode.mp3` is Story Mode's soundtrack (the campaign's opening
+speech, level map, dock and result cards). It is the only audio asset that is
+not a WAV, so it is deliberately kept out of `tools/generate_gba_data.py`:
+Python's stdlib `wave` module cannot decode an MP3, and the asset pipeline that
+CI runs on every push must stay dependency-free. It has its own converter
+instead:
+
+```bash
+pip install miniaudio numpy
+python3 tools/generate_story_audio.py   # -> android/app/src/main/cpp/audio_story_data.c
+```
+
+The generated `.c` is committed, so a normal build never needs those packages —
+re-run the script only when the MP3 itself changes. Only the Android CMake
+target compiles it; the GBA ROM has no Story Mode and never links the samples.

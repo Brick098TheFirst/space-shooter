@@ -19,7 +19,11 @@ typedef enum {
     BGM_NONE,
     BGM_MENU,
     BGM_GAME,
-    BGM_BOSS
+    BGM_BOSS,
+    /* Story Mode's own track (Assets/Audio/story_mode.mp3).  Android only -
+     * on the GBA it falls back to BGM_MENU, since the ROM has no campaign
+     * and no room for a fourth long sample. */
+    BGM_STORY
 } BgmTrack;
 
 typedef enum {

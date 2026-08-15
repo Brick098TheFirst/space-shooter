@@ -180,20 +180,35 @@ void menu_open(GameScreen screen) {
     s_tap_pending = false;
     s_mp_selected = 0;
     menu_static_invalidate();
+#ifdef PLATFORM_HOST
+    /* The campaign has its own soundtrack (Assets/Audio/story_mode.mp3): it
+     * starts under the opening speech and keeps playing across the map, the
+     * dock and the result cards, so Story Mode never sounds like the arcade
+     * front end. */
+    if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_MAP ||
+        screen == SCREEN_STORY_SHOP  || screen == SCREEN_STORY_RESULT) {
+        audio_play_bgm(BGM_STORY);
+    } else
+#endif
     if (screen == SCREEN_MAIN_MENU || screen == SCREEN_HANGAR || screen == SCREEN_SETTINGS ||
         screen == SCREEN_CONTROLS || screen == SCREEN_OPTIONS || screen == SCREEN_MODE_SELECT ||
-        screen == SCREEN_MULTIPLAYER
-#ifdef PLATFORM_HOST
-        || screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_MAP ||
-        screen == SCREEN_STORY_SHOP || screen == SCREEN_STORY_RESULT
-#endif
-        ) {
+        screen == SCREEN_MULTIPLAYER) {
         audio_play_bgm(BGM_MENU);
     }
 #ifdef PLATFORM_HOST
     if (screen == SCREEN_STORY_INTRO) intro_reset();
     if (screen == SCREEN_STORY_MAP)   map_focus_current();
     if (screen == SCREEN_STORY_SHOP)  story_shop_reset_ui();
+    /* Each kingdom flies over its own sky; the campaign menus preview the
+     * sector the cursor is parked in. */
+    if (screen == SCREEN_STORY_INTRO) {
+        starfield_set_theme(SF_THEME_ARCADE);
+    } else if (screen == SCREEN_STORY_MAP || screen == SCREEN_STORY_SHOP ||
+               screen == SCREEN_STORY_RESULT) {
+        starfield_set_theme(story_theme_for_level(story_current_level()));
+    } else {
+        starfield_set_theme(SF_THEME_ARCADE);
+    }
 #endif
     s_opt_selected = 0;
 }
@@ -234,6 +249,10 @@ void menu_go_back(void) {
             menu_open(SCREEN_STORY_MAP);
             break;
         case SCREEN_STORY_SHOP:
+            /* Backing out of the dock is still leaving it: one visit only. */
+            story_shop_close();
+            menu_open(SCREEN_STORY_MAP);
+            break;
         case SCREEN_STORY_RESULT:
             menu_open(SCREEN_STORY_MAP);
             break;
@@ -952,6 +971,25 @@ static void map_set_msg(const char* m) {
     s_map_msg_timer = 120;
 }
 
+/* Where Mr Chubbs is relative to the player's progress. He catches up on
+ * the clear of every fifth level (4, 9, 14, ...) and each dock is spent the
+ * moment you leave it, so the map can only ever report, never open. */
+/* The next dock the player will actually fly into: the earliest one that is
+ * both unspent and still ahead of them (not already cleared). */
+static int map_next_dock(void) {
+    for (int lv = 1; lv <= STORY_LEVEL_COUNT; lv++)
+        if (story_shop_can_open(lv) && !story_is_cleared(lv)) return lv;
+    return story_shop_next_dock(0);
+}
+
+static const char* map_chubbs_hint(void) {
+    static char buf[40];
+    int next = map_next_dock();
+    if (next <= 0) return "MR CHUBBS HAS NO STOCK LEFT";
+    siprintf(buf, "HE DOCKS WHEN LV %d IS CLEAR", next);
+    return buf;
+}
+
 static void map_snap_ship(void) {
     int i = (s_map_cursor - 1) % STORY_SECTOR_LEVELS;
     s_map_ship_x = (float)map_node_x(i);
@@ -1000,11 +1038,11 @@ static void update_story_map(void) {
 
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
-        /* Mr Chubbs' docked ship sits top-right - he trades at every level. */
+        /* Mr Chubbs' status chip sits top-right. He is not a shop you can
+         * walk into from the map: he only docks on the clear of every fifth
+         * level, and only once. The chip just tells you how far off he is. */
         if (in_rect(tx, ty, SCREEN_WIDTH - 92, 18, 88, 22)) {
-            s_shopz_fly_on = 0;
-            story_shop_open(s_map_cursor);
-            menu_open(SCREEN_STORY_SHOP);
+            map_set_msg(map_chubbs_hint());
             return;
         }
         /* LAUNCH button. */
@@ -1044,11 +1082,7 @@ static void update_story_map(void) {
     if (key_hit(KEY_R) && s_map_sector < STORY_SECTOR_COUNT - 1 &&
         story_highest_unlocked() > (s_map_sector + 1) * STORY_SECTOR_LEVELS) s_map_sector++;
     if (key_hit(KEY_A) || key_hit(KEY_START)) map_launch();
-    if (key_hit(KEY_SELECT)) {
-        s_shopz_fly_on = 0;
-        story_shop_open(s_map_cursor);
-        menu_open(SCREEN_STORY_SHOP);
-    }
+    if (key_hit(KEY_SELECT)) map_set_msg(map_chubbs_hint());
     if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
 }
 
@@ -1074,14 +1108,21 @@ static void render_story_map(void) {
     siprintf(buf, "SECTOR %d/%d", s_map_sector + 1, STORY_SECTOR_COUNT);
     gfx_draw_text_centered(0, 24, SCREEN_WIDTH, buf, 17);
 
-    /* Mr Chubbs docks at every level now. You never see him - just his ship. */
+    /* Mr Chubbs' status chip. He docks on the clear of every fifth level and
+     * only once, so this reports where he is - it is not a way in. */
     {
-        bool boss_next = story_boss_dock(s_map_cursor);
+        int next_dock = map_next_dock();
+        bool boss_dock = (next_dock > 0) && story_boss_dock(next_dock + 1);
         gfx_draw_glass_card(SCREEN_WIDTH - 92, 18, 88, 22,
-                            boss_next ? PAL_TEXT_RED : PAL_TEXT_GOLD, 14);
+                            boss_dock ? PAL_TEXT_RED : 20, 14);
         gfx_draw_text_centered(SCREEN_WIDTH - 92, 21, 88, "MR CHUBBS", PAL_TEXT_GOLD);
-        gfx_draw_text_centered(SCREEN_WIDTH - 92, 30, 88,
-                               boss_next ? "FREE LIFE - TAP" : "DOCKED - TAP", PAL_TEXT_WHITE);
+        if (next_dock <= 0) {
+            gfx_draw_text_centered(SCREEN_WIDTH - 92, 30, 88, "GONE FOR GOOD", 18);
+        } else {
+            siprintf(buf, "DOCKS AT LV %d", next_dock);
+            gfx_draw_text_centered(SCREEN_WIDTH - 92, 30, 88, buf,
+                                   boss_dock ? PAL_TEXT_RED : PAL_TEXT_WHITE);
+        }
     }
 
     /* The path: draw connecting lines first, then the nodes on top. */
@@ -1113,9 +1154,14 @@ static void render_story_map(void) {
         if (cleared) gfx_draw_char(nx - 2, ny - 3, '*', PAL_SPACE_BLACK);
         else if (!unlocked) gfx_draw_char(nx - 2, ny - 3, '-', PAL_TEXT_WHITE);
 
-        /* He trades after every level; boss docks get the green free-life pip. */
-        gfx_draw_char(nx - 2, ny + r + 2, story_boss_dock(lv) ? '+' : '$',
-                      story_boss_dock(lv) ? PAL_TEXT_GREEN : PAL_TEXT_GOLD);
+        /* Only the every-fifth-level docks get a pip, and it greys out once
+         * that dock has been used - he does not come back for it. */
+        if (story_shop_at(lv)) {
+            bool spent = !story_shop_can_open(lv);
+            bool pre_boss = story_boss_dock(lv + 1);
+            gfx_draw_char(nx - 2, ny + r + 2, pre_boss ? '+' : '$',
+                          spent ? (u8)18 : (pre_boss ? PAL_TEXT_GREEN : PAL_TEXT_GOLD));
+        }
     }
 
     /* The player's little ship, hovering over the selected node. */
@@ -1135,6 +1181,8 @@ static void render_story_map(void) {
     switch (L->objective) {
         case OBJ_HUNT:    goal = "HUNT THE FIGHTERS"; break;
         case OBJ_SURVIVE: goal = "SURVIVE THE FIELD"; break;
+        case OBJ_BIGGAME: goal = "CRACK THE BIG ONES"; break;
+        case OBJ_TIMED:   goal = "CLEAR IT ON THE CLOCK"; break;
         case OBJ_BOSS:    goal = story_boss_name(story_boss_for_level(s_map_cursor)); break;
         default:          goal = "CLEAR EVERYTHING"; break;
     }
@@ -1142,8 +1190,26 @@ static void render_story_map(void) {
                   L->objective == OBJ_BOSS ? PAL_TEXT_RED : PAL_TEXT_GOLD);
     siprintf(buf, "PAYS %d Coins", story_is_cleared(s_map_cursor) ? L->reward / 2 : L->reward);
     gfx_draw_text(SCREEN_WIDTH - 18 - (int)strlen(buf) * 6, 47, buf, PAL_TEXT_GOLD);
-    /* The level's own line of story, so the map reads as a narrative. */
-    gfx_draw_text_centered(12, 67, card_w, L->brief1, PAL_TEXT_WHITE);
+    /* The level's own line of story, so the map reads as a narrative - and
+     * its twist, so you can see at a glance that no two levels are alike. */
+    {
+        const char* modn = story_modifier_name(L->modifier);
+        if (modn[0]) {
+            /* Clip the story line so it stops before the twist tag instead
+             * of drawing straight through it. */
+            int mod_x = SCREEN_WIDTH - 18 - (int)strlen(modn) * 6;
+            int room = (mod_x - 6 - 18) / 6;
+            if (room < 0) room = 0;
+            if (room > 39) room = 39;
+            char brief[40];
+            strncpy(brief, L->brief1, room);
+            brief[room] = '\0';
+            gfx_draw_text(18, 67, brief, PAL_TEXT_WHITE);
+            gfx_draw_text(mod_x, 67, modn, PAL_TEXT_VIOLET);
+        } else {
+            gfx_draw_text_centered(12, 67, card_w, L->brief1, PAL_TEXT_WHITE);
+        }
+    }
 
     /* Launch button. */
     int bx = (SCREEN_WIDTH - 96) / 2;
@@ -1187,17 +1253,44 @@ static void story_shop_reset_ui(void) {
     }
 }
 
-/* Layout: header strip, radio card, four stock rows, action bar. */
-#define SHOPZ_ROW_H 20      /* pitch; rows draw 19 tall, leaving a 1px gutter */
-#define SHOPZ_ROW_TOP 49
-#define SHOPZ_BAR_H 17
+/* ── Layout ───────────────────────────────────────────────────────────────
+ * The dock now uses the SAME geometry as the arcade Upgrade Hangar rather
+ * than four squashed full-width strips: a header line, a stock list on the
+ * left and a detail panel on the right, with the action button under the
+ * detail card.  Every constant below is derived from the hangar's so the two
+ * shops line up pixel for pixel.
+ *
+ *   hangar: tabs at y=17 h=13, panels at y=31 h=112, rows 21 px, msg y=148
+ *   dock:   radio at y=17 h=13, panels at y=31 h=112, rows 21 px, msg y=148
+ *
+ * Mr Chubbs has no tab strip (one shelf, four slots), so the row that the
+ * hangar spends on tabs becomes his radio line - the layout below it is
+ * identical. */
+#define SHOPZ_ROW_H     LIST_ROW_H   /* 21: the hangar's row pitch */
+#define SHOPZ_PANEL_Y   31
+#define SHOPZ_PANEL_H   112
+#define SHOPZ_ROW_TOP   34           /* == hangar_list_top() */
+
+static int shopz_list_w(void)  { return shop_list_width(); }              /* 116 + slack */
+static int shopz_right_x(void) { return 4 + shopz_list_w() + 2; }
+static int shopz_right_w(void) { return SCREEN_WIDTH - 4 - shopz_right_x(); }
+
+static int shopz_row_x(void) { return 6; }
+static int shopz_row_w(void) { return shopz_list_w() - 4; }
 static int shopz_row_y(int i) { return SHOPZ_ROW_TOP + i * SHOPZ_ROW_H; }
-static int shopz_status_y(void) { return SCREEN_HEIGHT - 29; }   /* 131 */
-static int shopz_bar_y(void)    { return SCREEN_HEIGHT - 19; }   /* 141 */
-static int shopz_row_x(void)  { return 8; }
-static int shopz_row_w(void)  { return SCREEN_WIDTH - 16; }
+
+/* BUY sits inside the right panel where the hangar puts its BUY / EQUIP
+ * button.  The four stock rows only reach y=118, so LEAVE gets the empty
+ * space at the bottom of the LIST panel - no button ever overlaps text. */
+#define SHOPZ_BTN_H 21
+static int shopz_btn_y(void)   { return 115; }
+static int shopz_leave_y(void) { return 120; }
+static int shopz_leave_h(void) { return 19; }
 
 static void shopz_leave(void) {
+    /* Leaving spends the dock. He undocks and flies off; there is no second
+     * look at this shelf until he catches up again five levels later. */
+    story_shop_close();
     if (s_shopz_fly_on && story_is_unlocked(s_shopz_next_level) && story_lives() > 0) {
         story_set_current_level(s_shopz_next_level);
         game_story_set_level(s_shopz_next_level);
@@ -1230,16 +1323,17 @@ static void update_story_shop(void) {
     if (consume_tap(&tx, &ty)) {
         for (int i = 0; i < STORY_SHOP_SLOTS; i++) {
             if (in_rect(tx, ty, shopz_row_x(), shopz_row_y(i), shopz_row_w(), SHOPZ_ROW_H)) {
+                /* Tap to select, tap the selected row again to buy - the
+                 * same double-tap the hangar list uses. */
                 if (s_shopz_sel == i) shopz_buy(i);
                 else { s_shopz_sel = i; s_shopz_flash = 0; }
                 return;
             }
         }
-        /* Action bar: BUY on the left, LEAVE / FLY ON on the right. */
-        int bar_y = shopz_bar_y();
-        int half = (SCREEN_WIDTH - 24) / 2;
-        if (in_rect(tx, ty, 8, bar_y, half, SHOPZ_BAR_H)) { shopz_buy(s_shopz_sel); return; }
-        if (in_rect(tx, ty, SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H)) { shopz_leave(); return; }
+        if (in_rect(tx, ty, shopz_right_x() + 4, shopz_btn_y(),
+                    shopz_right_w() - 8, SHOPZ_BTN_H)) { shopz_buy(s_shopz_sel); return; }
+        if (in_rect(tx, ty, shopz_row_x(), shopz_leave_y(),
+                    shopz_row_w(), shopz_leave_h())) { shopz_leave(); return; }
         return;
     }
     if (key_hit(KEY_UP)) { s_shopz_sel = (s_shopz_sel + STORY_SHOP_SLOTS - 1) % STORY_SHOP_SLOTS; s_shopz_flash = 0; }
@@ -1279,49 +1373,77 @@ static void shopz_draw_icon(int x, int y, int kind, bool dim) {
     }
 }
 
+/* Split `src` onto two lines of at most `cols` characters, breaking on a
+ * space so the item blurbs sit inside the detail card instead of running off
+ * the edge of it. Both outputs are always NUL-terminated. */
+static void shopz_wrap(const char* src, int cols, char* l1, char* l2, int cap) {
+    if (cols > cap - 1) cols = cap - 1;
+    if (cols < 1) cols = 1;
+    l1[0] = l2[0] = '\0';
+    int len = (int)strlen(src);
+    if (len <= cols) { strncpy(l1, src, cap - 1); l1[cap - 1] = '\0'; return; }
+
+    /* Last space at or before the column limit; hard-split if there is none. */
+    int brk = -1;
+    for (int i = 0; i < len && i <= cols; i++) if (src[i] == ' ') brk = i;
+    if (brk <= 0) brk = cols;
+
+    int n1 = brk; if (n1 > cap - 1) n1 = cap - 1;
+    memcpy(l1, src, n1); l1[n1] = '\0';
+
+    const char* rest = src + brk;
+    while (*rest == ' ') rest++;
+    int n2 = (int)strlen(rest);
+    if (n2 > cols) n2 = cols;
+    if (n2 > cap - 1) n2 = cap - 1;
+    memcpy(l2, rest, n2); l2[n2] = '\0';
+}
+
+/* One-word category for the detail card, mirroring the hangar's "Hull skin
+ * finish" / "Primary ordnance" second line. */
+static const char* shopz_slot_kind_line(int kind) {
+    switch (kind) {
+        case SSTOCK_LIFE:    return "Spare life";
+        case SSTOCK_WEAPON:  return "Primary ordnance";
+        case SSTOCK_LASER:   return "Laser crystal core";
+        case SSTOCK_PAINT:   return "Hull skin finish";
+        case SSTOCK_UPGRADE: return "Permanent stat upgrade";
+        default:             return "";
+    }
+}
+
 static void render_story_shop(void) {
     starfield_draw_base(0, 0);
     starfield_draw_stars(0, 0);
 
     char buf[48];
-
-    /* ── Header: name on the left, wallet chip on the right ── */
-    gfx_fill_rect(0, 0, SCREEN_WIDTH, 15, 14);
-    gfx_draw_text(6, 4, "MR CHUBBS", PAL_TEXT_GOLD);
-    gfx_draw_text(6 + 9 * 6 + 4, 4, "TRADING POST", 17);
-    siprintf(buf, "%lu Coins", (unsigned long)story_chubbcoin());
-    {
-        int cw = (int)strlen(buf) * 6;
-        gfx_draw_glass_card(SCREEN_WIDTH - cw - 12, 1, cw + 8, 13, PAL_TEXT_GOLD, 15);
-        gfx_draw_text(SCREEN_WIDTH - cw - 8, 4, buf, PAL_TEXT_GOLD);
-    }
-    gfx_fill_rect(0, 15, SCREEN_WIDTH, 1, PAL_TEXT_GOLD);
-
-    /* ── Radio card: the docked hull and his two lines ── */
+    int list_w = shopz_list_w();
+    int right_x = shopz_right_x();
+    int right_w = shopz_right_w();
     bool boss_dock = story_shop_is_boss_dock();
-    gfx_draw_glass_card(6, 17, SCREEN_WIDTH - 12, 30,
-                        boss_dock ? PAL_TEXT_RED : PAL_TEXT_GOLD, 14);
-    /* The little docked ship. No faces, ever - just a hull and a voice. */
+
+    /* ── Header: his name on the left, the purse on the right ──
+     * Same 15 px strip + rule the hangar uses. */
+    gfx_draw_text(6, 4, "MR CHUBBS", PAL_TEXT_GOLD);
+    gfx_draw_text(6 + 10 * 6, 4, "TRADING POST", 17);
+    siprintf(buf, "%lu Coins", (unsigned long)story_chubbcoin());
+    gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
+    gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
+
+    /* ── Radio line (where the hangar keeps its tab strip) ── */
+    gfx_draw_glass_card(4, 17, SCREEN_WIDTH - 8, 13,
+                        boss_dock ? PAL_TEXT_RED : 20, PAL_BTN_BG);
+    gfx_draw_text(9, 19, story_shop_line1(), boss_dock ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
     {
-        int sx = 12, sy = 23;
-        u8 hull = boss_dock ? PAL_TEXT_RED : PAL_TEXT_GOLD;
-        gfx_fill_rect(sx + 2, sy + 5, 22, 9, hull);
-        gfx_fill_rect(sx + 6, sy + 2, 13, 4, PAL_TEXT_WHITE);
-        gfx_fill_rect(sx, sy + 8, 4, 5, PAL_TEXT_CYAN);
-        gfx_fill_rect(sx + 22, sy + 8, 4, 5, PAL_TEXT_CYAN);
-        /* Blinking dock light, so the card feels alive. */
-        if ((s_anim_frame >> 4) & 1)
-            gfx_fill_rect(sx + 11, sy, 3, 2, PAL_TEXT_GREEN);
-    }
-    gfx_draw_text(44, 20, story_shop_line1(), boss_dock ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
-    gfx_draw_text(44, 29, story_shop_line2(), 17);
-    {
-        int lv = story_shop_level();
-        siprintf(buf, "DOCK AFTER LEVEL %d", lv);
-        gfx_draw_text(44, 38, buf, 20);
+        siprintf(buf, "LIVES %d", story_lives());
+        gfx_draw_text(SCREEN_WIDTH - 9 - (int)strlen(buf) * 6, 19, buf, PAL_TEXT_GREEN);
     }
 
-    /* ── The shelf ── */
+    /* ── The two panels ── */
+    gfx_draw_glass_card(4, SHOPZ_PANEL_Y, list_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
+    gfx_draw_glass_card(right_x, SHOPZ_PANEL_Y, right_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
+
+    /* ── Left panel: the shelf, one 21 px row per slot ── */
     for (int i = 0; i < STORY_SHOP_SLOTS; i++) {
         const StoryStockItem* it = story_shop_slot(i);
         int y = shopz_row_y(i);
@@ -1330,61 +1452,130 @@ static void render_story_shop(void) {
         bool gone = (it->qty == 0);
         bool afford = story_chubbcoin() >= it->price;
 
-        u8 border = gone ? (u8)20 : (sel ? PAL_TEXT_CYAN : PAL_BTN_BORDER);
-        u8 fill = (sel && s_shopz_flash > 0 && ((s_shopz_flash >> 2) & 1)) ? PAL_TEXT_GREEN
-                : (sel ? (u8)15 : (u8)14);
-        gfx_draw_glass_card(rx, y, rw, SHOPZ_ROW_H - 1, border, fill);  /* 19 tall */
+        u8 border = gone ? (u8)20
+                  : (sel ? (((s_anim_frame >> 4) & 1) ? PAL_TEXT_WHITE : PAL_TEXT_CYAN) : (u8)20);
+        u8 bg = (sel && s_shopz_flash > 0 && ((s_shopz_flash >> 2) & 1)) ? PAL_TEXT_GREEN
+              : (sel ? PAL_BTN_HOVER : PAL_BTN_BG);
+        gfx_draw_glass_card(rx, y, rw, SHOPZ_ROW_H - 2, border, bg);   /* 19 tall, 2 px gutter */
 
-        /* Selection caret + icon column. */
-        if (sel) gfx_draw_char(rx + 2, y + 5, '>', PAL_TEXT_CYAN);
-        shopz_draw_icon(rx + 9, y + 4, it->kind, gone);
+        shopz_draw_icon(rx + 4, y + 4, it->kind, gone);
 
-        gfx_draw_text(rx + 22, y + 2, story_shop_slot_name(i), gone ? (u8)18 : PAL_TEXT_WHITE);
-        gfx_draw_text(rx + 22, y + 10, story_shop_slot_desc(i), gone ? (u8)18 : (u8)17);
-
-        if (gone) {
-            gfx_draw_text(rx + rw - 8 - 8 * 6, y + 6, "SOLD OUT", 18);
+        /* Name, then the badge hard-right - exactly the hangar's row shape. */
+        char name_buf[13] = {0};
+        strncpy(name_buf, story_shop_slot_name(i), 12);
+        if (sel) {
+            gfx_draw_char(rx + 15, y + 6, '>', PAL_TEXT_CYAN);
+            gfx_draw_text(rx + 22, y + 6, name_buf, gone ? (u8)18 : PAL_TEXT_WHITE);
         } else {
-            siprintf(buf, "%d", (int)it->price);
-            int pw = (int)strlen(buf) * 6 + 30;   /* number + " Coins" tag */
-            int px = rx + rw - 6 - pw;
-            gfx_draw_text(px, y + 2, buf, afford ? PAL_TEXT_GOLD : PAL_TEXT_RED);
-            gfx_draw_text(px + (int)strlen(buf) * 6 + 3, y + 2, "Coins", afford ? (u8)17 : PAL_TEXT_RED);
-            if (it->kind == SSTOCK_LIFE) {
-                siprintf(buf, "x%d LEFT", (int)it->qty);
-                gfx_draw_text(rx + rw - 6 - (int)strlen(buf) * 6, y + 10, buf, PAL_TEXT_CYAN);
-            } else if (story_shop_slot_held_over(i)) {
-                gfx_draw_text(rx + rw - 6 - 9 * 6, y + 10, "HELD OVER", 20);
-            }
+            gfx_draw_text(rx + 16, y + 6, name_buf, gone ? (u8)18 : PAL_TEXT_CYAN);
         }
+
+        char badge[12];
+        u8 badge_col;
+        if (gone) { strncpy(badge, "SOLD", sizeof(badge) - 1); badge[sizeof(badge)-1] = '\0'; badge_col = 18; }
+        else { siprintf(badge, "%d", (int)it->price); badge_col = afford ? PAL_TEXT_GOLD : PAL_TEXT_RED; }
+        gfx_draw_text(rx + rw - 5 - (int)strlen(badge) * 6, y + 6, badge, badge_col);
     }
 
-    /* ── Status line: the free-life gift wins it, then purchase messages,
-     * then the standing "your stock is safe" reassurance. ── */
-    int status_y = shopz_status_y();
-    if (s_shopz_gift > 0) {
-        siprintf(buf, "+1 LIFE ON THE HOUSE   LIVES %d", story_lives());
-        gfx_draw_text_centered(0, status_y, SCREEN_WIDTH, buf,
-                               ((s_shopz_gift >> 3) & 1) ? PAL_TEXT_GREEN : PAL_TEXT_WHITE);
-    } else if (s_shopz_msg_timer > 0) {
-        gfx_draw_text_centered(0, status_y, SCREEN_WIDTH, s_shopz_msg, s_shopz_msg_col);
-    } else {
-        siprintf(buf, "LIVES %d", story_lives());
-        gfx_draw_text(8, status_y, buf, PAL_TEXT_GREEN);
-        gfx_draw_text(SCREEN_WIDTH - 8 - 25 * 6, status_y,
-                      "UNSOLD STOCK CARRIES OVER", 20);
-    }
-
+    /* ── Right panel: the docked hull, then the detail card ── */
+    gfx_draw_glass_card(right_x + 2, SHOPZ_PANEL_Y + 2, right_w - 4, 35, 20, PAL_SPACE_BLACK);
     {
-        int bar_y = shopz_bar_y();
-        int half = (SCREEN_WIDTH - 24) / 2;
-        gfx_draw_button(8, bar_y, half, SHOPZ_BAR_H, "BUY", true);
+        /* His ship, centred in the preview chamber. No faces, ever - just a
+         * hull, a blinking dock light and a voice. */
+        int cx = right_x + right_w / 2;
+        int sy = SHOPZ_PANEL_Y + 10;
+        u8 hull = boss_dock ? PAL_TEXT_RED : PAL_TEXT_GOLD;
+        gfx_fill_rect(cx - 11, sy + 5, 22, 9, hull);
+        gfx_fill_rect(cx - 7, sy + 2, 13, 4, PAL_TEXT_WHITE);
+        gfx_fill_rect(cx - 15, sy + 8, 4, 5, PAL_TEXT_CYAN);
+        gfx_fill_rect(cx + 11, sy + 8, 4, 5, PAL_TEXT_CYAN);
+        if ((s_anim_frame >> 4) & 1)
+            gfx_fill_rect(cx - 1, sy, 3, 2, PAL_TEXT_GREEN);
+    }
+    gfx_fill_rect(right_x + 4, 70, right_w - 8, 1, 20);
+
+    /* Detail rows sit on the hangar's baselines: name 80, status 89,
+     * desc 98, kind 107 - four clear lines instead of two crammed ones. */
+    {
+        const StoryStockItem* it = story_shop_slot(s_shopz_sel);
+        bool gone = (it->qty == 0);
+        bool afford = story_chubbcoin() >= it->price;
+
+        gfx_draw_text_centered(right_x, 73, right_w, story_shop_slot_name(s_shopz_sel),
+                               gone ? (u8)18 : PAL_TEXT_WHITE);
+        if (gone) {
+            gfx_draw_text_centered(right_x, 82, right_w, "[SOLD OUT]", 18);
+        } else if (it->kind == SSTOCK_LIFE) {
+            siprintf(buf, "COST: %d   x%d LEFT", (int)it->price, (int)it->qty);
+            gfx_draw_text_centered(right_x, 82, right_w, buf, afford ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+        } else {
+            siprintf(buf, "COST: %d Coins", (int)it->price);
+            gfx_draw_text_centered(right_x, 82, right_w, buf, afford ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+        }
+
+        /* The item's own blurb, word-wrapped onto the two lines the panel
+         * has room for - the old single line ran straight off the card. */
+        {
+            char l1[24], l2[24];
+            shopz_wrap(story_shop_slot_desc(s_shopz_sel), (right_w - 8) / 6, l1, l2,
+                       (int)sizeof(l1));
+            gfx_draw_text_centered(right_x, 91, right_w, l1, gone ? (u8)18 : PAL_TEXT_CYAN);
+            gfx_draw_text_centered(right_x, 99, right_w, l2, gone ? (u8)18 : PAL_TEXT_CYAN);
+        }
+        /* What kind of thing it is - or, if he could not sell it last time,
+         * that it has been sitting on the shelf since the previous dock. */
+        gfx_draw_text_centered(right_x, 107, right_w,
+                               story_shop_slot_held_over(s_shopz_sel)
+                                   ? "Held over from last dock"
+                                   : shopz_slot_kind_line(it->kind), 17);
+    }
+
+    /* ── LEAVE, then the BUY button on the hangar's own baseline ── */
+    {
+        const StoryStockItem* it = story_shop_slot(s_shopz_sel);
+        bool gone = (it->qty == 0);
+        bool afford = story_chubbcoin() >= it->price;
+        int btn_x = right_x + 4;
+        int btn_w = right_w - 8;
+
+        /* LEAVE lives under the shelf, in the list panel's spare space. */
         if (s_shopz_fly_on) {
             siprintf(buf, "FLY ON  LV %d", s_shopz_next_level);
-            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H, buf, false);
+            gfx_draw_button(shopz_row_x(), shopz_leave_y(), shopz_row_w(),
+                            shopz_leave_h(), buf, false);
         } else {
-            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H, "LEAVE", false);
+            gfx_draw_button(shopz_row_x(), shopz_leave_y(), shopz_row_w(),
+                            shopz_leave_h(), "LEAVE DOCK", false);
         }
+
+        if (gone) {
+            gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, 20, PAL_BTN_BG);
+            gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, "SOLD OUT", 18);
+        } else if (afford) {
+            gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, PAL_TEXT_GOLD, PAL_BTN_HOVER);
+            siprintf(buf, "[A] BUY %d", (int)it->price);
+            gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, buf, PAL_TEXT_GOLD);
+        } else {
+            gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, PAL_TEXT_RED, PAL_BTN_BG);
+            siprintf(buf, "NEED %d", (int)it->price);
+            gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, buf, PAL_TEXT_RED);
+        }
+    }
+
+    /* ── Bottom line (the hangar's y=148 message row) ──
+     * The free-life gift wins it, then purchase messages, then his second
+     * line of radio - and the standing warning that this is a one-time dock. */
+    if (s_shopz_gift > 0) {
+        siprintf(buf, "+1 LIFE ON THE HOUSE   LIVES %d", story_lives());
+        gfx_draw_text_centered(0, 148, SCREEN_WIDTH, buf,
+                               ((s_shopz_gift >> 3) & 1) ? PAL_TEXT_GREEN : PAL_TEXT_WHITE);
+    } else if (s_shopz_msg_timer > 0) {
+        int w = (int)strlen(s_shopz_msg) * 6 + 12;
+        int x = (SCREEN_WIDTH - w) / 2;
+        gfx_draw_glass_card(x, 146, w, 12, s_shopz_msg_col, 15);
+        gfx_draw_text_centered(x, 148, w, s_shopz_msg, s_shopz_msg_col);
+    } else {
+        gfx_draw_text_centered(0, 148, SCREEN_WIDTH, story_shop_line2(), 20);
     }
 }
 
@@ -1396,7 +1587,12 @@ static int  s_result_earned = 0;
 static int  s_result_resume = 1;
 static bool s_result_lost_run = false;
 static bool s_result_finale = false;
-static int  s_result_auto = 0;      /* frames until the dock opens itself */
+static int  s_result_auto = 0;      /* frames until the card moves on itself */
+/* Mr Chubbs only catches up every fifth level, so a clear either ends at his
+ * dock or flies straight on. Decided once when the card opens. */
+static bool s_result_dock = false;
+static bool s_result_fly_on = false;
+static int  s_result_next = 1;
 
 /* Called by menu_update when a story level ends. */
 static void story_enter_result(void) {
@@ -1408,10 +1604,21 @@ static void story_enter_result(void) {
     s_result_finale = false;
     s_result_auto = 0;
 
+    s_result_dock = false;
+    s_result_fly_on = false;
+    s_result_next = 1;
+
     if (s_result_win) {
         s_result_resume = story_current_level();
+        s_result_next = s_result_level + 1;
+        if (s_result_next > STORY_LEVEL_COUNT) s_result_next = STORY_LEVEL_COUNT;
+        /* Does Mr Chubbs catch up on this clear? Only every fifth level, and
+         * only if that dock has not already been spent. */
+        s_result_dock = story_shop_can_open(s_result_level);
+        s_result_fly_on = (s_result_next != s_result_level) &&
+                          story_is_unlocked(s_result_next) && story_lives() > 0;
         if (s_result_level >= STORY_LEVEL_COUNT) s_result_finale = true;
-        else s_result_auto = 200;   /* ~2.2s to read the card, then the dock */
+        else s_result_auto = 200;   /* ~2.2s to read the card, then move on */
     } else {
         int before = story_lives();
         s_result_resume = story_lose_life();
@@ -1421,23 +1628,35 @@ static void story_enter_result(void) {
     menu_open(SCREEN_STORY_RESULT);
 }
 
-/* Open Mr Chubbs' dock for the level just cleared. When the next level is
- * unlocked, LEAVE becomes FLY ON and drops straight into it. */
-static void story_open_dock(int cleared_level) {
+/* Open Mr Chubbs' dock for the level just cleared, if he is actually there:
+ * he only catches up every fifth level and each dock is a single visit.
+ * Returns false when there is no dock, so the caller falls back to the map.
+ * When the next level is unlocked, LEAVE becomes FLY ON. */
+static bool story_open_dock(int cleared_level) {
+    if (!story_shop_can_open(cleared_level)) return false;
     int next = cleared_level + 1;
     if (next > STORY_LEVEL_COUNT) next = STORY_LEVEL_COUNT;
     s_shopz_next_level = next;
     s_shopz_fly_on = (next != cleared_level) && story_is_unlocked(next) && story_lives() > 0;
     story_shop_open(cleared_level);
     menu_open(SCREEN_STORY_SHOP);
+    return true;
 }
 
 static void result_activate(int idx) {
     if (s_result_win) {
-        /* 0 = into the dock (he docks after every level now), 1 = map */
+        /* 0 = into the dock when Mr Chubbs is actually there (every fifth
+         * level, once each); otherwise straight on to the next level. */
         if (idx == 0) {
-            story_open_dock(s_result_level);
-            return;
+            if (s_result_dock && story_open_dock(s_result_level)) return;
+            if (s_result_fly_on) {
+                story_set_current_level(s_result_next);
+                game_story_set_level(s_result_next);
+                game_set_mode(GAME_MODE_STORY);
+                game_start();
+                s_current_screen = SCREEN_PLAYING;
+                return;
+            }
         }
         menu_open(SCREEN_STORY_MAP);
         return;
@@ -1456,11 +1675,13 @@ static void result_activate(int idx) {
 static int result_option_count(void) { return 2; }
 
 static void update_story_result(void) {
-    /* Clearing a level always ends at Mr Chubbs: the card holds for a beat
-     * so you can read the payout, then the dock opens on its own. */
+    /* The card holds for a beat so the payout is readable, then it moves on
+     * by itself: into Mr Chubbs' dock on the every-fifth-level clears, and
+     * back to the map otherwise. */
     if (s_result_win && s_result_auto > 0 && !s_result_finale) {
         if (--s_result_auto == 0) {
-            story_open_dock(s_result_level);
+            if (!(s_result_dock && story_open_dock(s_result_level)))
+                menu_open(SCREEN_STORY_MAP);
             return;
         }
     }
@@ -1521,8 +1742,16 @@ static void render_story_result(void) {
     }
 
     const char* opts[2];
+    char opt0[24];
     if (s_result_win) {
-        opts[0] = "MR CHUBBS";
+        if (s_result_dock) {
+            opts[0] = "MR CHUBBS";
+        } else if (s_result_fly_on) {
+            siprintf(opt0, "FLY ON  LV %d", s_result_next);
+            opts[0] = opt0;
+        } else {
+            opts[0] = "MAP";
+        }
         opts[1] = "MAP";
     } else {
         opts[0] = (!s_result_lost_run && story_lives() > 0) ? "RETRY" : "MAP";
