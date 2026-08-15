@@ -94,6 +94,44 @@ The Settings screen (Main Menu → Settings) has **Haptics** (vibration on hits,
 
 Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fire, B/X/LB beam, Start pause). Its hangar uses the same 16-rig weapon ladder and focused five-crystal laser catalog as GBA, with working live previews. Wave bosses use the mini-drone sprite in distinct gold/cyan paint so they cannot be mistaken for hunters.
 
+### 📖 Story Mode (Android)
+
+Play now opens **Story Mode** — a 70-level campaign that must be finished
+before the rest of the game unlocks.
+
+- **The opening speech.** First launch types out Jack Arkey's story page by
+  page over the starfield. Tap to advance, SKIP to jump it. It only plays once.
+- **70 unique levels across 7 themed sectors** — The Chubb Belt, The Rust
+  Yards, The Ice Fields, The Scrapline, Ember Reach, The Cold Vault and The
+  Reality Gate. Objectives rotate between **clear the field**, **hunt the
+  fighters** and **survive the timer**, so no sector plays like the last.
+- **A boss every 10 levels, each with its own attacks:** **Rustjaw** (jaw slam
+  + scrap spit), **The Twins** (splits in two at 50% and cross-fires),
+  **Frostwidow** (ice web + tracking frost lance), **Scrap Titan** (four
+  armour plates, magnet pull, rock throw), **Emberlash** (counter-rotating
+  flame whips), **Vault Warden** (immune until you shoot off all four rotating
+  turret nodes) and **The Reality Queen** — a three-stage cinematic finale
+  where Jack, now the Reality King, fights the Queen's ship.
+- **Level map.** Fly a little ship between the ten nodes of a sector; bosses
+  are bigger nodes, cleared levels are ticked, locked ones are greyed out.
+- **Mr Chubbs' Shop.** His ship docks every 5 levels with a small rotating
+  stock — weapons, laser crystals, paints, stat upgrades, and a strictly
+  limited number of **spare lives**. You never see him or any other Chubb;
+  it's just a hull and a voice. Anything you buy is also yours in the arcade
+  hangar afterwards.
+- **Chubbcoin** is the story's own currency, earned per level clear (replays
+  pay half). Arcade coins are never earned or spent in the campaign.
+- **Lives & checkpoints.** You get 3 story lives. Die and you retry the level;
+  run out and you're sent back to the level right after the previous boss with
+  a fresh 3.
+- **Everything else stays locked** — Shop, Upgrades, Multiplayer and the
+  Waves/Endless/Overdrive modes — until level 70 falls, *or* you open
+  **Settings → LET ME BE FREE** and tap it three times.
+
+Story progress lives in the **V9 save block** (levels cleared, chubbcoin,
+lives, unlock flags) and older saves upgrade automatically. The campaign is
+verified by a headless playthrough harness — see `tools/story_sim/`.
+
 ### Android-only gameplay differences
 
 - **Life-only powerups:** The Shield and Rapid Fire drops are removed. The only powerup that drops is the **life (repair)** pickup, at exactly the same rarity the repair slice had before (the underlying drop chances are unchanged). The now-dead "Rapid" duration tech upgrade is hidden from the Upgrades screen (its data stays in the save).

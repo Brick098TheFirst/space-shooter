@@ -38,6 +38,10 @@ object NativeGame {
     const val SCREEN_OPTIONS = 7
     const val SCREEN_MODE_SELECT = 8
     const val SCREEN_MULTIPLAYER = 9
+    const val SCREEN_STORY_INTRO = 10
+    const val SCREEN_STORY_MAP = 11
+    const val SCREEN_STORY_SHOP = 12
+    const val SCREEN_STORY_RESULT = 13
 
     const val EOS_CONFIG_REQUIRED = 0
     const val EOS_INITIALIZING = 1

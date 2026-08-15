@@ -107,13 +107,21 @@ typedef enum {
     SCREEN_GAME_OVER,
     SCREEN_OPTIONS,
     SCREEN_MODE_SELECT,
-    SCREEN_MULTIPLAYER  /* Android: co-op Quick Match lobby browser */
+    SCREEN_MULTIPLAYER, /* Android: co-op Quick Match lobby browser */
+    /* ── Story Mode screens (Android) ── */
+    SCREEN_STORY_INTRO,   /* the opening speech, typed out page by page */
+    SCREEN_STORY_MAP,     /* fly a mini ship between level nodes */
+    SCREEN_STORY_SHOP,    /* Mr Chubbs' docked ship */
+    SCREEN_STORY_RESULT   /* level cleared / failed card */
 } GameScreen;
 
 typedef enum {
     GAME_MODE_WAVES = 0,
     GAME_MODE_ENDLESS = 1,
-    GAME_MODE_OVERDRIVE = 2
+    GAME_MODE_OVERDRIVE = 2,
+    /* Android Story Mode: 70 hand-tuned levels driven by g_story_levels[]
+     * instead of the endless wave escalator. */
+    GAME_MODE_STORY = 3
 } GameMode;
 
 typedef struct {

@@ -21,6 +21,8 @@ add_library(spacegame SHARED
     eos_online.c
     coop.c
     game.c
+    story.c
+    story_data.c
     ${GBA_DIR}/src/menu.c
     ${GBA_DIR}/src/renderer.c
     ${GBA_DIR}/src/audio.c

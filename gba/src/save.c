@@ -2,6 +2,11 @@
 #include "types.h"
 #include <string.h>
 
+#ifdef PLATFORM_HOST
+/* Android story mode: the campaign progress block rides in the V9 save. */
+#include "story.h"
+#endif
+
 GameSettings g_settings;
 
 #ifndef PLATFORM_HOST
@@ -15,6 +20,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V6 0x53554747 // 'SUGG' Android only: 64-bit coins (as 2 x u32)
 #define SAVE_MAGIC_V7 0x53554748 // 'SUGH' Android only: 24-laser bitmask (hi word in pads)
 #define SAVE_MAGIC_V8 0x53554749 // 'SUGI' Android only: hull styles (ship shop tab)
+#define SAVE_MAGIC_V9 0x5355474A // 'SUGJ' Android only: STORY MODE campaign block
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -212,6 +218,56 @@ typedef struct {
     u32 checksum;
 } SaveDataV8;
 
+/* V9 (72 bytes, Android) = V8 + the Story Mode campaign block.  Story
+ * progress, the chubbcoin purse, the life pool and the two unlock flags all
+ * live here; the arcade coin balance above is deliberately untouched. */
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins_lo;
+    u32 coins_hi;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;
+    u16 owned_lasers_lo;
+    u8  upgrade_levels[NUM_UPGRADES]; // 8 x 0..5
+    u8  tilt_steer;
+    u8  haptics;
+    u16 owned_lasers_hi;
+    u8  ship_index;
+    u8  owned_ships_lo;
+    u8  pad0;
+    u8  pad1;
+    /* ── Story Mode ── */
+    u8  story_level;
+    u8  story_unlocked;
+    u8  story_lives;
+    u8  story_cleared_count;
+    u8  story_cleared[9];
+    u8  story_intro_seen;
+    u8  story_freed;
+    u8  story_pad;
+    u32 story_chubbcoin;
+    u32 checksum;
+} SaveDataV9;
+
+static u32 calc_checksum_v9(const SaveDataV9* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV9) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
+
 static u32 calc_checksum_v8(const SaveDataV8* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -303,6 +359,10 @@ void save_init_defaults(void) {
     for (int i = 0; i < NUM_UPGRADES; i++) {
         g_settings.upgrade_levels[i] = 0;
     }
+#ifdef PLATFORM_HOST
+    /* A fresh install starts at story level 1 with nothing unlocked. */
+    story_reset_progress();
+#endif
 }
 
 /* Keeps hull-style loadout sane after loading any older save layout (which
@@ -343,6 +403,56 @@ void save_load(void) {
     /* Pull coins/loot/settings from filesDir/saves/save.sav if present. */
     platform_restore_save();
 
+    /* Android current format: V9 (V8 + the Story Mode campaign block). */
+    SaveDataV9 d9;
+    u8* dest9 = (u8*)&d9;
+    for (u32 i = 0; i < sizeof(SaveDataV9); i++) dest9[i] = SRAM_BASE[i];
+    if (d9.magic == SAVE_MAGIC_V9 && d9.checksum == calc_checksum_v9(&d9)) {
+        if (d9.difficulty <= 2) g_settings.difficulty = (Difficulty)d9.difficulty;
+        g_settings.music_volume = d9.music_volume <= 100 ? d9.music_volume : 80;
+        g_settings.sfx_volume = d9.sfx_volume <= 100 ? d9.sfx_volume : 80;
+        g_settings.screen_shake = (d9.screen_shake != 0);
+        g_settings.tilt_steer = false;
+        g_settings.haptics = (d9.haptics != 0);
+        if (d9.accent_index < NUM_ACCENTS) g_settings.accent_index = d9.accent_index;
+        if (d9.trail_index < NUM_TRAILS) g_settings.trail_index = d9.trail_index;
+        if (d9.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d9.weapon_rig;
+        if (d9.laser_index < NUM_LASERS) g_settings.laser_index = d9.laser_index;
+        g_settings.high_score = d9.high_score;
+        g_settings.coins = ((coin_t)d9.coins_hi << 32) | (coin_t)d9.coins_lo;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        g_settings.owned_accents = d9.owned_accents ? d9.owned_accents : (1<<1);
+        g_settings.owned_trails  = d9.owned_trails  ? d9.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d9.owned_rigs    ? d9.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = ((u32)d9.owned_lasers_hi << 16) | (u32)d9.owned_lasers_lo;
+        if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
+        g_settings.ship_index    = d9.ship_index;
+        g_settings.owned_ships   = d9.owned_ships_lo ? d9.owned_ships_lo : (1<<SHIP_STYLE_CLASSIC);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d9.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+
+        g_story.level = d9.story_level;
+        g_story.unlocked = d9.story_unlocked;
+        g_story.lives = d9.story_lives;
+        g_story.cleared_count = d9.story_cleared_count;
+        memcpy(g_story.cleared, d9.story_cleared, sizeof(g_story.cleared));
+        g_story.intro_seen = d9.story_intro_seen;
+        g_story.freed = d9.story_freed;
+        g_story.chubbcoin = d9.story_chubbcoin;
+        story_init();
+
+        repair_ship_loadout();
+        return;
+    }
+
     // Android current format: V8 (64-bit coins + 24-laser mask + hull styles)
     SaveDataV8 d8;
     u8* dest8 = (u8*)&d8;
@@ -382,6 +492,9 @@ void save_load(void) {
         if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
         if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
         repair_ship_loadout();
+        /* Pre-story save: start the campaign at level 1 and upgrade to V9. */
+        story_reset_progress();
+        save_write();
         return;
     }
 
@@ -658,10 +771,11 @@ void save_load(void) {
 void save_write(void) {
     repair_ship_loadout();
 #ifdef PLATFORM_HOST
-    // Android: V8 with 64-bit coins, 32-bit laser mask, and hull styles.
-    SaveDataV8 data;
-    memset(&data, 0, sizeof(SaveDataV8));
-    data.magic = SAVE_MAGIC_V8;
+    // Android: V9 = V8 (64-bit coins, 32-bit laser mask, hull styles) plus
+    // the Story Mode campaign block.
+    SaveDataV9 data;
+    memset(&data, 0, sizeof(SaveDataV9));
+    data.magic = SAVE_MAGIC_V9;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -685,10 +799,20 @@ void save_write(void) {
     for (int i = 0; i < NUM_UPGRADES; i++) {
         data.upgrade_levels[i] = g_settings.upgrade_levels[i];
     }
-    data.checksum = calc_checksum_v8(&data);
+
+    data.story_level = g_story.level;
+    data.story_unlocked = g_story.unlocked;
+    data.story_lives = g_story.lives;
+    data.story_cleared_count = g_story.cleared_count;
+    memcpy(data.story_cleared, g_story.cleared, sizeof(data.story_cleared));
+    data.story_intro_seen = g_story.intro_seen;
+    data.story_freed = g_story.freed;
+    data.story_chubbcoin = g_story.chubbcoin;
+
+    data.checksum = calc_checksum_v9(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV8); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV9); i++) {
         SRAM_BASE[i] = src[i];
     }
     platform_persist_save();

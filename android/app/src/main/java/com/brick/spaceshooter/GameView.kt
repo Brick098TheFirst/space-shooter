@@ -598,7 +598,10 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_CONTROLS,
             NativeGame.SCREEN_OPTIONS,
             NativeGame.SCREEN_MODE_SELECT,
-            NativeGame.SCREEN_MULTIPLAYER -> drawBackChip(canvas)
+            NativeGame.SCREEN_MULTIPLAYER,
+            NativeGame.SCREEN_STORY_MAP,
+            NativeGame.SCREEN_STORY_SHOP,
+            NativeGame.SCREEN_STORY_RESULT -> drawBackChip(canvas)
         }
     }
 
@@ -729,7 +732,10 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         uiScreen == NativeGame.SCREEN_CONTROLS ||
         uiScreen == NativeGame.SCREEN_OPTIONS ||
         uiScreen == NativeGame.SCREEN_MODE_SELECT ||
-        uiScreen == NativeGame.SCREEN_MULTIPLAYER
+        uiScreen == NativeGame.SCREEN_MULTIPLAYER ||
+        uiScreen == NativeGame.SCREEN_STORY_MAP ||
+        uiScreen == NativeGame.SCREEN_STORY_SHOP ||
+        uiScreen == NativeGame.SCREEN_STORY_RESULT
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         return if (uiScreen == NativeGame.SCREEN_PLAYING) {
