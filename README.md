@@ -29,7 +29,7 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   - Dedicated item detail card with full stats, descriptions, and manual `[A] BUY` / `[A] EQUIP` actions.
 - **SRAM Save Persistence:**
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
-- **Hunter Enemy Fighters:** Crimson versions of the player ship track your horizontal position with red engine trails, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
+- **Hunter Enemy Fighters:** Hunters track your horizontal position, spawn with random hull styles and random accent colors, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
 - **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is a mini-boss and every **10th** wave is the full battleship. Both use `boss.wav`: gameplay music fades out, the entrance gets one second of silence, the boss cue fades in, and the normal track resumes at its paused position after victory. Boss HP now scales with wave/difficulty rather than the equipped gun, so every weapon purchase produces a real time-to-kill improvement.
 - **Three Game Modes:** Play opens a mode select on both platforms — **Waves** (with bosses), **Endless**, and **Overdrive** (90-second score rush).
@@ -99,46 +99,59 @@ Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fi
 Play now opens **Story Mode** — a 70-level campaign that must be finished
 before the rest of the game unlocks.
 
-- **The opening speech.** First launch types out Kaelen's story page by
-  page over the starfield. Tap to advance, SKIP to jump it. It only plays once.
-  It runs under **Story Mode's own soundtrack** (`Assets/Audio/story_mode.mp3`),
-  which keeps playing across the level map, the dock and the result cards, so
-  the campaign never sounds like the arcade front end.
-- **70 levels across 7 themed sectors** — The Outer Rim, Iron Nebula,
-  Crystal Wastes, Forge Worlds, Burning Sector, The Void Core and Shadow Horizon
-  — and no two of them play the same. Every level is built from two axes:
+- **The story of Jack RK and the Chubbs.** Once upon a time in another
+  universe, aliens invaded the Chubbs. The Chubbs fought the Reality King, but
+  he was too strong. Following the old advice, “if you can't beat 'em, join
+  'em,” they ended the fighting by befriending him. Jack Arkey — known as
+  **Jack RK**, or simply Jack — was a technology expert from another planet who
+  could not let the invasion go. He wanted revenge, so he built the starter
+  ship, set it ready for flight, and headed for the stars.
+- **The opening speech.** First launch types out Jack RK's story page by page
+  over the starfield. Tap to advance, or tap SKIP to jump it. It only plays
+  once. It runs under **Story Mode's own soundtrack**
+  (`Assets/Audio/story_mode.mp3`), which keeps playing across the level map,
+  Mr Chubbs' dock, and the result cards, so the campaign never sounds like the
+  arcade front end.
+- **70 levels across 7 themed sectors** — The Chubb System, The Rust Yards,
+  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, and The Reality
+  kingdom — and no two of them play the same. Every level is built from two
+  axes:
   - **Five objectives:** **clear the field**, **hunt the fighters**,
-    **survive the timer**, **crack the big ones** (break N large rocks) and 
+    **survive the timer**, **crack the big ones** (break N large rocks), and
     **clear it on the clock**.
-  - **Eight field modifiers:** *Boulder Field*, *Shard Storm*, *Hunter Swarm*, 
-    *Fast Space*, *Armoured Rock*, *Slow Drip*, *Constant Storm* and *Sharpshooters*.
+  - **Eight field modifiers:** *Boulder Field*, *Shard Storm*, *Hunter Swarm*,
+    *Fast Space*, *Armoured Rock*, *Slow Drip*, *Constant Storm*, and
+    *Sharpshooters*.
 
-  Each sector runs its own sequence of the two, so no objective+modifier pair 
-  ever repeats back to back. The level banner and the map card both name the 
+  Each sector runs its own sequence of the two, so no objective+modifier pair
+  ever repeats back to back. The level banner and the map card both name the
   twist before you launch.
-- **A different sky over every kingdom.** All seven sectors have their own
-  backdrop: the Rim's cold stars, the Nebula's iron haze, the Crystal Wastes' 
-  blue sleet, the Forge Worlds' sodium-green glare, the Burning Sector's embers, 
-  the near-black Void Core and the Shadow Horizon's folded violet space.
-- **A boss every 10 levels, each with its own attacks:** **Vanguard One**, 
-  **The Duality**, **Frost Striker**, **Steel Titan**, **Inferno Drake**, 
-  **Void Sentinel** and **The Shadow Queen** — a three-stage cinematic finale 
-  where Kaelen takes their revenge.
-- **Level map.** Fly a ship between the nodes of a sector; bosses are bigger 
-  nodes, cleared levels are ticked, locked ones are greyed out.
-- **Scavenger's Trading Post — one dock, one visit.** The Scavenger catches up 
-  with you every fifth level. **Leaving the dock undocks them for good**. 
-  They sell weapons, laser crystals, paints, stat upgrades and spare lives.
-- **Credits** is the story's own currency, earned per level clear. Arcade coins 
-  are never earned or spent in the campaign.
-- **Enemy Variation:** Hunter ships now come in different hull styles and 
-  colors, providing a more varied and less repetitive combat experience.
+- **A different sky over every sector.** All seven sectors retain a distinct
+  backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
+  Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
+  the near-black Cold Vault, and The Reality kingdom's folded violet space.
+- **A boss every 10 levels, each with its own attacks:** **Rustjaw**, **The
+  Twins**, **Frostwidow**, **Scrap Titan**, **Emberlash**, **Vault Warden**, and
+  **The Reality Queen** — a three-stage cinematic finale where Jack RK gets his
+  chance at revenge.
+- **Level map.** Fly a ship between the nodes of a sector; bosses are bigger
+  nodes, cleared levels are ticked, and locked ones are greyed out.
+- **Mr Chubbs' Trading Post — one dock, one visit.** Mr Chubbs, a popular Chubb
+  and the kingdom's travelling shopkeeper, catches up with Jack every fifth
+  level. **Leaving the dock undocks him for good** until the next scheduled
+  stop. He sells weapons, laser crystals, paints, stat upgrades, and spare
+  lives.
+- **Chubbcoin** is the story's own currency, earned per level clear and spent
+  at Mr Chubbs' Trading Post. Arcade coins are never earned or spent in the
+  campaign.
+- **Enemy variation stays intact.** Hunter ships spawn with random hull styles
+  and random accent colors, keeping repeated fights visually varied.
 - **Lives & checkpoints.** You get 3 story lives. Die and you retry the level;
   run out and you're sent back to the level right after the previous boss.
-- **Everything else stays locked** — Shop, Upgrades, Multiplayer and the
+- **Everything else stays locked** — Shop, Upgrades, Multiplayer, and the
   Waves/Endless/Overdrive modes — until level 70 falls.
 
-Story progress lives in the **V10 save block** (levels cleared, chubbcoin,
+Story progress lives in the **V10 save block** (levels cleared, Chubbcoin,
 lives, unlock flags, and which of Mr Chubbs' 14 docks are already spent).
 Older saves — including V9 campaign saves — upgrade automatically on load and
 keep all their progress. The campaign is verified by a headless playthrough

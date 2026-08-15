@@ -2,6 +2,7 @@
 #include <string.h>
 #include "save.h"
 #include "story.h"
+#include "game.h"
 static int fails=0;
 #define CHK(c,msg) do{ if(!(c)){ printf("FAIL: %s\n", msg); fails++; } }while(0)
 int main(void){
@@ -23,7 +24,8 @@ int main(void){
             CHK(story_boss_for_level(lv)>=0, "boss id resolves");
         } else {
             CHK(lv%10!=0, "non-boss off the 10s");
-            CHK(L->rocks<=34 && L->drones<=6, "field within engine budget");
+            CHK(L->rocks<=MAX_ASTEROIDS && L->drones<=MAX_DRONES,
+                "field within engine budget");
             if(L->objective==OBJ_HUNT) CHK(L->quota>0 && L->quota<=90,"hunt quota sane");
             if(L->objective==OBJ_SURVIVE) CHK(L->quota>=15 && L->quota<=90,"survive secs sane");
         }
