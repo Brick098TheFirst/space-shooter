@@ -57,6 +57,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private var keys = 0
     private var pulseKeys = 0
     private var uiScreen = NativeGame.SCREEN_MAIN_MENU
+    private var storyBriefWaiting = false
     private val saveDir = File(context.filesDir, "saves").apply { mkdirs() }
     private val saveFile = File(saveDir, "save.sav")
     private var persistCounter = 0
@@ -326,6 +327,10 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             persistSave()
             uiScreen = nextScreen
         }
+        val waitingNow = nextScreen == NativeGame.SCREEN_PLAYING &&
+            NativeGame.nativeStoryWaitingForStart() != 0
+        if (waitingNow && !storyBriefWaiting) resetStickToHome()
+        storyBriefWaiting = waitingNow
         updateScrollAnim(dtSec)
         persistCounter++
         if (persistCounter >= NativeGame.TARGET_FPS * 2) {
@@ -416,7 +421,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     }
 
     private fun gameplayKeys(): Int {
-        if (uiScreen != NativeGame.SCREEN_PLAYING) return 0
+        if (uiScreen != NativeGame.SCREEN_PLAYING || storyBriefWaiting) return 0
         var next = 0
         val dead = 0.28f
         val nx = if (usingController() && abs(padStickNx) > abs(stickNx)) padStickNx else stickNx
@@ -592,7 +597,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     private fun drawOverlay(canvas: Canvas) {
         when (uiScreen) {
             NativeGame.SCREEN_MAIN_MENU -> drawOnlineChip(canvas)
-            NativeGame.SCREEN_PLAYING -> if (!usingController()) drawGameplayPad(canvas)
+            NativeGame.SCREEN_PLAYING -> if (!storyBriefWaiting && !usingController()) drawGameplayPad(canvas)
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
             NativeGame.SCREEN_CONTROLS,
@@ -738,11 +743,23 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         uiScreen == NativeGame.SCREEN_STORY_RESULT
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        return if (uiScreen == NativeGame.SCREEN_PLAYING) {
+        return if (uiScreen == NativeGame.SCREEN_PLAYING && storyBriefWaiting) {
+            handleStoryBriefTouch(event)
+        } else if (uiScreen == NativeGame.SCREEN_PLAYING) {
             handleGameplayTouch(event)
         } else {
             handleMenuTouch(event)
         }
+    }
+
+    /** A Story brief accepts one tap anywhere without also steering/firing. */
+    private fun handleStoryBriefTouch(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val mapped = mapToGame(event.x, event.y)
+            NativeGame.nativeQueueTap(mapped?.first ?: 0, mapped?.second ?: 0)
+            pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+        return true
     }
 
     // ── Menu touch: tap vs drag vs fling ─────────────────────────────────

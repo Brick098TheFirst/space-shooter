@@ -58,6 +58,8 @@ object NativeGame {
     external fun nativePresent(pixels: IntArray)
     external fun nativeMixAudio(out: ShortArray): Int
     external fun nativeGetScreen(): Int
+    /** True while a Story level is frozen on its tap-to-continue brief. */
+    external fun nativeStoryWaitingForStart(): Int
     external fun nativeQueueTap(x: Int, y: Int)
     external fun nativeGoBack()
     external fun nativeScrollTo(px: Float): Float

@@ -2133,6 +2133,19 @@ void menu_update(void) {
         case SCREEN_STORY_RESULT: starfield_update(); update_story_result(); break;
 #endif
         case SCREEN_PLAYING:
+#ifdef PLATFORM_HOST
+            if (game_story_waiting_for_start()) {
+                /* The story brief is a real pause, not a timed overlay. Keep
+                 * the sky alive, but do not advance enemies, timers, or player
+                 * invulnerability until a tap (or controller confirm). */
+                starfield_update();
+                int tx, ty;
+                bool tapped = consume_tap(&tx, &ty);
+                if (tapped || key_hit(KEY_A) || key_hit(KEY_START))
+                    game_story_continue();
+                break;
+            }
+#endif
             s_tap_pending = false;
             if (key_hit(KEY_START)) { s_current_screen = SCREEN_PAUSED; s_menu_selected = 0; }
             else {

@@ -71,6 +71,20 @@ static int play_level(int lv, int max_ticks) {
     game_story_set_level(lv);
     game_set_mode(GAME_MODE_STORY);
     game_start();
+    /* Prove the brief is a real pause: even a direct game_update() call must
+     * leave gameplay timers untouched until continue is acknowledged. */
+    int invuln_before = g_game.player.invulnerable_timer;
+    game_update();
+    if (!game_story_waiting_for_start() ||
+        g_game.player.invulnerable_timer != invuln_before) {
+        fprintf(stderr, "story brief failed to pause level %d\n", lv);
+        return -2;
+    }
+    game_story_continue();
+    if (game_story_waiting_for_start()) {
+        fprintf(stderr, "story brief failed to continue level %d\n", lv);
+        return -2;
+    }
     g_hits = 0;
     int last_lives = g_game.player.lives;
     for (int t = 0; t < max_ticks; t++) {

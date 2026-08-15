@@ -99,6 +99,9 @@ static int  s_story_to_spawn = 0;       /* rocks still owed to the field */
 static int  s_story_outcome = 0;        /* 0 running, 1 cleared, 2 failed */
 static int  s_story_earned = 0;         /* chubbcoin banked this level */
 static int  s_story_end_delay = 0;      /* victory pause before the result */
+/* Story cards no longer disappear on a timer. The opening field is prepared
+ * but the entire simulation stays frozen until the player taps to continue. */
+static bool s_story_waiting_for_start = false;
 
 static void story_finish(int outcome);
 static void story_begin_level(void);
@@ -109,6 +112,16 @@ static void story_on_large_killed(void);
 int  game_story_level(void)   { return s_story_level; }
 int  game_story_outcome(void) { return s_story_outcome; }
 int  game_story_earned(void)  { return s_story_earned; }
+int  game_story_waiting_for_start(void) {
+    return g_game.mode == GAME_MODE_STORY && s_story_waiting_for_start;
+}
+void game_story_continue(void) {
+    if (!game_story_waiting_for_start()) return;
+    s_story_waiting_for_start = false;
+    /* The story card is the whole countdown now. Remove it immediately so
+     * the very next frame is gameplay rather than another timed banner. */
+    g_game.wave_banner_timer = 0;
+}
 #ifdef STORY_DEBUG
 int  game_story_kills(void)   { return s_story_kills; }
 int  game_story_secs_left(void){ return s_story_timer; }
@@ -1116,9 +1129,10 @@ static void story_begin_level(void) {
     s_story_timer = (L->objective == OBJ_SURVIVE || L->objective == OBJ_TIMED)
                   ? L->quota * 90 : 0;
     g_game.wave = s_story_level;
-    /* Longer hold on the opening card - it now carries two lines of story
-     * (and a boss taunt) that deserve to be readable. */
-    g_game.wave_banner_timer = (L->objective == OBJ_BOSS) ? 260 : 200;
+    /* The opening card is dismissed explicitly by game_story_continue().
+     * Keep the legacy timer non-zero for snapshot/UI compatibility; it does
+     * not count down while the card is waiting. */
+    g_game.wave_banner_timer = 1;
     g_game.intermission_timer = 9999;   /* story never auto-advances waves */
     g_game.spawn_timer = 40;
 
@@ -2230,6 +2244,7 @@ static void fire_player_weapon(void) {
 
 void game_init(void) {
     memset(&g_game, 0, sizeof(GameState));
+    s_story_waiting_for_start = false;
 }
 
 /* The HUD backing card layout depends on the (runtime) screen width, so the
@@ -2241,6 +2256,7 @@ void game_request_full_redraw(void) {
 void game_start(void) {
     memset(&g_game, 0, sizeof(GameState));
     g_game.mode = s_game_mode;
+    s_story_waiting_for_start = false;
 
     g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
     g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 24);
@@ -2275,9 +2291,11 @@ void game_start(void) {
     s_game_static_valid = false;
 
     if (g_game.mode == GAME_MODE_STORY) {
-        /* Each kingdom flies over its own sky. */
+        /* Each kingdom flies over its own sky. Prepare the opening field, but
+         * freeze it behind the story card until the player acknowledges it. */
         starfield_set_theme(story_theme_for_level(s_story_level));
         story_begin_level();
+        s_story_waiting_for_start = true;
     } else if (g_game.mode == GAME_MODE_WAVES) {
         starfield_set_theme(SF_THEME_ARCADE);
         g_game.intermission_timer = 30;
@@ -3259,6 +3277,10 @@ static void game_update_tick(void) {
 }
 
 void game_update(void) {
+    /* Keep this guard in the game core as well as the menu. Tests, future UI
+     * paths, and JNI callers cannot accidentally advance a story level while
+     * its tap-to-continue card is still on screen. */
+    if (game_story_waiting_for_start()) return;
 #ifdef PLATFORM_HOST
     if (s_coop_render_only) {
         /* Guest side: no local simulation — just advance the smooth render
@@ -3574,7 +3596,7 @@ void game_draw(void) {
     }
 #endif
 
-    if (g_game.wave_banner_timer > 0 && g_game.mode == GAME_MODE_STORY) {
+    if (game_story_waiting_for_start()) {
         const StoryLevel* L = story_cur();
         int boss_id = story_boss_for_level(s_story_level);
         /* The level opens on its own two lines of story, so each of the 70
@@ -3582,7 +3604,7 @@ void game_draw(void) {
         int banner_w = 228;
         if (banner_w > SCREEN_WIDTH - 8) banner_w = SCREEN_WIDTH - 8;
         int bx = (SCREEN_WIDTH - banner_w) / 2;
-        gfx_draw_glass_card(bx, 56, banner_w, 54, PAL_TEXT_WHITE, 15);
+        gfx_draw_glass_card(bx, 54, banner_w, 68, PAL_TEXT_WHITE, 15);
         if (boss_id >= 0) {
             siprintf(buf, "LEVEL %d  -  %s", s_story_level, story_sector_name(story_sector_of(s_story_level)));
             gfx_draw_text_centered(bx, 60, banner_w, buf, 17);
@@ -3613,6 +3635,7 @@ void game_draw(void) {
                 gfx_draw_text_centered(bx, 102, banner_w, buf, PAL_TEXT_GOLD);
             }
         }
+        gfx_draw_text_centered(bx, 112, banner_w, "TAP TO CONTINUE", PAL_TEXT_GREEN);
     } else if (g_game.wave_banner_timer > 0) {
         bool first_boss = g_game.mode == GAME_MODE_WAVES && g_game.wave == 5;
         int banner_w = first_boss ? 180 : 120;
