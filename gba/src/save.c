@@ -22,6 +22,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V8 0x53554749 // 'SUGI' Android only: hull styles (ship shop tab)
 #define SAVE_MAGIC_V9 0x5355474A // 'SUGJ' Android only: STORY MODE campaign block
 #define SAVE_MAGIC_V10 0x5355474B // 'SUGK' Android only: Mr Chubbs' one-time docks
+#define SAVE_MAGIC_V11 0x5355474C // 'SUGL' Android only: the repair-yard clock
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -303,6 +304,60 @@ typedef struct {
     u32 checksum;
 } SaveDataV10;
 
+/* V11 (Android) = V10 + the repair yard.  Losing a run no longer resets the
+ * campaign: it re-locks the last two levels, claws back what they paid and
+ * grounds the ship for fifteen real minutes, so the deadline has to survive
+ * the app being closed. */
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins_lo;
+    u32 coins_hi;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;
+    u16 owned_lasers_lo;
+    u8  upgrade_levels[NUM_UPGRADES];
+    u8  tilt_steer;
+    u8  haptics;
+    u16 owned_lasers_hi;
+    u8  ship_index;
+    u8  owned_ships_lo;
+    u8  pad0;
+    u8  pad1;
+    /* ── Story Mode ── */
+    u8  story_level;
+    u8  story_unlocked;
+    u8  story_lives;
+    u8  story_cleared_count;
+    u8  story_cleared[9];
+    u8  story_intro_seen;
+    u8  story_freed;
+    u8  story_boss_gifts;
+    u32 story_chubbcoin;
+    u16 story_docks_used;
+    u16 story_pad;
+    u32 story_repair_until;   /* epoch second the ship comes back, 0 = ready */
+    u32 checksum;
+} SaveDataV11;
+
+static u32 calc_checksum_v11(const SaveDataV11* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV11) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
+
 static u32 calc_checksum_v10(const SaveDataV10* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
@@ -457,6 +512,60 @@ void save_load(void) {
     platform_restore_save();
 
     /* Android current format: V10 (V9 + Mr Chubbs' spent-dock mask). */
+    /* Current Android format: V11 (V10 + the repair-yard deadline). */
+    SaveDataV11 d11;
+    u8* dest11 = (u8*)&d11;
+    for (u32 i = 0; i < sizeof(SaveDataV11); i++) dest11[i] = SRAM_BASE[i];
+    if (d11.magic == SAVE_MAGIC_V11 && d11.checksum == calc_checksum_v11(&d11)) {
+        if (d11.difficulty <= 2) g_settings.difficulty = (Difficulty)d11.difficulty;
+        g_settings.music_volume = d11.music_volume <= 100 ? d11.music_volume : 80;
+        g_settings.sfx_volume = d11.sfx_volume <= 100 ? d11.sfx_volume : 80;
+        g_settings.screen_shake = (d11.screen_shake != 0);
+        g_settings.tilt_steer = false;
+        g_settings.haptics = (d11.haptics != 0);
+        if (d11.accent_index < NUM_ACCENTS) g_settings.accent_index = d11.accent_index;
+        if (d11.trail_index < NUM_TRAILS) g_settings.trail_index = d11.trail_index;
+        if (d11.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d11.weapon_rig;
+        if (d11.laser_index < NUM_LASERS) g_settings.laser_index = d11.laser_index;
+        g_settings.high_score = d11.high_score;
+        g_settings.coins = ((coin_t)d11.coins_hi << 32) | (coin_t)d11.coins_lo;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        g_settings.owned_accents = d11.owned_accents ? d11.owned_accents : (1<<1);
+        g_settings.owned_trails  = d11.owned_trails  ? d11.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d11.owned_rigs    ? d11.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = ((u32)d11.owned_lasers_hi << 16) | (u32)d11.owned_lasers_lo;
+        if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
+        g_settings.ship_index    = d11.ship_index;
+        g_settings.owned_ships   = d11.owned_ships_lo ? d11.owned_ships_lo : (1<<SHIP_STYLE_CLASSIC);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d11.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+
+        g_story.level = d11.story_level;
+        g_story.unlocked = d11.story_unlocked;
+        g_story.lives = d11.story_lives;
+        g_story.cleared_count = d11.story_cleared_count;
+        memcpy(g_story.cleared, d11.story_cleared, sizeof(g_story.cleared));
+        g_story.intro_seen = d11.story_intro_seen;
+        g_story.freed = d11.story_freed;
+        g_story.boss_gifts = d11.story_boss_gifts;
+        g_story.chubbcoin = d11.story_chubbcoin;
+        g_story.docks_used = d11.story_docks_used;
+        g_story.repair_until = d11.story_repair_until;
+        story_init();
+
+        repair_ship_loadout();
+        return;
+    }
+
+    /* Previous format: V10 (no repair yard). */
     SaveDataV10 d10;
     u8* dest10 = (u8*)&d10;
     for (u32 i = 0; i < sizeof(SaveDataV10); i++) dest10[i] = SRAM_BASE[i];
@@ -502,9 +611,12 @@ void save_load(void) {
         g_story.boss_gifts = d10.story_boss_gifts;
         g_story.chubbcoin = d10.story_chubbcoin;
         g_story.docks_used = d10.story_docks_used;
+        /* Pre-repair-yard save: the ship is spaceworthy. */
+        g_story.repair_until = 0;
         story_init();
 
         repair_ship_loadout();
+        save_write();          /* migrate the blob up to V11 */
         return;
     }
 
@@ -555,10 +667,11 @@ void save_load(void) {
         g_story.chubbcoin = d9.story_chubbcoin;
         /* Pre-dock save: nobody has spent a dock yet. */
         g_story.docks_used = 0;
+        g_story.repair_until = 0;
         story_init();
 
         repair_ship_loadout();
-        save_write();          /* migrate the blob up to V10 */
+        save_write();          /* migrate the blob up to V11 */
         return;
     }
 
@@ -880,11 +993,12 @@ void save_load(void) {
 void save_write(void) {
     repair_ship_loadout();
 #ifdef PLATFORM_HOST
-    // Android: V10 = V8 (64-bit coins, 32-bit laser mask, hull styles) plus
-    // the Story Mode campaign block and Mr Chubbs' spent-dock mask.
-    SaveDataV10 data;
-    memset(&data, 0, sizeof(SaveDataV10));
-    data.magic = SAVE_MAGIC_V10;
+    // Android: V11 = V8 (64-bit coins, 32-bit laser mask, hull styles) plus
+    // the Story Mode campaign block, Mr Chubbs' spent-dock mask and the
+    // repair-yard deadline.
+    SaveDataV11 data;
+    memset(&data, 0, sizeof(SaveDataV11));
+    data.magic = SAVE_MAGIC_V11;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -919,11 +1033,12 @@ void save_write(void) {
     data.story_boss_gifts = g_story.boss_gifts;
     data.story_chubbcoin = g_story.chubbcoin;
     data.story_docks_used = g_story.docks_used;
+    data.story_repair_until = g_story.repair_until;
 
-    data.checksum = calc_checksum_v10(&data);
+    data.checksum = calc_checksum_v11(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV10); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV11); i++) {
         SRAM_BASE[i] = src[i];
     }
     platform_persist_save();

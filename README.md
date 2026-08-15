@@ -144,17 +144,36 @@ before the rest of the game unlocks.
 - **Chubbcoin** is the story's own currency, earned per level clear and spent
   at Mr Chubbs' Trading Post. Arcade coins are never earned or spent in the
   campaign.
+- **Payouts are dynamic — the level's reward is a floor, not a fee.** What you
+  actually bank depends on how you flew it: **FAST** (up to +60% for finishing
+  well inside the level's par time), **KILLS** (up to +50% for what you really
+  destroyed, measured against the level's expected body count), **AIM** (up to
+  +20% for accuracy) and **CLEAN** (+25% for not losing a life). That combat
+  share is what stops a *survive* level paying full price for hiding in a
+  corner: idle out the clock without shooting and you bank the floor and
+  nothing else. Replays still halve the whole payout. The result card shows the
+  breakdown.
+- **The opening cinematic.** The first time you enter the campaign, Jack RK's
+  origin story types itself out over the starfield — 14 pages, two lines each,
+  one white and one blue, scored by `story_mode.mp3`. A tap fills the current
+  page, **SKIP** drops straight into the level map, and `g_story.intro_seen`
+  makes sure it only ever plays once.
 - **Enemy variation stays intact.** Hunter ships spawn with random hull styles
   and random accent colors, keeping repeated fights visually varied.
-- **Lives & checkpoints.** You get 3 story lives. Die and you retry the level;
-  run out and you're sent back to the level right after the previous boss.
+- **Lives, wrecks & the repair yard.** You get 3 story lives. Die and you retry
+  the level. Run out and the ship is a **write-off**, which costs you three
+  things at once: the **last two levels you cleared are re-locked** (you fly
+  them again), the **Chubbcoin they paid is taken back off your balance**, and
+  the ship is **grounded for 15 real minutes** while it is repaired. The repair
+  clock is wall-clock, so it keeps counting down with the game closed — the map
+  shows the countdown in place of LAUNCH until the ship is handed back.
 - **Everything else stays locked** — Shop, Upgrades, Multiplayer, and the
   Waves/Endless/Overdrive modes — until level 70 falls.
 
-Story progress lives in the **V10 save block** (levels cleared, Chubbcoin,
-lives, unlock flags, and which of Mr Chubbs' 14 docks are already spent).
-Older saves — including V9 campaign saves — upgrade automatically on load and
-keep all their progress. The campaign is verified by a headless playthrough
+Story progress lives in the **V11 save block** (levels cleared, Chubbcoin,
+lives, unlock flags, which of Mr Chubbs' 14 docks are already spent, and the
+repair-yard deadline). Older saves — including V9/V10 campaign saves — upgrade
+automatically on load and keep all their progress. The campaign is verified by a headless playthrough
 harness that proves every level still terminates — see `tools/story_sim/`.
 
 Story Mode's soundtrack is the only asset shipped as an MP3, so it has its own

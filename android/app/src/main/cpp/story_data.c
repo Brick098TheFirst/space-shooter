@@ -371,21 +371,81 @@ int story_boss_for_level(int level) {
     return (level / STORY_SECTOR_LEVELS) - 1;
 }
 
-/* The opening speech retells the original Jack RK story in a cleaner form,
- * while keeping its fairy-tale opening and home-made starter ship. */
+/* ── The opening speech ───────────────────────────────────────────────────
+ * The original Jack RK / Chubb story, restored verbatim over 14 pages of
+ * two lines each: line 0 types out in white, line 1 in blue.
+ *
+ * Two inline markers travel with the text and are stripped before drawing
+ * (see story_intro_markup() and menu.c's typewriter):
+ *
+ *   *bold*   - drawn with a one-pixel shadow so the word reads heavier
+ *   !faint!  - drawn in a dim grey, for the lines Jack barely says aloud
+ *
+ * The markers are never counted as characters by the typewriter, so a page
+ * types at the same pace whether or not it is marked up. */
 const char* const g_story_intro[STORY_INTRO_PAGES][2] = {
-    { "Once upon a time...",       "in another universe," },
-    { "aliens invaded the Chubbs", "and took their home." },
-    { "The Chubbs fought back",    "against the Reality King." },
-    { "But the Reality King",      "was far too strong." },
-    { "A wise Chubb once said,",   "\"If you can't beat 'em,\"" },
-    { "\"join 'em.\" So the Chubbs", "decided to befriend him." },
-    { "The fighting ended,",       "but Jack held on to anger." },
-    { "His name was Jack Arkey.",  "They called him Jack RK." },
-    { "Jack came from",            "another distant planet." },
-    { "There, he became",          "an expert in technology." },
-    { "He knew engines, circuits,", "and how to build a ship." },
-    { "Jack still wanted revenge.", "So he built the starter ship." },
-    { "He set it ready for flight", "and aimed for the stars." },
-    { "Jack lit the engines.",     "His revenge begins now." }
+    { "Once upon a time,",
+      "in another universe..." },
+    { "Aliens invaded the planet",
+      "The of the Chubbs." },
+    { "The Chubbs tried to fight back.",
+      "back against the Reality King." },
+    { "They threw everything they had at them",
+      "everthing." },
+    { "But he was too strong.",
+      "Way too strong." },
+    { "A wise person once said:",
+      "if you can't beat em, join em." },
+    { "So the Chubbs decided to do something wierd",
+      "they befriended the Reality King." },
+    { "They called him Jack RK.",
+      "Jack Arkey," },
+    { "He knew a lot about tech",
+      "He built a bunch on his last planet." },
+    { ".",
+      "." },
+    { "He wanted *revenge*.",
+      "He wanted it badly." },
+    { "So he built a ship.",
+      "one that can defeat the ones that invaded." },
+    { "one that can defeat",
+      "!one that can kill!" },
+    { "he set aflight,",
+      "..." }
 };
+
+/* Strip the *bold* / !faint! markers out of a story line.
+ *
+ * Writes the plain text into dst and, when spans is non-NULL, one style byte
+ * per emitted character: STORY_MK_PLAIN, STORY_MK_BOLD or STORY_MK_FAINT.
+ * Returns the number of plain characters written (always <= cap-1).  Callers
+ * use this both to type the line out and to measure it, so the typewriter
+ * never stalls on a marker the player cannot see. */
+int story_intro_markup(const char* src, char* dst, u8* spans, int cap) {
+    if (!dst || cap <= 0) return 0;
+    int n = 0;
+    u8 style = STORY_MK_PLAIN;
+    for (const char* p = src; p && *p && n < cap - 1; p++) {
+        if (*p == '*') {
+            style = (style == STORY_MK_BOLD) ? STORY_MK_PLAIN : STORY_MK_BOLD;
+            continue;
+        }
+        if (*p == '!') {
+            style = (style == STORY_MK_FAINT) ? STORY_MK_PLAIN : STORY_MK_FAINT;
+            continue;
+        }
+        dst[n] = *p;
+        if (spans) spans[n] = style;
+        n++;
+    }
+    dst[n] = '\0';
+    return n;
+}
+
+/* Plain (marker-free) length of a story line. */
+int story_intro_len(const char* src) {
+    int n = 0;
+    for (const char* p = src; p && *p; p++)
+        if (*p != '*' && *p != '!') n++;
+    return n;
+}

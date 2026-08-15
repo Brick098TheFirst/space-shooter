@@ -70,6 +70,10 @@ static inline s32 lu_cos(u32 theta) {
 #define siprintf(dst, ...) snprintf((dst), sizeof(dst), __VA_ARGS__)
 
 void platform_host_init(void);
+/* Wall-clock seconds since the epoch.  Story Mode's repair yard grounds the
+ * ship for a real fifteen minutes, so it needs a clock that keeps running
+ * while the app is closed - a frame counter would not. */
+u32  platform_epoch_seconds(void);
 void platform_set_save_dir(const char* dir);
 void platform_persist_save(void);
 bool platform_restore_save(void);

@@ -96,10 +96,24 @@ static inline int story_sector_of(int level) {
 }
 
 /* The level you respawn at after losing every life: the one right after the
- * previous boss (1, 11, 21, ...). */
+ * previous boss (1, 11, 21, ...).  Kept for save repair and older callers;
+ * losing a run no longer sends you back here (see story_wreck_ship()). */
 static inline int story_checkpoint_for(int level) {
     return story_sector_of(level) * STORY_SECTOR_LEVELS + 1;
 }
+
+/* ── Losing the run: the repair yard ─────────────────────────────────────
+ * Running the life pool dry no longer throws the campaign back to a
+ * checkpoint.  Instead the wreck costs you ground, money and time:
+ *
+ *   - the last TWO levels you flew are RE-LOCKED (their clears are wiped and
+ *     the unlock frontier walks back two), so you fly them again;
+ *   - the chubbcoin those two levels paid is taken back off the balance;
+ *   - the ship is grounded for fifteen real minutes while it is repaired.
+ *
+ * The repair clock is wall-clock, so it keeps ticking with the app closed. */
+#define STORY_RELOCK_LEVELS 2
+#define STORY_REPAIR_SECONDS (15 * 60)
 
 /* ── Mr Chubbs' docking schedule ──────────────────────────────────────────
  * He is not a shop you can wander back into.  His ship catches up with you
@@ -155,6 +169,9 @@ typedef struct {
     u8  freed;          /* "LET ME BE FREE" tapped 3x in settings */
     u8  boss_gifts;     /* bitmask: bosses whose free life has been handed out */
     u32 chubbcoin;      /* story-only currency */
+    /* Wall-clock second (epoch) the repair yard hands the ship back.  0 when
+     * the ship is spaceworthy.  See story_wreck_ship(). */
+    u32 repair_until;
     /* One bit per dock (level 5, 10, ... 70).  Set the moment the player
      * leaves that dock: he does not come back for it. */
     u16 docks_used;
@@ -182,15 +199,65 @@ int  story_highest_unlocked(void);/* furthest level the player may fly */
 bool story_is_cleared(int level);
 bool story_is_unlocked(int level);
 
-/* Bank a clear. Pays the reward (halved when the level was already beaten)
- * and advances the unlock frontier. Returns the chubbcoin actually paid. */
-int  story_complete_level(int level);
+/* ── Dynamic payouts ─────────────────────────────────────────────────────
+ * A level's `reward` is a floor, not a flat fee.  What you actually bank
+ * depends on how you flew it, so two clears of the same level are worth
+ * different money:
+ *
+ *   SPEED    finishing well inside the level's par time pays up to +60%.
+ *            (Timed/clear/hunt/big-game levels: the quicker, the richer.)
+ *   COMBAT   what you actually destroyed, measured against the level's own
+ *            expected body count.  This is what stops SURVIVE levels paying
+ *            full price for hiding in a corner for the whole clock: idling
+ *            out the timer banks the floor and nothing else.
+ *   PRECISION  accuracy over the level, up to +20%.
+ *   CLEAN    finishing without losing a single life, +25%.
+ *
+ * Replays still halve the whole payout. */
+typedef struct {
+    u16 secs;        /* how long the clear took, in seconds */
+    u16 par_secs;    /* the level's par time (0 = no speed bonus) */
+    u16 kills;       /* rocks + hunters + boss parts destroyed */
+    u16 par_kills;   /* the body count the level expects (0 = no bonus) */
+    u16 shots;       /* projectiles fired */
+    u16 hits;        /* projectiles that connected */
+    u8  hits_taken;  /* lives lost during the level */
+} StoryPerf;
+
+/* Bank a clear. Pays the dynamic reward (halved when the level was already
+ * beaten) and advances the unlock frontier. `perf` may be NULL, in which
+ * case only the floor is paid. Returns the chubbcoin actually paid. */
+int  story_complete_level(int level, const StoryPerf* perf);
+
+/* Breakdown of the most recent payout, for the result card. */
+int  story_pay_base(void);
+int  story_pay_speed(void);
+int  story_pay_combat(void);
+int  story_pay_precision(void);
+int  story_pay_clean(void);
 
 /* Life pool. Losing the last life bumps the player back to the level right
  * after the previous boss and refills the pool. */
 int  story_lives(void);
 void story_add_lives(int n);
 int  story_lose_life(void);       /* returns the level to resume at */
+
+/* Total wreck: re-lock the last two levels, claw back what they paid, and
+ * ground the ship for STORY_REPAIR_SECONDS.  Returns the level the player
+ * will resume at once the repairs finish. */
+int  story_wreck_ship(void);
+/* Seconds until the ship is flyable again (0 when it already is). */
+int  story_repair_seconds_left(void);
+/* True while the ship is in the yard: no level may be launched. */
+bool story_is_grounded(void);
+/* Chubbcoin the last wreck cost, for the result card. */
+int  story_last_repair_bill(void);
+/* How many levels the last wreck re-locked. */
+int  story_last_relocked(void);
+/* Debug/settings escape hatch: hand the ship back early. */
+void story_finish_repairs(void);
+/* "12:34" - the repair countdown, for the map and the result card. */
+void story_format_repair(char* dst, int cap);
 
 u32  story_chubbcoin(void);
 void story_award(int amount);
@@ -264,8 +331,30 @@ int  story_shop_take_gift(void);
 
 
 /* ── The opening speech ───────────────────────────────────────────────────
- * Typed out one page at a time over the starfield. Two lines per page. */
+ * Typed out one page at a time over the starfield, character by character.
+ * Every page is exactly two lines: line 0 in white, line 1 in blue.
+ *
+ * Lines may carry two inline markers, stripped before they are drawn:
+ *   *bold*   - heavier, shadowed text
+ *   !faint!  - dim grey text
+ * Markers never count as characters, so the typewriter paces identically on
+ * marked-up and plain pages. */
 #define STORY_INTRO_PAGES 14
 extern const char* const g_story_intro[STORY_INTRO_PAGES][2];
+
+/* Per-character styles produced by story_intro_markup(). */
+#define STORY_MK_PLAIN 0
+#define STORY_MK_BOLD  1
+#define STORY_MK_FAINT 2
+
+/* Longest plain story line + terminator; keeps every caller's buffer sane. */
+#define STORY_INTRO_LINE_MAX 64
+
+/* Strip markers from src into dst (cap bytes incl. terminator), optionally
+ * filling spans[] with one STORY_MK_* byte per emitted character.  Returns
+ * the plain-text length written. */
+int story_intro_markup(const char* src, char* dst, u8* spans, int cap);
+/* Plain, marker-free length of a story line. */
+int story_intro_len(const char* src);
 
 #endif

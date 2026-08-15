@@ -99,6 +99,16 @@ static int  s_story_to_spawn = 0;       /* rocks still owed to the field */
 static int  s_story_outcome = 0;        /* 0 running, 1 cleared, 2 failed */
 static int  s_story_earned = 0;         /* chubbcoin banked this level */
 static int  s_story_end_delay = 0;      /* victory pause before the result */
+/* ── Performance tracking for the dynamic payout ─────────────────────────
+ * Story rewards are earned, not handed over: how fast the level went, how
+ * much of it you actually destroyed, how well you shot and whether you took
+ * a hit all move the number.  Reset by story_begin_level(), sampled by
+ * story_finish(). */
+static int  s_story_ticks = 0;          /* ticks the level has run */
+static int  s_story_destroyed = 0;      /* rocks + hunters + bosses downed */
+static int  s_story_shots = 0;          /* projectiles fired */
+static int  s_story_hits = 0;           /* projectiles that connected */
+static int  s_story_lost = 0;           /* lives lost this level */
 /* Story cards no longer disappear on a timer. The opening field is prepared
  * but the entire simulation stays frozen until the player taps to continue. */
 static bool s_story_waiting_for_start = false;
@@ -108,6 +118,10 @@ static void story_begin_level(void);
 static void story_update_objective(void);
 static void story_on_hunter_killed(void);
 static void story_on_large_killed(void);
+static void story_on_kill_scored(int n);
+static void story_on_shot_fired(int n);
+static void story_on_shot_hit(void);
+static void story_on_life_lost(void);
 
 int  game_story_level(void)   { return s_story_level; }
 int  game_story_outcome(void) { return s_story_outcome; }
@@ -534,6 +548,7 @@ static void damage_player(void) {
         trigger_explosion(px, py);
     } else {
         g_game.player.lives--;
+        story_on_life_lost();
         g_game.player.invulnerable_timer = 90 + get_dash_invuln();
         g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
         g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 20);
@@ -620,6 +635,8 @@ static void destroy_asteroid(int idx, bool award) {
         int combo = g_game.combo; // soft combo cash; jackpot at 15x
         int pts = (t == AST_LARGE) ? 60 : ((t == AST_MED_A || t == AST_MED_B) ? 35 : 20);
         award_score(pts);
+        /* Big rocks are worth more to the story payout than debris. */
+        story_on_kill_scored(t == AST_LARGE ? 3 : ((t == AST_MED_A || t == AST_MED_B) ? 2 : 1));
         award_coins((coins_for_asteroid(t) * combo_coin_pct(combo)) / 100);
         platform_queue_haptic(HAPTIC_KILL);
         int mult = get_diff_speed_mult() + g_game.wave * 12;
@@ -687,6 +704,7 @@ static void destroy_drone(int idx, bool award) {
         platform_queue_haptic(HAPTIC_KILL);
         try_spawn_powerup(dx, dy, 10);
         story_on_hunter_killed();
+        story_on_kill_scored(3);
     }
 }
 
@@ -1132,6 +1150,11 @@ static void story_begin_level(void) {
     s_story_outcome = 0;
     s_story_earned = 0;
     s_story_end_delay = 0;
+    s_story_ticks = 0;
+    s_story_destroyed = 0;
+    s_story_shots = 0;
+    s_story_hits = 0;
+    s_story_lost = 0;
     s_story_timer = (L->objective == OBJ_SURVIVE || L->objective == OBJ_TIMED)
                   ? L->quota * 90 : 0;
     g_game.wave = s_story_level;
@@ -1181,6 +1204,57 @@ static void story_on_hunter_killed(void) {
     s_story_kills++;
 }
 
+/* Every rock, hunter and boss the player actually destroys, for the combat
+ * share of the payout.  Shooting nothing pays nothing extra. */
+static void story_on_kill_scored(int n) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_destroyed += n;
+}
+
+static void story_on_shot_fired(int n) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_shots += n;
+}
+
+static void story_on_shot_hit(void) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_hits++;
+}
+
+static void story_on_life_lost(void) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_lost++;
+}
+
+/* ── Par times and par body counts ────────────────────────────────────────
+ * The yardsticks the payout measures a clear against.  Both are derived from
+ * the level table so tuning a level tunes its pay, and both are deliberately
+ * generous: hitting par exactly still earns the floor plus a slice. */
+static int story_par_seconds(const StoryLevel* L) {
+    switch (L->objective) {
+        /* A clock the player cannot beat pays no speed bonus - hurrying a
+         * SURVIVE level is not a thing you can do. */
+        case OBJ_SURVIVE: return 0;
+        case OBJ_TIMED:   return L->quota;
+        case OBJ_BOSS:    return 100;
+        case OBJ_HUNT:    return 25 + L->quota * 3;
+        case OBJ_BIGGAME: return 25 + L->quota * 8;
+        default:          return 30 + L->rocks * 3 + L->drones * 5;
+    }
+}
+
+static int story_par_kills(const StoryLevel* L) {
+    switch (L->objective) {
+        /* Rocks split as they break, so a field of N rocks is worth rather
+         * more than N kills; the drones are worth their own heads. */
+        case OBJ_SURVIVE: return 8 + L->quota / 2 + L->drones;
+        case OBJ_BOSS:    return 1;
+        case OBJ_HUNT:    return L->quota + L->rocks;
+        case OBJ_BIGGAME: return L->quota * 3;
+        default:          return L->rocks * 2 + L->drones;
+    }
+}
+
 /* OBJ_BIGGAME counts the big rocks you personally crack. */
 static void story_on_large_killed(void) {
     if (g_game.mode != GAME_MODE_STORY) return;
@@ -1191,7 +1265,20 @@ static void story_finish(int outcome) {
     if (s_story_outcome != 0) return;
     s_story_outcome = outcome;
     if (outcome == 1) {
-        s_story_earned = story_complete_level(s_story_level);
+        /* Hand the campaign the whole shape of the clear, not just "won":
+         * time, body count, accuracy and damage taken all move the payout. */
+        const StoryLevel* L = story_cur();
+        StoryPerf perf;
+        int secs = s_story_ticks / 90;
+        if (secs < 1) secs = 1;
+        perf.secs       = (u16)(secs > 65535 ? 65535 : secs);
+        perf.par_secs   = (u16)story_par_seconds(L);
+        perf.kills      = (u16)(s_story_destroyed > 65535 ? 65535 : s_story_destroyed);
+        perf.par_kills  = (u16)story_par_kills(L);
+        perf.shots      = (u16)(s_story_shots > 65535 ? 65535 : s_story_shots);
+        perf.hits       = (u16)(s_story_hits > 65535 ? 65535 : s_story_hits);
+        perf.hits_taken = (u8)(s_story_lost > 255 ? 255 : s_story_lost);
+        s_story_earned = story_complete_level(s_story_level, &perf);
     }
 }
 
@@ -1199,6 +1286,8 @@ static void story_finish(int outcome) {
  * Runs once per tick in place of the wave escalator. Every objective has a
  * guaranteed end condition, so no level can stall out unwinnable. */
 static void story_update_objective(void) {
+    /* The level's own clock: drives the speed share of the payout. */
+    if (s_story_outcome == 0) s_story_ticks++;
     if (s_story_outcome != 0) {
         /* Victory pause so the final explosion plays before the result card. */
         if (s_story_end_delay > 0) s_story_end_delay--;
@@ -2085,6 +2174,7 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
             trigger_explosion(boss_cx + (rand() % 40) - 20, boss_cy + (rand() % 30) - 15);
         g_game.shake_timer = (b->story_id == SBOSS_REALITYQUEEN) ? 60 : 34;
         award_score(2000 * (b->story_id + 1));
+        story_on_kill_scored(1);
         platform_queue_haptic(HAPTIC_BEAM);
         story_finish(1);
         return;
@@ -2208,6 +2298,7 @@ static void loadout_from_settings(CoopLoadout* lo) {
 
 static void fire_fan_for(Player* p, int owner, int count, int damage,
                          bool heavy, bool broad) {
+    if (owner == 0) story_on_shot_fired(count);
     for (int i = 0; i < count; i++) {
         int centered = i * 2 - (count - 1);
         int xoff = (count == 1) ? 0 : (centered * 9) / (count - 1);
@@ -3099,6 +3190,7 @@ static void game_update_tick(void) {
             int ar = g_game.asteroids[a].radius;
             int dist_sq = (bx - ax)*(bx - ax) + (by - ay)*(by - ay);
             if (dist_sq <= (br + ar)*(br + ar)) {
+                if (g_game.bullets[b].owner == 0) story_on_shot_hit();
                 g_game.asteroids[a].hp -= g_game.bullets[b].damage;
 #ifdef PLATFORM_HOST
                 /* Per-owner pierce rules: higher heavy rigs drill through
@@ -3139,6 +3231,7 @@ static void game_update_tick(void) {
             int dy = FROM_FIXED(g_game.drones[d].y);
             int dist_sq = (bx - dx)*(bx - dx) + (by - dy)*(by - dy);
             if (dist_sq <= (br + 8)*(br + 8)) {
+                if (g_game.bullets[b].owner == 0) story_on_shot_hit();
                 g_game.drones[d].hp -= g_game.bullets[b].damage;
                 g_game.bullets[b].active = false;
                 if (g_game.drones[d].hp <= 0) destroy_drone(d, true);

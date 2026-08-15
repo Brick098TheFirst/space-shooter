@@ -36,9 +36,15 @@ Boss fights currently land at ~47-108 s each on a mid-progression loadout.
 
 ## UI screenshots
 
-Renders the real Android menus (the PLAY tab, the level map, Mr Chubbs' shop,
-the result card and the in-game HUD) headlessly and writes PPMs, so layout
-regressions can be eyeballed without a device.
+Renders the real Android menus (the opening speech, the PLAY tab, the level
+map, Mr Chubbs' shop, the result and wreck cards and the in-game HUD)
+headlessly and writes PPMs, so layout regressions can be eyeballed without a
+device.
+
+It also asserts behaviour while it renders, and exits non-zero on a failure:
+SKIP must reach the map and set `intro_seen`; a real clear of level 1 must pay
+*more* than that level's floor reward; and losing the last life must re-lock
+the previous two levels and ground the ship.
 
 ```bash
 gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABLED=1 \
@@ -48,14 +54,18 @@ gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABL
     android/app/src/main/cpp/game.c android/app/src/main/cpp/story.c \
     android/app/src/main/cpp/story_data.c -o /tmp/ui_shots -lm
 
-/tmp/ui_shots /tmp/ui     # writes 01_play_tab_locked.ppm ... 11_arcade_hud.ppm
+mkdir -p /tmp/ui
+/tmp/ui_shots /tmp/ui     # writes 00a_intro_typing.ppm ... 14_map_grounded.ppm
 ```
 
 ## Save tests
 
-Round-trips the V10 save block through SRAM and checks progression rules
-(unlock frontier, half-pay replays, checkpoint-on-death, deterministic shop
-stock, the "LET ME BE FREE" flag) plus Mr Chubbs' docking rules: that he only
+Round-trips the V11 save block through SRAM and checks progression rules
+(unlock frontier, half-pay replays, the dynamic payout — that idling pays only
+the level's floor while a fast, accurate, untouched clear pays several times
+more — the wreck-and-repair rules on death, the 14-page opening speech and its
+markup, deterministic shop stock, the "LET ME BE FREE" flag) plus Mr Chubbs'
+docking rules: that he only
 docks every fifth level, that leaving a dock spends it permanently, that a
 spent dock never reopens, and that the unsold shelf still carries over to the
 next one.
