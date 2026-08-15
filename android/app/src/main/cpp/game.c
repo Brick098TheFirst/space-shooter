@@ -985,7 +985,9 @@ static void story_begin_level(void) {
     s_story_end_delay = 0;
     s_story_timer = (L->objective == OBJ_SURVIVE) ? L->quota * 90 : 0;
     g_game.wave = s_story_level;
-    g_game.wave_banner_timer = 130;
+    /* Longer hold on the opening card - it now carries two lines of story
+     * (and a boss taunt) that deserve to be readable. */
+    g_game.wave_banner_timer = (L->objective == OBJ_BOSS) ? 260 : 200;
     g_game.intermission_timer = 9999;   /* story never auto-advances waves */
     g_game.spawn_timer = 40;
 
@@ -3226,12 +3228,21 @@ void game_draw(void) {
     gfx_draw_text_centered(wave_x, 4, 52, buf, PAL_TEXT_CYAN);
 
     int right_card_x = SCREEN_WIDTH - 75;
-    // Right-aligned inside the card so long balances (e.g. cheat money) fit.
-    save_format_coins(buf, sizeof(buf));
-    int coin_px = (int)strlen(buf) * 6 + 6; // digits + "$"
-    int coin_x = right_card_x + 72 - 3 - coin_px;
-    gfx_draw_char(coin_x, 4, '$', PAL_TEXT_GOLD);
-    gfx_draw_text(coin_x + 6, 4, buf, PAL_TEXT_GOLD);
+    if (g_game.mode == GAME_MODE_STORY) {
+        /* The campaign never pays arcade coins, so a "$0" up here was just
+         * a lie. Story flies on CHUBBCOIN: show that balance instead. */
+        char cbuf[24];
+        siprintf(cbuf, "%u Coins", (unsigned int)story_chubbcoin());
+        int cw = (int)strlen(cbuf) * 6;
+        gfx_draw_text(right_card_x + 72 - 3 - cw, 4, cbuf, PAL_TEXT_GOLD);
+    } else {
+        // Right-aligned inside the card so long balances (e.g. cheat money) fit.
+        save_format_coins(buf, sizeof(buf));
+        int coin_px = (int)strlen(buf) * 6 + 6; // digits + "$"
+        int coin_x = right_card_x + 72 - 3 - coin_px;
+        gfx_draw_char(coin_x, 4, '$', PAL_TEXT_GOLD);
+        gfx_draw_text(coin_x + 6, 4, buf, PAL_TEXT_GOLD);
+    }
 
     // The HUD reflects the LOCAL player: player 1 on the host, player 2 on
     // the guest (which renders itself as player 2 from the host snapshot).
@@ -3325,18 +3336,25 @@ void game_draw(void) {
     if (g_game.wave_banner_timer > 0 && g_game.mode == GAME_MODE_STORY) {
         const StoryLevel* L = story_cur();
         int boss_id = story_boss_for_level(s_story_level);
-        int banner_w = 200;
+        /* The level opens on its own two lines of story, so each of the 70
+         * levels reads as a beat in Jack's run rather than a numbered slot. */
+        int banner_w = 228;
+        if (banner_w > SCREEN_WIDTH - 8) banner_w = SCREEN_WIDTH - 8;
         int bx = (SCREEN_WIDTH - banner_w) / 2;
-        gfx_draw_glass_card(bx, 62, banner_w, 34, PAL_TEXT_WHITE, 15);
+        gfx_draw_glass_card(bx, 56, banner_w, 54, PAL_TEXT_WHITE, 15);
         if (boss_id >= 0) {
-            gfx_draw_text_centered(bx, 66, banner_w, story_boss_name(boss_id), PAL_TEXT_RED);
-            gfx_draw_text_centered(bx, 76, banner_w, story_boss_taunt(boss_id), PAL_TEXT_GOLD);
-            gfx_draw_text_centered(bx, 86, banner_w, story_sector_name(story_sector_of(s_story_level)), 17);
+            siprintf(buf, "LEVEL %d  -  %s", s_story_level, story_sector_name(story_sector_of(s_story_level)));
+            gfx_draw_text_centered(bx, 60, banner_w, buf, 17);
+            gfx_draw_text_centered(bx, 70, banner_w, story_boss_name(boss_id), PAL_TEXT_RED);
+            gfx_draw_text_centered(bx, 82, banner_w, L->brief1, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 92, banner_w, L->brief2, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 102, banner_w, story_boss_taunt(boss_id), PAL_TEXT_GOLD);
         } else {
-            siprintf(buf, "LEVEL %d", s_story_level);
-            gfx_draw_text_centered(bx, 66, banner_w, buf, PAL_TEXT_CYAN);
-            gfx_draw_text_centered(bx, 76, banner_w, L->name, PAL_TEXT_WHITE);
-            gfx_draw_text_centered(bx, 86, banner_w, story_sector_name(story_sector_of(s_story_level)), 17);
+            siprintf(buf, "LEVEL %d  -  %s", s_story_level, story_sector_name(story_sector_of(s_story_level)));
+            gfx_draw_text_centered(bx, 60, banner_w, buf, 17);
+            gfx_draw_text_centered(bx, 70, banner_w, L->name, PAL_TEXT_CYAN);
+            gfx_draw_text_centered(bx, 84, banner_w, L->brief1, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 94, banner_w, L->brief2, PAL_TEXT_WHITE);
         }
     } else if (g_game.wave_banner_timer > 0) {
         bool first_boss = g_game.mode == GAME_MODE_WAVES && g_game.wave == 5;

@@ -24,6 +24,23 @@ gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
 `stalls=0` is the property that matters: it means no level can ever soft-lock.
 Boss fights currently land at ~66-108 s each on a mid-progression loadout.
 
+## UI screenshots
+
+Renders the real Android menus (the PLAY tab, the level map, Mr Chubbs' shop,
+the result card and the in-game HUD) headlessly and writes PPMs, so layout
+regressions can be eyeballed without a device.
+
+```bash
+gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABLED=1 \
+    tools/story_sim/ui_shots.c tools/story_sim/ui_stubs.c \
+    android/app/src/main/cpp/platform_host.c gba/src/menu.c gba/src/renderer.c \
+    gba/src/gfx_data.c gba/src/starfield.c gba/src/save.c \
+    android/app/src/main/cpp/game.c android/app/src/main/cpp/story.c \
+    android/app/src/main/cpp/story_data.c -o /tmp/ui_shots -lm
+
+/tmp/ui_shots /tmp/ui     # writes 01_play_tab_locked.ppm ... 11_arcade_hud.ppm
+```
+
 ## Save tests
 
 Round-trips the V9 save block through SRAM and checks progression rules

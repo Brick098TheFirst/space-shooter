@@ -67,14 +67,56 @@ int main(void){
     CHK(g_story.cleared_count==before.cleared_count,"clears persisted");
     CHK(story_is_cleared(20),"boss clear persisted");
 
-    /* shop determinism + stock */
+    /* shop: he docks after EVERY level now */
+    for(int lv=1; lv<=STORY_LEVEL_COUNT; lv++) CHK(story_shop_at(lv),"dock at every level");
+    CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(70),"boss docks on the 10s");
+    CHK(!story_boss_dock(9) && !story_boss_dock(11),"no boss dock off the 10s");
+
     story_shop_open(10);
     const StoryStockItem* a=story_shop_slot(0);
     CHK(a->kind==SSTOCK_LIFE,"slot 0 sells lives");
     CHK(a->qty>=1,"lives in stock");
+    CHK(story_shop_level()==10,"dock level reported");
     u16 p1=story_shop_slot(2)->price; u8 k1=story_shop_slot(2)->kind;
-    story_shop_open(15); story_shop_open(10);
-    CHK(story_shop_slot(2)->price==p1 && story_shop_slot(2)->kind==k1,"shelf is deterministic per dock");
+    story_shop_open(10);
+    CHK(story_shop_slot(2)->price==p1 && story_shop_slot(2)->kind==k1,"re-entering a dock keeps the shelf");
+
+    /* unsold gear rides along to the next dock instead of vanishing */
+    story_shop_open(11);
+    CHK(story_shop_slot(2)->price==p1 && story_shop_slot(2)->kind==k1,"unsold stock carries over");
+    CHK(story_shop_slot_held_over(2),"carried stock is flagged HELD OVER");
+    CHK(!story_shop_slot_held_over(0),"lives restock every dock");
+
+    /* the shelf never offers something already owned */
+    for(int lv=1; lv<=40; lv++){
+        story_shop_open(lv);
+        for(int i=1;i<STORY_SHOP_SLOTS;i++){
+            const StoryStockItem* it=story_shop_slot(i);
+            if(it->kind==SSTOCK_WEAPON) CHK(!(g_settings.owned_rigs&(1u<<it->item)),"no owned rig on the shelf");
+            if(it->kind==SSTOCK_PAINT)  CHK(!(g_settings.owned_accents&(1u<<it->item)),"no owned paint on the shelf");
+        }
+    }
+
+    /* boss docks hand over exactly one free life, once per boss */
+    g_story.boss_gifts=0; g_story.lives=3;
+    story_shop_open(4);                        /* level 5 next: not a boss */
+    CHK(!story_shop_is_boss_dock(),"level 5 is not a boss dock");
+    CHK(story_shop_take_gift()==0,"no gift off a boss dock");
+    story_shop_open(9);                        /* level 10 next: Rustjaw */
+    CHK(story_shop_is_boss_dock(),"dock before level 10 is a boss dock");
+    CHK(story_shop_take_gift()==1,"boss dock gifts a life");
+    CHK(story_lives()==4,"the free life landed");
+    CHK(story_shop_take_gift()==0,"the gift is one per boss");
+    story_shop_open(19);                       /* level 20 next: the Twins */
+    CHK(story_shop_take_gift()==1,"each boss has its own gift");
+    CHK(story_lives()==5,"second free life landed");
+    CHK(story_shop_line1()[0] && story_shop_line2()[0],"Mr Chubbs has something to say");
+
+    /* every level carries its own two lines of story */
+    for(int i=0;i<STORY_LEVEL_COUNT;i++){
+        CHK(g_story_levels[i].brief1 && g_story_levels[i].brief1[0],"level has a story line");
+        CHK(g_story_levels[i].brief2 && g_story_levels[i].brief2[0],"level has a second story line");
+    }
 
     /* escape hatch */
     story_free_everything();

@@ -254,7 +254,7 @@ typedef struct {
     u8  story_cleared[9];
     u8  story_intro_seen;
     u8  story_freed;
-    u8  story_pad;
+    u8  story_boss_gifts;
     u32 story_chubbcoin;
     u32 checksum;
 } SaveDataV9;
@@ -446,6 +446,7 @@ void save_load(void) {
         memcpy(g_story.cleared, d9.story_cleared, sizeof(g_story.cleared));
         g_story.intro_seen = d9.story_intro_seen;
         g_story.freed = d9.story_freed;
+        g_story.boss_gifts = d9.story_boss_gifts;
         g_story.chubbcoin = d9.story_chubbcoin;
         story_init();
 
@@ -807,6 +808,7 @@ void save_write(void) {
     memcpy(data.story_cleared, g_story.cleared, sizeof(data.story_cleared));
     data.story_intro_seen = g_story.intro_seen;
     data.story_freed = g_story.freed;
+    data.story_boss_gifts = g_story.boss_gifts;
     data.story_chubbcoin = g_story.chubbcoin;
 
     data.checksum = calc_checksum_v9(&data);

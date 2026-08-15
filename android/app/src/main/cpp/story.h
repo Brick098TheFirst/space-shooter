@@ -27,6 +27,10 @@ typedef enum {
 
 typedef struct {
     const char* name;
+    /* Two lines of radio chatter shown on the map card and again as the
+     * level opens, so the campaign reads as a story and not a level list. */
+    const char* brief1;
+    const char* brief2;
     u8  objective;    /* StoryObjective */
     u8  rocks;        /* asteroids in the opening field */
     u8  drones;       /* hunters in the opening field */
@@ -70,9 +74,18 @@ static inline int story_checkpoint_for(int level) {
     return story_sector_of(level) * STORY_SECTOR_LEVELS + 1;
 }
 
-/* Mr Chubbs docks his little ship every 5 levels (5, 10, 15, ...). */
+/* Mr Chubbs now docks after EVERY level - you always get a look at the
+ * shelf before flying on.  Anything you leave on it rides along to the next
+ * dock, so skipping a shop never costs you the stock. */
 static inline bool story_shop_at(int level) {
-    return level > 0 && (level % 5) == 0;
+    return level > 0 && level <= STORY_LEVEL_COUNT;
+}
+
+/* The dock before a boss is the big one: he talks you up and hands over a
+ * spare life for nothing. */
+static inline bool story_boss_dock(int next_level) {
+    return next_level > 0 && next_level <= STORY_LEVEL_COUNT &&
+           (next_level % STORY_SECTOR_LEVELS) == 0;
 }
 
 
@@ -89,7 +102,7 @@ typedef struct {
     u8  cleared[9];     /* 70-level bitmask */
     u8  intro_seen;     /* the opening speech has played once */
     u8  freed;          /* "LET ME BE FREE" tapped 3x in settings */
-    u8  pad;
+    u8  boss_gifts;     /* bitmask: bosses whose free life has been handed out */
     u32 chubbcoin;      /* story-only currency */
 } StorySave;
 
@@ -147,14 +160,29 @@ typedef struct {
     u16 price;     /* chubbcoin */
 } StoryStockItem;
 
-/* Rebuild the stock for a dock. Idempotent for a given level: the same
- * level always rolls the same shelf, so quitting out can't reroll it. */
+/* Open the dock for a level. Idempotent for a given level: re-entering the
+ * same dock shows the same shelf. Stock you did NOT buy stays on the shelf
+ * at the next dock too - only sold/claimed slots are restocked. */
 void story_shop_open(int level);
 const StoryStockItem* story_shop_slot(int i);
 const char* story_shop_slot_name(int i);
 const char* story_shop_slot_desc(int i);
+/* True when this slot was already sitting on the shelf at the last dock. */
+bool story_shop_slot_held_over(int i);
 /* 0 = bought, 1 = too poor, 2 = sold out / already owned. */
 int  story_shop_buy(int i);
+
+/* The dock currently open (0 when none). */
+int  story_shop_level(void);
+/* True when the level you fly next out of this dock is a boss. */
+bool story_shop_is_boss_dock(void);
+/* Mr Chubbs' two lines of radio for this dock - a pep talk before a boss,
+ * a shopkeeper's grumble otherwise. */
+const char* story_shop_line1(void);
+const char* story_shop_line2(void);
+/* Boss docks hand over one free life, once per boss. Returns 1 the frame
+ * the gift lands so the UI can announce it. */
+int  story_shop_take_gift(void);
 
 
 /* ── The opening speech ───────────────────────────────────────────────────
