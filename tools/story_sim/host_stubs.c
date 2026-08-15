@@ -41,7 +41,7 @@ void gfx_draw_sprite(int a,int b,int c,int d,const u8* e){(void)a;(void)b;(void)
 void gfx_draw_sprite_rainbow(int a,int b,int c,int d,const u8* e,int f){(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;}
 void gfx_draw_ship(int a,int b,int c,int d){(void)a;(void)b;(void)c;(void)d;}
 void gfx_draw_ship_styled(int a,int b,int c,int d,int e){(void)a;(void)b;(void)c;(void)d;(void)e;}
-void gfx_draw_enemy_ship(int a,int b){(void)a;(void)b;}
+void gfx_draw_enemy_ship(int a,int b,int c,int d){(void)a;(void)b;(void)c;(void)d;}
 void gfx_draw_boss_drone(int a,int b,bool c,bool d,int e){(void)a;(void)b;(void)c;(void)d;(void)e;}
 void gfx_draw_laser(int a,int b,bool c,int d,int e,bool f){(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;}
 bool gfx_laser_is_animated(int i){(void)i;return false;}

@@ -90,6 +90,8 @@ typedef struct {
     int phase;
     int hp;
     int hp_frac; // 8.8 fixed fraction of HP (big laser)
+    u8 accent;
+    u8 style;
     bool active;
 } Drone;
 

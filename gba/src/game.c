@@ -587,6 +587,8 @@ static bool spawn_random_drone(void) {
         if (g_game.drones[i].hp > 6) g_game.drones[i].hp = 6;
 #endif
         g_game.drones[i].hp_frac = 0;
+        g_game.drones[i].accent = (u8)(rand() % NUM_ACCENTS);
+        g_game.drones[i].style = (u8)(rand() % NUM_SHIP_STYLES);
         g_game.drones[i].active = true;
         return true;
     }
@@ -745,6 +747,8 @@ static void begin_wave(void) {
             if (g_game.drones[i].hp > 6) g_game.drones[i].hp = 6;
 #endif
             g_game.drones[i].hp_frac = 0;
+            g_game.drones[i].accent = (u8)(rand() % NUM_ACCENTS);
+            g_game.drones[i].style = (u8)(rand() % NUM_SHIP_STYLES);
             g_game.drones[i].active = true;
         }
     }
@@ -1852,7 +1856,7 @@ void game_draw(void) {
         if (g_game.drones[i].active) {
             int dx = FROM_FIXED(g_game.drones[i].x) - 10 + ox;
             int dy = FROM_FIXED(g_game.drones[i].y) - 8 + oy;
-            gfx_draw_enemy_ship(dx, dy);
+            gfx_draw_enemy_ship(dx, dy, g_game.drones[i].accent, g_game.drones[i].style);
         }
     }
 
