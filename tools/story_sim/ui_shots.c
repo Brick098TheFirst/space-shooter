@@ -127,6 +127,19 @@ int main(int argc, char** argv) {
     game_draw();
     dump(dir, "11_arcade_hud");
 
+    /* Widest supported viewport: the shop must not just stretch, it must
+     * still breathe. */
+    host_set_screen_width(HOST_SCREEN_W_MAX);
+    menu_request_full_redraw();
+    game_request_full_redraw();
+    g_story.chubbcoin = 1840;
+    story_shop_open(9);
+    menu_open(SCREEN_STORY_SHOP);
+    pump(4);
+    dump(dir, "12_shop_wide");
+    host_set_screen_width(HOST_SCREEN_W_DEFAULT);
+    menu_request_full_redraw();
+
     printf("done\n");
     return 0;
 }

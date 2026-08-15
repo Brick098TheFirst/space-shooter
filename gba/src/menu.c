@@ -1188,8 +1188,12 @@ static void story_shop_reset_ui(void) {
 }
 
 /* Layout: header strip, radio card, four stock rows, action bar. */
-#define SHOPZ_ROW_H 21
-static int shopz_row_y(int i) { return 50 + i * SHOPZ_ROW_H; }
+#define SHOPZ_ROW_H 20      /* pitch; rows draw 19 tall, leaving a 1px gutter */
+#define SHOPZ_ROW_TOP 49
+#define SHOPZ_BAR_H 17
+static int shopz_row_y(int i) { return SHOPZ_ROW_TOP + i * SHOPZ_ROW_H; }
+static int shopz_status_y(void) { return SCREEN_HEIGHT - 29; }   /* 131 */
+static int shopz_bar_y(void)    { return SCREEN_HEIGHT - 19; }   /* 141 */
 static int shopz_row_x(void)  { return 8; }
 static int shopz_row_w(void)  { return SCREEN_WIDTH - 16; }
 
@@ -1232,10 +1236,10 @@ static void update_story_shop(void) {
             }
         }
         /* Action bar: BUY on the left, LEAVE / FLY ON on the right. */
-        int bar_y = SCREEN_HEIGHT - 17;
+        int bar_y = shopz_bar_y();
         int half = (SCREEN_WIDTH - 24) / 2;
-        if (in_rect(tx, ty, 8, bar_y, half, 17)) { shopz_buy(s_shopz_sel); return; }
-        if (in_rect(tx, ty, SCREEN_WIDTH - 8 - half, bar_y, half, 17)) { shopz_leave(); return; }
+        if (in_rect(tx, ty, 8, bar_y, half, SHOPZ_BAR_H)) { shopz_buy(s_shopz_sel); return; }
+        if (in_rect(tx, ty, SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H)) { shopz_leave(); return; }
         return;
     }
     if (key_hit(KEY_UP)) { s_shopz_sel = (s_shopz_sel + STORY_SHOP_SLOTS - 1) % STORY_SHOP_SLOTS; s_shopz_flash = 0; }
@@ -1295,11 +1299,11 @@ static void render_story_shop(void) {
 
     /* ── Radio card: the docked hull and his two lines ── */
     bool boss_dock = story_shop_is_boss_dock();
-    gfx_draw_glass_card(6, 18, SCREEN_WIDTH - 12, 32,
+    gfx_draw_glass_card(6, 17, SCREEN_WIDTH - 12, 30,
                         boss_dock ? PAL_TEXT_RED : PAL_TEXT_GOLD, 14);
     /* The little docked ship. No faces, ever - just a hull and a voice. */
     {
-        int sx = 12, sy = 25;
+        int sx = 12, sy = 23;
         u8 hull = boss_dock ? PAL_TEXT_RED : PAL_TEXT_GOLD;
         gfx_fill_rect(sx + 2, sy + 5, 22, 9, hull);
         gfx_fill_rect(sx + 6, sy + 2, 13, 4, PAL_TEXT_WHITE);
@@ -1309,12 +1313,12 @@ static void render_story_shop(void) {
         if ((s_anim_frame >> 4) & 1)
             gfx_fill_rect(sx + 11, sy, 3, 2, PAL_TEXT_GREEN);
     }
-    gfx_draw_text(44, 22, story_shop_line1(), boss_dock ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
-    gfx_draw_text(44, 31, story_shop_line2(), 17);
+    gfx_draw_text(44, 20, story_shop_line1(), boss_dock ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
+    gfx_draw_text(44, 29, story_shop_line2(), 17);
     {
         int lv = story_shop_level();
         siprintf(buf, "DOCK AFTER LEVEL %d", lv);
-        gfx_draw_text(44, 40, buf, 20);
+        gfx_draw_text(44, 38, buf, 20);
     }
 
     /* ── The shelf ── */
@@ -1329,14 +1333,14 @@ static void render_story_shop(void) {
         u8 border = gone ? (u8)20 : (sel ? PAL_TEXT_CYAN : PAL_BTN_BORDER);
         u8 fill = (sel && s_shopz_flash > 0 && ((s_shopz_flash >> 2) & 1)) ? PAL_TEXT_GREEN
                 : (sel ? (u8)15 : (u8)14);
-        gfx_draw_glass_card(rx, y, rw, SHOPZ_ROW_H - 1, border, fill);
+        gfx_draw_glass_card(rx, y, rw, SHOPZ_ROW_H - 1, border, fill);  /* 19 tall */
 
         /* Selection caret + icon column. */
         if (sel) gfx_draw_char(rx + 2, y + 5, '>', PAL_TEXT_CYAN);
         shopz_draw_icon(rx + 9, y + 4, it->kind, gone);
 
         gfx_draw_text(rx + 22, y + 2, story_shop_slot_name(i), gone ? (u8)18 : PAL_TEXT_WHITE);
-        gfx_draw_text(rx + 22, y + 11, story_shop_slot_desc(i), gone ? (u8)18 : (u8)17);
+        gfx_draw_text(rx + 22, y + 10, story_shop_slot_desc(i), gone ? (u8)18 : (u8)17);
 
         if (gone) {
             gfx_draw_text(rx + rw - 8 - 8 * 6, y + 6, "SOLD OUT", 18);
@@ -1348,16 +1352,16 @@ static void render_story_shop(void) {
             gfx_draw_text(px + (int)strlen(buf) * 6 + 3, y + 2, "Coins", afford ? (u8)17 : PAL_TEXT_RED);
             if (it->kind == SSTOCK_LIFE) {
                 siprintf(buf, "x%d LEFT", (int)it->qty);
-                gfx_draw_text(rx + rw - 6 - (int)strlen(buf) * 6, y + 11, buf, PAL_TEXT_CYAN);
+                gfx_draw_text(rx + rw - 6 - (int)strlen(buf) * 6, y + 10, buf, PAL_TEXT_CYAN);
             } else if (story_shop_slot_held_over(i)) {
-                gfx_draw_text(rx + rw - 6 - 9 * 6, y + 11, "HELD OVER", 20);
+                gfx_draw_text(rx + rw - 6 - 9 * 6, y + 10, "HELD OVER", 20);
             }
         }
     }
 
     /* ── Status line: the free-life gift wins it, then purchase messages,
      * then the standing "your stock is safe" reassurance. ── */
-    int status_y = SCREEN_HEIGHT - 26;
+    int status_y = shopz_status_y();
     if (s_shopz_gift > 0) {
         siprintf(buf, "+1 LIFE ON THE HOUSE   LIVES %d", story_lives());
         gfx_draw_text_centered(0, status_y, SCREEN_WIDTH, buf,
@@ -1372,14 +1376,14 @@ static void render_story_shop(void) {
     }
 
     {
-        int bar_y = SCREEN_HEIGHT - 17;
+        int bar_y = shopz_bar_y();
         int half = (SCREEN_WIDTH - 24) / 2;
-        gfx_draw_button(8, bar_y, half, 16, "BUY", true);
+        gfx_draw_button(8, bar_y, half, SHOPZ_BAR_H, "BUY", true);
         if (s_shopz_fly_on) {
             siprintf(buf, "FLY ON  LV %d", s_shopz_next_level);
-            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, 16, buf, false);
+            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H, buf, false);
         } else {
-            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, 16, "LEAVE", false);
+            gfx_draw_button(SCREEN_WIDTH - 8 - half, bar_y, half, SHOPZ_BAR_H, "LEAVE", false);
         }
     }
 }
