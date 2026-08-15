@@ -104,6 +104,18 @@ typedef enum {
     BOSS_REPOSITION    // recover high
 } BossPhase;
 
+/* Story-mode boss phases. Each of the seven story bosses drives its own
+ * script from these; the arcade boss keeps using the BOSS_* set above. */
+typedef enum {
+    SB_ENTER = 0,
+    SB_IDLE,
+    SB_ATTACK_A,
+    SB_ATTACK_B,
+    SB_ATTACK_C,
+    SB_ENRAGE,
+    SB_STAGGER
+} StoryBossPhase;
+
 typedef struct {
     int x, y;            // 8.8
     int vx, vy;          // 8.8
@@ -122,6 +134,22 @@ typedef struct {
     int cooldown;
     int fire_state;
     int sweep_dir;
+
+    /* ── Story-mode boss extension ──────────────────────────────────────
+     * Only meaningful while g_game.mode == GAME_MODE_STORY. Each of the
+     * seven story bosses reads these differently (see story_boss_ai). */
+    int  story_id;       // StoryBossId, -1 for the arcade boss
+    int  stage;          // phase-change counter (Queen has 3, Twins 2, ...)
+    int  attack_timer;   // generic per-attack countdown
+    int  spin;           // rotating attack angle (Emberlash whips, Queen ring)
+    int  anchor_x;       // 8.8 - home position for attacks that return
+    int  charge;         // wind-up accumulator
+    int  shield;         // Vault Warden node shield (damage blocked while >0)
+    int  node_hp[4];     // Vault Warden turret nodes / Titan armour plates
+    int  clone_x;        // 8.8 - the Twins' second half
+    int  clone_y;
+    int  clone_hp;
+    bool clone_active;
 } Boss;
 
 typedef enum {
@@ -215,6 +243,14 @@ typedef struct {
 } GameState;
 
 extern GameState g_game;
+
+/* ── Story Mode (Android) ─────────────────────────────────────────────── */
+int  game_story_level(void);
+void game_story_set_level(int level);
+/* 0 = still flying, 1 = level cleared, 2 = failed. */
+int  game_story_outcome(void);
+/* Chubbcoin banked by the level that just ended. */
+int  game_story_earned(void);
 
 void game_init(void);
 void game_request_full_redraw(void);

@@ -3,6 +3,7 @@
 #include "audio.h"
 #include "save.h"
 #include "starfield.h"
+#include "story.h"
 #include <stdlib.h>
 #include <string.h>
 #ifdef PLATFORM_HOST
@@ -82,8 +83,46 @@ void game_set_mode(GameMode mode) {
     /* Compare as int: GameMode may be an unsigned underlying type, which makes
      * `mode < GAME_MODE_WAVES` a tautology and trips -Wtype-limits. */
     int m = (int)mode;
-    if (m < (int)GAME_MODE_WAVES || m > (int)GAME_MODE_OVERDRIVE) m = (int)GAME_MODE_WAVES;
+    if (m < (int)GAME_MODE_WAVES || m > (int)GAME_MODE_STORY) m = (int)GAME_MODE_WAVES;
     s_game_mode = (GameMode)m;
+}
+
+/* ── Story Mode runtime ───────────────────────────────────────────────────
+ * The level being flown, its objective progress, and the outcome the menu
+ * layer reads once the level ends. */
+static int  s_story_level = 1;          /* 1..70 */
+static int  s_story_kills = 0;          /* hunters downed (OBJ_HUNT) */
+static int  s_story_timer = 0;          /* ticks left  (OBJ_SURVIVE) */
+static int  s_story_spawned = 0;        /* rocks released so far */
+static int  s_story_to_spawn = 0;       /* rocks still owed to the field */
+static int  s_story_outcome = 0;        /* 0 running, 1 cleared, 2 failed */
+static int  s_story_earned = 0;         /* chubbcoin banked this level */
+static int  s_story_end_delay = 0;      /* victory pause before the result */
+
+static void story_finish(int outcome);
+static void story_begin_level(void);
+static void story_update_objective(void);
+static void story_on_hunter_killed(void);
+
+int  game_story_level(void)   { return s_story_level; }
+int  game_story_outcome(void) { return s_story_outcome; }
+int  game_story_earned(void)  { return s_story_earned; }
+#ifdef STORY_DEBUG
+int  game_story_kills(void)   { return s_story_kills; }
+int  game_story_secs_left(void){ return s_story_timer; }
+#endif
+
+void game_story_set_level(int level) {
+    if (level < 1) level = 1;
+    if (level > STORY_LEVEL_COUNT) level = STORY_LEVEL_COUNT;
+    s_story_level = level;
+}
+
+static const StoryLevel* story_cur(void) {
+    int i = s_story_level - 1;
+    if (i < 0) i = 0;
+    if (i >= STORY_LEVEL_COUNT) i = STORY_LEVEL_COUNT - 1;
+    return &g_story_levels[i];
 }
 
 GameMode game_get_mode(void) {
@@ -430,6 +469,10 @@ static void try_spawn_powerup(int x, int y, int chance_pct) {
 }
 
 static void award_coins(int base_amount) {
+    /* Story Mode has its own purse (chubbcoin, paid out per level clear).
+     * Arcade coins are never earned while flying the campaign, which keeps
+     * the two economies — and the locked arcade shop — honest. */
+    if (g_game.mode == GAME_MODE_STORY) return;
     int scav_lv = g_settings.upgrade_levels[UPG_SCAVENGER];
     if (scav_lv < 0) scav_lv = 0;
     if (scav_lv > 5) scav_lv = 5;
@@ -626,6 +669,7 @@ static void destroy_drone(int idx, bool award) {
         award_coins((45 * combo_coin_pct(combo)) / 100);
         platform_queue_haptic(HAPTIC_KILL);
         try_spawn_powerup(dx, dy, 10);
+        story_on_hunter_killed();
     }
 }
 
@@ -731,6 +775,12 @@ static void spawn_continuous_threat(void) {
 static void finish_run(bool time_up) {
     g_game.is_game_over = true;
     g_game.time_up = time_up;
+    if (g_game.mode == GAME_MODE_STORY) {
+        /* Losing a story level costs one from the story life pool; the menu
+         * layer reads the outcome and shows the failure card. */
+        story_finish(2);
+        return;
+    }
     if (g_game.score > g_settings.high_score) {
         g_settings.high_score = g_game.score;
         g_game.is_new_high_score = true;
@@ -858,6 +908,824 @@ static void begin_wave(void) {
     }
 }
 
+/* Forward declarations for helpers the story code calls before they are
+ * defined further down this file. */
+static bool add_boss_bullet(int x, int y, int vx, int vy, int heavy);
+static void spawn_asteroid(AsteroidType type, int x, int y, int vx, int vy);
+static void spawn_particle(int x, int y, int vx, int vy, u8 color, u8 life);
+static void trigger_explosion(int x, int y);
+static void damage_player(void);
+static void award_score(int base_pts);
+static int  asteroid_speed_mult(AsteroidType type);
+static int  get_diff_speed_mult(void);
+
+/* ── Story Mode: level setup ──────────────────────────────────────────────
+ * A story level is a fixed, hand-tuned field rather than the endless wave
+ * escalator, so every level is finite and beatable. Enemy speed and HP are
+ * scaled by the level's own curve. */
+
+static int story_speed_scale(void) { return story_cur()->speed_pct; }
+static int story_hp_scale(void)    { return story_cur()->hp_pct; }
+
+static void story_spawn_rock(void) {
+    int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
+    int x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+    int y = -TO_FIXED((rand() % 60) + 8);
+    int vx = ((rand() % 150) - 75) * mult >> 8;
+    int vy = ((rand() % 70) + 70) * mult >> 8;
+    int lv = s_story_level;
+    bool is_large = (rand() % 100) < (12 + lv);
+    AsteroidType type = is_large ? AST_LARGE : ((rand() & 1) ? AST_MED_A : AST_MED_B);
+    int tmult = asteroid_speed_mult(type);
+    spawn_asteroid(type, x, y, (vx * tmult) >> 8, (vy * tmult) >> 8);
+    /* Apply the level HP curve to whichever slot just filled. */
+    for (int i = MAX_ASTEROIDS - 1; i >= 0; i--) {
+        if (g_game.asteroids[i].active && g_game.asteroids[i].y == y) {
+            int hp = (g_game.asteroids[i].hp * story_hp_scale()) / 100;
+            if (hp < 1) hp = 1;
+            g_game.asteroids[i].hp = hp;
+            break;
+        }
+    }
+}
+
+static bool story_spawn_hunter(void) {
+    int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
+    for (int i = 0; i < MAX_DRONES; i++) {
+        if (g_game.drones[i].active) continue;
+        g_game.drones[i].x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+        g_game.drones[i].y = -TO_FIXED((rand() % 40) + 14);
+        g_game.drones[i].vx = 0;
+        g_game.drones[i].vy = (60 + s_story_level) * mult >> 8;
+        int base_cd = 78 - s_story_level;
+        if (base_cd < 26) base_cd = 26;
+        g_game.drones[i].shoot_timer = (rand() % 40) + base_cd;
+        g_game.drones[i].burst_timer = 0;
+        g_game.drones[i].burst_shots = 0;
+        g_game.drones[i].phase = rand() % 256;
+        int hp = (3 * story_hp_scale()) / 100;
+        if (hp < 2) hp = 2;
+        if (hp > 14) hp = 14;
+        g_game.drones[i].hp = hp;
+        g_game.drones[i].hp_frac = 0;
+        g_game.drones[i].active = true;
+        return true;
+    }
+    return false;
+}
+
+static void story_spawn_boss(int boss_id);
+
+static void story_begin_level(void) {
+    const StoryLevel* L = story_cur();
+    s_story_kills = 0;
+    s_story_spawned = 0;
+    s_story_outcome = 0;
+    s_story_earned = 0;
+    s_story_end_delay = 0;
+    s_story_timer = (L->objective == OBJ_SURVIVE) ? L->quota * 90 : 0;
+    g_game.wave = s_story_level;
+    g_game.wave_banner_timer = 130;
+    g_game.intermission_timer = 9999;   /* story never auto-advances waves */
+    g_game.spawn_timer = 40;
+
+    if (L->objective == OBJ_BOSS) {
+        s_story_to_spawn = 0;
+        int boss_id = story_boss_for_level(s_story_level);
+        story_spawn_boss(boss_id >= 0 ? boss_id : 0);
+        return;
+    }
+
+    /* Open the level with roughly half the field; the rest trickles in so
+     * the screen is never instantly unsurvivable. */
+    int opening = L->rocks / 2;
+    if (opening < 3) opening = 3;
+    s_story_to_spawn = L->rocks - opening;
+    if (s_story_to_spawn < 0) s_story_to_spawn = 0;
+    for (int i = 0; i < opening; i++) story_spawn_rock();
+    for (int i = 0; i < L->drones; i++) story_spawn_hunter();
+}
+
+/* Called from the kill paths so HUNT levels can count progress. */
+static void story_on_hunter_killed(void) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_kills++;
+}
+
+static void story_finish(int outcome) {
+    if (s_story_outcome != 0) return;
+    s_story_outcome = outcome;
+    if (outcome == 1) {
+        s_story_earned = story_complete_level(s_story_level);
+    }
+}
+
+/* ── Story Mode: objective tracking ───────────────────────────────────────
+ * Runs once per tick in place of the wave escalator. Every objective has a
+ * guaranteed end condition, so no level can stall out unwinnable. */
+static void story_update_objective(void) {
+    if (s_story_outcome != 0) {
+        /* Victory pause so the final explosion plays before the result card. */
+        if (s_story_end_delay > 0) s_story_end_delay--;
+        return;
+    }
+
+    const StoryLevel* L = story_cur();
+    int rocks = count_active_asteroids();
+    int hunters = count_active_drones();
+
+    switch (L->objective) {
+        case OBJ_BOSS:
+            /* Ends via defeat_boss() -> story_finish(1). Nothing to poll. */
+            break;
+
+        case OBJ_CLEAR:
+            /* Release the rest of the field a few at a time, then win when
+             * the sky is empty. */
+            if (s_story_to_spawn > 0) {
+                if (--g_game.spawn_timer <= 0) {
+                    int batch = 1 + s_story_level / 18;
+                    for (int i = 0; i < batch && s_story_to_spawn > 0; i++) {
+                        if (rocks >= MAX_ASTEROIDS - 8) break;
+                        story_spawn_rock();
+                        s_story_to_spawn--;
+                        rocks++;
+                    }
+                    int cd = 70 - s_story_level;
+                    if (cd < 22) cd = 22;
+                    g_game.spawn_timer = cd;
+                }
+            } else if (rocks == 0 && hunters == 0) {
+                s_story_end_delay = 45;
+                story_finish(1);
+            }
+            break;
+
+        case OBJ_HUNT:
+            /* Keep exactly enough hunters on screen to chase, and top the
+             * rocks up as ambient pressure, until the quota is met. */
+            if (s_story_kills >= L->quota) {
+                s_story_end_delay = 45;
+                story_finish(1);
+                break;
+            }
+            if (--g_game.spawn_timer <= 0) {
+                int want_hunters = L->drones;
+                if (hunters < want_hunters) story_spawn_hunter();
+                else if (rocks < L->rocks) story_spawn_rock();
+                int cd = 80 - s_story_level;
+                if (cd < 26) cd = 26;
+                g_game.spawn_timer = cd;
+            }
+            break;
+
+        case OBJ_SURVIVE:
+            if (s_story_timer > 0) s_story_timer--;
+            if (s_story_timer <= 0) {
+                s_story_end_delay = 45;
+                story_finish(1);
+                break;
+            }
+            if (--g_game.spawn_timer <= 0) {
+                if (rocks < L->rocks) story_spawn_rock();
+                else if (hunters < L->drones) story_spawn_hunter();
+                int cd = 60 - s_story_level / 2;
+                if (cd < 18) cd = 18;
+                g_game.spawn_timer = cd;
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* ── Story Mode: the seven bosses ─────────────────────────────────────────
+ * Each boss owns a distinct movement pattern, attack set and gimmick. They
+ * all share the Boss struct; the story extension fields carry per-boss
+ * state. HP is tuned so a fair loadout kills them in 45-90 seconds. */
+
+static int story_boss_hp(int boss_id) {
+    /* Tuned against a headless playthrough harness (tools/story_sim): a
+     * mid-progression loadout kills each boss in roughly 60-120 s, and the
+     * ladder is strictly monotonic. Real players out-damage the test pilot,
+     * so these land a little faster in practice. */
+    static const int base[STORY_SECTOR_COUNT] = {
+        340, 780, 2400, 3200, 8500, 5800, 30000
+    };
+    int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
+    int hp = base[id];
+    if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
+    else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
+    return hp;
+}
+
+static void story_spawn_boss(int boss_id) {
+    memset(&g_game.boss, 0, sizeof(Boss));
+    Boss* b = &g_game.boss;
+    b->x = TO_FIXED(SCREEN_WIDTH / 2);
+    b->y = -TO_FIXED(60);
+    b->anchor_x = b->x;
+    b->vx = TO_FIXED(1) + 40;
+    b->vy = TO_FIXED(1) + 60;
+    b->mini = false;
+    b->story_id = boss_id;
+    b->hp_max = story_boss_hp(boss_id);
+    b->hp = b->hp_max;
+    b->hp_frac = 0;
+    b->phase = SB_ENTER;
+    b->phase_timer = 120;
+    b->beam_width = TO_FIXED(10);
+    b->active = true;
+    b->stage = 0;
+    b->sweep_dir = 1;
+    b->clone_active = false;
+
+    if (boss_id == SBOSS_SCRAPTITAN || boss_id == SBOSS_VAULTWARDEN) {
+        for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
+        if (boss_id == SBOSS_VAULTWARDEN) b->shield = 1;
+    }
+
+    g_game.boss_active = true;
+    g_game.boss_hit_flash = 0;
+    audio_begin_boss_music();
+    for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
+}
+
+/* Aimed shot helper in story space. */
+static void sb_shoot_at_player(int from_x, int from_y, int speed_fixed, int heavy) {
+    const Player* aim = ai_target_ship();
+    int dx = FROM_FIXED(aim->x) - from_x;
+    int dy = FROM_FIXED(aim->y) - from_y;
+    double mag = hypot((double)dx, (double)dy);
+    if (mag < 1.0) mag = 1.0;
+    double sp = (double)speed_fixed / 256.0;
+    add_boss_bullet(TO_FIXED(from_x), TO_FIXED(from_y),
+                    (int)(dx / mag * sp * 256.0), (int)(dy / mag * sp * 256.0), heavy);
+}
+
+/* Evenly spaced ring, optionally rotated by `spin`. */
+static void sb_ring(int from_x, int from_y, int n, int speed_fixed, int spin, int heavy_every) {
+    for (int i = 0; i < n; i++) {
+        int ang = (i * 65536) / n + spin;
+        int vx = (lu_cos(ang) * speed_fixed) >> 12;
+        int vy = (lu_sin(ang) * speed_fixed) >> 12;
+        add_boss_bullet(TO_FIXED(from_x), TO_FIXED(from_y), vx, vy,
+                        heavy_every && (i % heavy_every) == 0);
+    }
+}
+
+/* A fan of `n` shots aimed downward, spread across `spread` BAM units. */
+static void sb_fan(int from_x, int from_y, int n, int speed_fixed, int spread) {
+    for (int i = 0; i < n; i++) {
+        int centered = i * 2 - (n - 1);
+        int ang = 16384 + (centered * spread) / (n > 1 ? (n - 1) : 1); /* 16384 = straight down */
+        int vx = (lu_cos(ang) * speed_fixed) >> 12;
+        int vy = (lu_sin(ang) * speed_fixed) >> 12;
+        add_boss_bullet(TO_FIXED(from_x), TO_FIXED(from_y), vx, vy, (i & 1) == 0);
+    }
+}
+
+static void sb_drift(Boss* b, int speed) {
+    b->x += b->sweep_dir * speed;
+    if (b->x < TO_FIXED(24)) { b->x = TO_FIXED(24); b->sweep_dir = 1; }
+    if (b->x > TO_FIXED(SCREEN_WIDTH - 24)) { b->x = TO_FIXED(SCREEN_WIDTH - 24); b->sweep_dir = -1; }
+}
+
+static void sb_hover(Boss* b, int target_y, int speed) {
+    if (b->y < TO_FIXED(target_y) - speed) b->y += speed;
+    else if (b->y > TO_FIXED(target_y) + speed) b->y -= speed;
+}
+
+/* Fraction of HP remaining, 0..100. */
+static int sb_hp_pct(const Boss* b) {
+    if (b->hp_max <= 0) return 0;
+    return (b->hp * 100) / b->hp_max;
+}
+
+/* ── BOSS 1 - RUSTJAW (L10) ───────────────────────────────────────────────
+ * A scrapyard jaw. Slams down at the player, spits chewed scrap in a wide
+ * arc, and gets faster the closer to death it is. Teaches dodging a telegraph. */
+static void sb_rustjaw(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_drift(b, TO_FIXED(1) + 60);
+            sb_hover(b, 34, TO_FIXED(1));
+            if (--b->cooldown <= 0) {
+                sb_shoot_at_player(cx, cy + 14, TO_FIXED(4), 0);
+                b->cooldown = (sb_hp_pct(b) < 40) ? 26 : 40;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = (rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B;
+                b->phase_timer = 150;
+                b->aim_x = ai_target_ship()->x;
+                b->charge = 0;
+            }
+            break;
+        case SB_ATTACK_A: {   /* JAW SLAM: line up, telegraph, dive, recover */
+            if (b->phase_timer > 110) {
+                int diff = b->aim_x - b->x;
+                int step = TO_FIXED(3);
+                if (diff > step) b->x += step; else if (diff < -step) b->x -= step; else b->x = b->aim_x;
+                if ((b->phase_timer & 3) == 0)
+                    spawn_particle(b->x, b->y + TO_FIXED(16), 0, 120, PAL_TEXT_RED, 8);
+            } else if (b->phase_timer > 60) {
+                b->y += TO_FIXED(5);
+                if (FROM_FIXED(b->y) > SCREEN_HEIGHT - 40) b->y = TO_FIXED(SCREEN_HEIGHT - 40);
+                if ((b->phase_timer & 7) == 0) sb_fan(cx, cy + 14, 3, TO_FIXED(4), 5000);
+            } else {
+                b->y -= TO_FIXED(3);
+                if (b->y <= TO_FIXED(34)) { b->y = TO_FIXED(34); b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 30; }
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; }
+            break;
+        }
+        case SB_ATTACK_B:     /* SCRAP SPIT: wide arcs of debris */
+            sb_drift(b, TO_FIXED(2));
+            if ((b->phase_timer % 26) == 0) sb_fan(cx, cy + 14, sb_hp_pct(b) < 50 ? 7 : 5, TO_FIXED(3), 14000);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+            break;
+        default:
+            b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 40;
+            break;
+    }
+}
+
+/* ── BOSS 2 - THE TWINS (L20) ─────────────────────────────────────────────
+ * One hull until 50%, then it splits: the clone mirrors your position while
+ * the original hunts you, and they cross-fire the gap between them. */
+static void sb_twins(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+
+    if (!b->clone_active && sb_hp_pct(b) <= 50) {
+        b->clone_active = true;
+        b->clone_x = TO_FIXED(SCREEN_WIDTH) - b->x;
+        b->clone_y = b->y;
+        b->clone_hp = b->hp / 2;
+        b->stage = 1;
+        g_game.shake_timer = 24;
+        for (int i = 0; i < 4; i++) trigger_explosion(cx + (rand() % 24) - 12, cy);
+    }
+
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 32, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(2));
+            if (--b->cooldown <= 0) {
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(4) + 64, 0);
+                b->cooldown = b->clone_active ? 30 : 42;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = b->clone_active ? SB_ATTACK_C : ((rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B);
+                b->phase_timer = 140;
+            }
+            break;
+        case SB_ATTACK_A:     /* MIRROR VOLLEY: alternating left/right walls */
+            sb_drift(b, TO_FIXED(3));
+            if ((b->phase_timer % 18) == 0) {
+                int side = (b->phase_timer / 18) & 1;
+                int ox = side ? -30 : 30;
+                sb_fan(cx + ox, cy + 12, 4, TO_FIXED(3) + 128, 8000);
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 26; }
+            break;
+        case SB_ATTACK_B:     /* SPIN RING */
+            sb_hover(b, 30, TO_FIXED(1));
+            b->spin += 900;
+            if ((b->phase_timer % 22) == 0) sb_ring(cx, cy, 9, TO_FIXED(3), b->spin, 3);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 26; }
+            break;
+        case SB_ATTACK_C: {   /* CROSSFIRE: both halves squeeze the middle */
+            sb_drift(b, TO_FIXED(3));
+            if ((b->phase_timer % 14) == 0) {
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(5), 1);
+                sb_shoot_at_player(FROM_FIXED(b->clone_x), FROM_FIXED(b->clone_y) + 12, TO_FIXED(5), 0);
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 22; }
+            break;
+        }
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 40; break;
+    }
+
+    /* The clone mirrors the player's column, always threatening from the side. */
+    if (b->clone_active) {
+        int want = TO_FIXED(SCREEN_WIDTH) - ai_target_ship()->x;
+        int diff = want - b->clone_x;
+        int step = TO_FIXED(1) + 100;
+        if (diff > step) b->clone_x += step; else if (diff < -step) b->clone_x -= step; else b->clone_x = want;
+        if (b->clone_x < TO_FIXED(20)) b->clone_x = TO_FIXED(20);
+        if (b->clone_x > TO_FIXED(SCREEN_WIDTH - 20)) b->clone_x = TO_FIXED(SCREEN_WIDTH - 20);
+        b->clone_y = b->y + TO_FIXED(10);
+        if ((s_game_frame % 40) == 0)
+            add_boss_bullet(b->clone_x, b->clone_y + TO_FIXED(10), 0, TO_FIXED(4), false);
+    }
+}
+
+/* ── BOSS 3 - FROSTWIDOW (L30) ────────────────────────────────────────────
+ * Spins a web: static shard "strands" that linger, plus a chilling beam that
+ * slows nothing but punishes standing still. Forces constant repositioning. */
+static void sb_frostwidow(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 30, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(1) + 100);
+            if (--b->cooldown <= 0) { sb_fan(cx, cy + 12, 3, TO_FIXED(4), 6000); b->cooldown = 34; }
+            if (b->phase_timer <= 0) {
+                int roll = rand() % 3;
+                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase_timer = 160;
+                b->beam_x = ai_target_ship()->x;
+                b->spin = 0;
+            }
+            break;
+        case SB_ATTACK_A:     /* WEB: slow drifting shards from eight anchors */
+            sb_hover(b, 26, TO_FIXED(1));
+            if ((b->phase_timer % 30) == 0) {
+                b->spin += 4000;
+                sb_ring(cx, cy, 8, TO_FIXED(1) + 128, b->spin, 2);
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 28; }
+            break;
+        case SB_ATTACK_B:     /* FROST LANCE: telegraphed tracking beam */
+            if (b->phase_timer > 100) {
+                b->beam_x = ai_target_ship()->x;
+                if ((b->phase_timer & 3) == 0)
+                    spawn_particle(b->beam_x + TO_FIXED((rand() & 7) - 4), TO_FIXED(40 + rand() % 90),
+                                   0, 70, PAL_TEXT_CYAN, 9);
+                b->beam_timer = 0;
+            } else {
+                if (b->beam_timer == 0) { b->beam_timer = 100; b->beam_width = TO_FIXED(9); }
+                int diff = ai_target_ship()->x - b->beam_x;
+                int step = TO_FIXED(1) / 6;
+                if (diff > step) b->beam_x += step; else if (diff < -step) b->beam_x -= step;
+                b->beam_timer--;
+                int beam_px = FROM_FIXED(b->beam_x);
+                int px = FROM_FIXED(g_game.player.x), py = FROM_FIXED(g_game.player.y);
+                if (g_game.player.invulnerable_timer == 0 && py > 12 &&
+                    px >= beam_px - 9 && px <= beam_px + 9) damage_player();
+                if ((b->phase_timer & 1) == 0)
+                    spawn_particle(TO_FIXED(beam_px + (rand() & 31) - 15), TO_FIXED(30 + rand() % 110),
+                                   (rand() & 63) - 32, -((rand() & 31) + 40), PAL_TEXT_CYAN, 10);
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 34; }
+            break;
+        case SB_ATTACK_C:     /* SKITTER: fast side dashes with trailing ice */
+            b->x += b->sweep_dir * (TO_FIXED(4) + 80);
+            if (b->x < TO_FIXED(24)) { b->x = TO_FIXED(24); b->sweep_dir = 1; }
+            if (b->x > TO_FIXED(SCREEN_WIDTH - 24)) { b->x = TO_FIXED(SCREEN_WIDTH - 24); b->sweep_dir = -1; }
+            if ((b->phase_timer & 7) == 0)
+                add_boss_bullet(b->x, b->y + TO_FIXED(12), 0, TO_FIXED(2) + 100, false);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 30; }
+            break;
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 40; break;
+    }
+}
+
+/* ── BOSS 4 - SCRAP TITAN (L40) ───────────────────────────────────────────
+ * Four armour plates soak damage until broken; it drags you toward it with a
+ * magnet field and hurls whole asteroids. Slow, heavy, unavoidable pressure. */
+static void sb_scraptitan(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    int plates = 0;
+    for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) plates++;
+
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 32, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(1));
+            if (--b->cooldown <= 0) { sb_fan(cx, cy + 16, 5, TO_FIXED(3) + 100, 11000); b->cooldown = 44; }
+            if (b->phase_timer <= 0) {
+                int roll = rand() % 3;
+                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase_timer = 170;
+            }
+            break;
+        case SB_ATTACK_A:     /* MAGNET: pulls the player upward into the shots */
+            sb_hover(b, 30, TO_FIXED(1));
+            if (g_game.player.y > TO_FIXED(30))
+                g_game.player.y -= (plates > 2) ? 26 : 40;
+            if ((b->phase_timer % 20) == 0) sb_ring(cx, cy, 10, TO_FIXED(3), b->spin += 2200, 2);
+            if ((b->phase_timer & 3) == 0)
+                spawn_particle(g_game.player.x, g_game.player.y + TO_FIXED(10), 0, -140, PAL_TEXT_VIOLET, 7);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 30; }
+            break;
+        case SB_ATTACK_B:     /* ROCK THROW: launches real asteroids at you */
+            sb_drift(b, TO_FIXED(2));
+            if ((b->phase_timer % 34) == 0) {
+                int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
+                spawn_asteroid(AST_LARGE, b->x, b->y + TO_FIXED(18),
+                               ((rand() % 120) - 60) * mult >> 8, (140 * mult) >> 8);
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 34; }
+            break;
+        case SB_ATTACK_C:     /* STOMP: slams the floor, shock columns rise */
+            if (b->phase_timer > 120) { b->y += TO_FIXED(3); }
+            else if (b->phase_timer > 90) {
+                if (b->phase_timer == 120) { g_game.shake_timer = 20; audio_play_sfx(SFX_EXPLOSION); }
+                for (int i = 0; i < 3; i++) {
+                    int col = ((rand() % (SCREEN_WIDTH - 40)) + 20);
+                    if ((b->phase_timer % 10) == 0)
+                        add_boss_bullet(TO_FIXED(col), TO_FIXED(SCREEN_HEIGHT), 0, -TO_FIXED(3), false);
+                }
+            } else { b->y -= TO_FIXED(2); if (b->y < TO_FIXED(32)) b->y = TO_FIXED(32); }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+            break;
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 44; break;
+    }
+}
+
+/* ── BOSS 5 - EMBERLASH (L50) ─────────────────────────────────────────────
+ * Two counter-rotating whips of fire. The safe gaps rotate continuously, so
+ * you must keep orbiting rather than camping a corner. */
+static void sb_emberlash(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    b->spin += (sb_hp_pct(b) < 45) ? 1500 : 1000;
+
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 28, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(1) + 80);
+            /* The whips are always live: two arms of embers sweeping round. */
+            if ((s_game_frame % 7) == 0) {
+                add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy),
+                                (lu_cos(b->spin) * (TO_FIXED(3))) >> 12,
+                                (lu_sin(b->spin) * (TO_FIXED(3))) >> 12, false);
+                add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy),
+                                (lu_cos(b->spin + 32768) * (TO_FIXED(3))) >> 12,
+                                (lu_sin(b->spin + 32768) * (TO_FIXED(3))) >> 12, false);
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = (rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B;
+                b->phase_timer = 150;
+            }
+            break;
+        case SB_ATTACK_A:     /* FLARE: aimed heavy bolts between whip passes */
+            sb_drift(b, TO_FIXED(2) + 60);
+            if ((b->phase_timer % 24) == 0) sb_shoot_at_player(cx, cy + 12, TO_FIXED(5) + 60, 1);
+            if ((s_game_frame % 9) == 0)
+                add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy),
+                                (lu_cos(b->spin) * TO_FIXED(3)) >> 12,
+                                (lu_sin(b->spin) * TO_FIXED(3)) >> 12, false);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; }
+            break;
+        case SB_ATTACK_B:     /* SOLAR WIND: dense downward curtain with a gap */
+            sb_hover(b, 24, TO_FIXED(1));
+            if ((b->phase_timer % 12) == 0) {
+                int gap = 30 + (rand() % (SCREEN_WIDTH - 90));
+                for (int x = 16; x < SCREEN_WIDTH - 16; x += 26) {
+                    if (x > gap && x < gap + 52) continue;   /* always a way through */
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 12), 0, TO_FIXED(3), false);
+                }
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; }
+            break;
+        default: b->phase = SB_IDLE; b->phase_timer = 80; break;
+    }
+}
+
+/* ── BOSS 6 - VAULT WARDEN (L60) ──────────────────────────────────────────
+ * Invulnerable behind a shield until all four turret nodes are destroyed;
+ * the nodes rotate around the hull and fire independently. */
+static void sb_vaultwarden(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    int alive = 0;
+    for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) alive++;
+    b->shield = (alive > 0) ? 1 : 0;
+    b->spin += 700;
+
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 34, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(1) + 40);
+            /* Each surviving node fires on its own cadence. */
+            for (int i = 0; i < 4; i++) {
+                if (b->node_hp[i] <= 0) continue;
+                if ((s_game_frame % (34 + i * 7)) == 0) {
+                    int ang = b->spin + i * 16384;
+                    int nx = cx + ((lu_cos(ang) * 30) >> 12);
+                    int ny = cy + ((lu_sin(ang) * 22) >> 12);
+                    sb_shoot_at_player(nx, ny, TO_FIXED(4), 0);
+                }
+            }
+            if (--b->cooldown <= 0 && !b->shield) {
+                sb_fan(cx, cy + 14, 7, TO_FIXED(4), 12000);
+                b->cooldown = 30;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = b->shield ? SB_ATTACK_A : SB_ATTACK_B;
+                b->phase_timer = 160;
+            }
+            break;
+        case SB_ATTACK_A:     /* LOCKDOWN: sweeping searchlight volleys */
+            sb_drift(b, TO_FIXED(3));
+            if ((b->phase_timer % 16) == 0) sb_fan(cx, cy + 14, 4, TO_FIXED(3) + 80, 9000);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 28; }
+            break;
+        case SB_ATTACK_B:     /* BREACH RAGE: unshielded, everything at once */
+            sb_hover(b, 30, TO_FIXED(1));
+            if ((b->phase_timer % 18) == 0) sb_ring(cx, cy, 12, TO_FIXED(3) + 60, b->spin, 3);
+            if ((b->phase_timer % 30) == 0) sb_shoot_at_player(cx, cy + 14, TO_FIXED(6), 1);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24; }
+            break;
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 34; break;
+    }
+}
+
+/* ── BOSS 7 - THE REALITY QUEEN (L70) ─────────────────────────────────────
+ * The finale. Jack flies as the Reality King against the Queen's ship, in
+ * three cinematic stages: her honour guard, the unmaking (reality tears that
+ * rewrite the field), and a last desperate all-out barrage. */
+static void sb_realityqueen(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    int pct = sb_hp_pct(b);
+
+    /* Stage transitions punctuate the fight with a stagger + shockwave. */
+    if (b->stage == 0 && pct <= 66) {
+        b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 110;
+        g_game.shake_timer = 30; g_game.wave_banner_timer = 100;
+    } else if (b->stage == 1 && pct <= 33) {
+        b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 110;
+        g_game.shake_timer = 40; g_game.wave_banner_timer = 100;
+    }
+
+    b->spin += 800 + b->stage * 400;
+
+    switch (b->phase) {
+        case SB_STAGGER:      /* cinematic beat: she reels, the screen burns */
+            sb_hover(b, 30, TO_FIXED(1));
+            if ((b->phase_timer & 3) == 0) {
+                trigger_explosion(cx + (rand() % 40) - 20, cy + (rand() % 20) - 10);
+                spawn_particle(b->x, b->y, (rand() & 255) - 128, (rand() & 255) - 128,
+                               PAL_TEXT_VIOLET, 12);
+            }
+            if (b->phase_timer <= 0) {
+                sb_ring(cx, cy, 16, TO_FIXED(3), b->spin, 2);   /* shockwave */
+                b->phase = SB_IDLE; b->phase_timer = 60; b->cooldown = 20;
+            }
+            break;
+        case SB_IDLE:
+            sb_hover(b, 30, TO_FIXED(1) + 60);
+            sb_drift(b, TO_FIXED(2));
+            if (--b->cooldown <= 0) {
+                sb_shoot_at_player(cx, cy + 14, TO_FIXED(5), 1);
+                b->cooldown = 30 - b->stage * 6;
+            }
+            if (b->phase_timer <= 0) {
+                int roll = rand() % (b->stage >= 1 ? 3 : 2);
+                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase_timer = 170;
+                b->beam_x = ai_target_ship()->x;
+            }
+            break;
+        case SB_ATTACK_A:     /* HONOUR GUARD: spiral lattice */
+            sb_hover(b, 26, TO_FIXED(1));
+            if ((b->phase_timer % (14 - b->stage * 3)) == 0)
+                sb_ring(cx, cy, 8 + b->stage * 2, TO_FIXED(3), b->spin, 3);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24; }
+            break;
+        case SB_ATTACK_B: {   /* THE UNMAKING: twin tearing beams */
+            if (b->phase_timer > 120) {
+                b->beam_x = ai_target_ship()->x;
+                if ((b->phase_timer & 2) == 0)
+                    spawn_particle(b->beam_x + TO_FIXED((rand() & 15) - 8), TO_FIXED(30 + rand() % 100),
+                                   0, 90, PAL_TEXT_VIOLET, 9);
+                b->beam_timer = 0;
+            } else {
+                if (b->beam_timer == 0) b->beam_timer = 120;
+                b->beam_timer--;
+                int diff = ai_target_ship()->x - b->beam_x;
+                int step = TO_FIXED(1) / 5;
+                if (diff > step) b->beam_x += step; else if (diff < -step) b->beam_x -= step;
+                int beam_px = FROM_FIXED(b->beam_x);
+                int px = FROM_FIXED(g_game.player.x), py = FROM_FIXED(g_game.player.y);
+                int half = 10;
+                /* Mirrored second tear on the opposite side of the screen. */
+                int mirror_px = SCREEN_WIDTH - beam_px;
+                if (g_game.player.invulnerable_timer == 0 && py > 12 &&
+                    ((px >= beam_px - half && px <= beam_px + half) ||
+                     (b->stage >= 2 && px >= mirror_px - half && px <= mirror_px + half)))
+                    damage_player();
+                if ((b->phase_timer & 1) == 0) {
+                    spawn_particle(TO_FIXED(beam_px + (rand() & 31) - 15), TO_FIXED(20 + rand() % 120),
+                                   (rand() & 63) - 32, -((rand() & 31) + 40), PAL_TEXT_VIOLET, 10);
+                    if (b->stage >= 2)
+                        spawn_particle(TO_FIXED(mirror_px + (rand() & 31) - 15), TO_FIXED(20 + rand() % 120),
+                                       (rand() & 63) - 32, -((rand() & 31) + 40), PAL_TEXT_RED, 10);
+                }
+            }
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 24; }
+            break;
+        }
+        case SB_ATTACK_C:     /* NO TOMORROW: curtain + aimed lances, with gaps */
+            sb_drift(b, TO_FIXED(3));
+            if ((b->phase_timer % 16) == 0) {
+                int gap = 24 + (rand() % (SCREEN_WIDTH - 80));
+                for (int x = 14; x < SCREEN_WIDTH - 14; x += 24) {
+                    if (x > gap && x < gap + 46) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 14), 0, TO_FIXED(3) + 40, false);
+                }
+            }
+            if ((b->phase_timer % 40) == 0) sb_shoot_at_player(cx, cy + 14, TO_FIXED(6), 1);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 20; }
+            break;
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; break;
+    }
+}
+
+/* Damage gating for bosses with destructible parts.
+ * Scrap Titan: four armour plates soak most damage until broken.
+ * Vault Warden: fully immune while any turret node lives — you must shoot
+ * the rotating nodes off first (hits near a node damage that node). */
+static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
+    if (g_game.mode != GAME_MODE_STORY) return dmg;
+
+    if (b->story_id == SBOSS_VAULTWARDEN) {
+        int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+        int best = -1, best_d = 0;
+        for (int i = 0; i < 4; i++) {
+            if (b->node_hp[i] <= 0) continue;
+            int ang = b->spin + i * 16384;
+            int nx = cx + ((lu_cos(ang) * 30) >> 12);
+            int ny = cy + ((lu_sin(ang) * 22) >> 12);
+            int d = (hit_x - nx) * (hit_x - nx) + (hit_y - ny) * (hit_y - ny);
+            if (best < 0 || d < best_d) { best = i; best_d = d; }
+        }
+        if (best >= 0) {
+            /* Hits land on the nearest surviving node; the hull is sealed. */
+            b->node_hp[best] -= dmg;
+            if (b->node_hp[best] <= 0) {
+                b->node_hp[best] = 0;
+                trigger_explosion(hit_x, hit_y);
+                g_game.shake_timer = 16;
+            }
+            b->flash_timer = 4;
+            return 0;
+        }
+        return dmg;                     /* all nodes down: hull is open */
+    }
+
+    if (b->story_id == SBOSS_SCRAPTITAN) {
+        for (int i = 0; i < 4; i++) {
+            if (b->node_hp[i] > 0) {
+                b->node_hp[i] -= dmg;
+                if (b->node_hp[i] <= 0) {
+                    b->node_hp[i] = 0;
+                    trigger_explosion(hit_x, hit_y);
+                    g_game.shake_timer = 14;
+                }
+                return dmg / 4;         /* plates bleed most of the hit */
+            }
+        }
+        return dmg;
+    }
+
+    if (b->story_id == SBOSS_TWINS && b->clone_active) {
+        /* Shots landing nearer the clone chew the clone down instead. */
+        int dx = hit_x - FROM_FIXED(b->clone_x);
+        int dy = hit_y - FROM_FIXED(b->clone_y);
+        int dcx = hit_x - FROM_FIXED(b->x);
+        int dcy = hit_y - FROM_FIXED(b->y);
+        if (dx * dx + dy * dy < dcx * dcx + dcy * dcy) {
+            b->clone_hp -= dmg;
+            if (b->clone_hp <= 0) {
+                b->clone_active = false;
+                trigger_explosion(FROM_FIXED(b->clone_x), FROM_FIXED(b->clone_y));
+                g_game.shake_timer = 20;
+            }
+            return dmg / 2;             /* the pair share a health pool */
+        }
+    }
+
+    return dmg;
+}
+
+/* Dispatch: run the current story boss's script for one tick. */
+static void story_boss_ai(Boss* b) {
+    if (b->phase == SB_ENTER) {
+        b->y += b->vy;
+        if (b->y >= TO_FIXED(32)) {
+            b->y = TO_FIXED(32);
+            b->phase = SB_IDLE;
+            b->phase_timer = 90;
+            b->cooldown = 50;
+        }
+        return;
+    }
+    b->phase_timer--;
+    switch (b->story_id) {
+        case SBOSS_RUSTJAW:      sb_rustjaw(b); break;
+        case SBOSS_TWINS:        sb_twins(b); break;
+        case SBOSS_FROSTWIDOW:   sb_frostwidow(b); break;
+        case SBOSS_SCRAPTITAN:   sb_scraptitan(b); break;
+        case SBOSS_EMBERLASH:    sb_emberlash(b); break;
+        case SBOSS_VAULTWARDEN:  sb_vaultwarden(b); break;
+        default:                 sb_realityqueen(b); break;
+    }
+}
+
 static void add_player_bullet(int x, int y, int vx, int vy, int damage, bool heavy, int owner) {
     for (int i = 0; i < MAX_BULLETS; i++) {
         if (!g_game.bullets[i].active) {
@@ -964,6 +1832,20 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     g_game.boss_active = false;
     b->active = false;
     audio_end_boss_music();
+
+    if (g_game.mode == GAME_MODE_STORY) {
+        /* Story bosses get a bigger send-off, then hand control to the
+         * result card (the campaign banks the reward, not arcade coins). */
+        int blasts = (b->story_id == SBOSS_REALITYQUEEN) ? 14 : 8;
+        for (int k = 0; k < blasts; k++)
+            trigger_explosion(boss_cx + (rand() % 40) - 20, boss_cy + (rand() % 30) - 15);
+        g_game.shake_timer = (b->story_id == SBOSS_REALITYQUEEN) ? 60 : 34;
+        award_score(2000 * (b->story_id + 1));
+        platform_queue_haptic(HAPTIC_BEAM);
+        story_finish(1);
+        return;
+    }
+
     int blasts = b->mini ? 4 : 6;
     for (int k = 0; k < blasts; k++)
         trigger_explosion(boss_cx + (rand() % 20) - 10, boss_cy + (rand() % 20) - 10);
@@ -1168,7 +2050,9 @@ void game_start(void) {
     s_game_frame = 0;
     s_game_static_valid = false;
 
-    if (g_game.mode == GAME_MODE_WAVES) {
+    if (g_game.mode == GAME_MODE_STORY) {
+        story_begin_level();
+    } else if (g_game.mode == GAME_MODE_WAVES) {
         g_game.intermission_timer = 30;
     } else {
         g_game.wave = 1;
@@ -1737,7 +2621,10 @@ static void game_update_tick(void) {
         int target_y = TO_FIXED(34);
         int by = FROM_FIXED(b->y);
 
-        if (by < 30) {
+        if (g_game.mode == GAME_MODE_STORY) {
+            /* Story bosses run their own unique scripts. */
+            story_boss_ai(b);
+        } else if (by < 30) {
             b->y += b->vy;
             if (b->y > target_y) b->y = target_y;
         } else {
@@ -1876,6 +2763,7 @@ static void game_update_tick(void) {
                 int dist_sq = (bxp - boss_cx)*(bxp - boss_cx) + (byp - boss_cy)*(byp - boss_cy);
                 if (dist_sq <= (br + boss_r)*(br + boss_r)) {
                     int dmg = g_game.bullets[bu].damage;
+                    dmg = story_boss_absorb(b, dmg, bxp, byp);
                     b->hp -= dmg;
                     b->flash_timer = 6;
                     if (g_settings.screen_shake) {
@@ -2099,7 +2987,9 @@ static void game_update_tick(void) {
     }
 #endif
 
-    if (g_game.mode == GAME_MODE_ENDLESS || g_game.mode == GAME_MODE_OVERDRIVE) {
+    if (g_game.mode == GAME_MODE_STORY) {
+        story_update_objective();
+    } else if (g_game.mode == GAME_MODE_ENDLESS || g_game.mode == GAME_MODE_OVERDRIVE) {
         update_continuous_modes();
     } else {
         int active_enemies = 0;
@@ -2328,7 +3218,11 @@ void game_draw(void) {
     gfx_draw_text(6, 4, buf, PAL_TEXT_WHITE);
 
     int wave_x = (SCREEN_WIDTH - 52) / 2;
-    siprintf(buf, "W%02d", g_game.wave);
+    if (g_game.mode == GAME_MODE_STORY) {
+        siprintf(buf, "LV%02d", s_story_level);
+    } else {
+        siprintf(buf, "W%02d", g_game.wave);
+    }
     gfx_draw_text_centered(wave_x, 4, 52, buf, PAL_TEXT_CYAN);
 
     int right_card_x = SCREEN_WIDTH - 75;
@@ -2347,6 +3241,29 @@ void game_draw(void) {
     }
     for (int i = 0; i < hud_player->shield_charges && i < 6; i++) {
         gfx_draw_char(right_card_x + 39 + i * 6, 11, '*', PAL_TEXT_CYAN);
+    }
+
+    /* Story objective readout: always tells you exactly what ends the level. */
+    if (g_game.mode == GAME_MODE_STORY && !g_game.is_game_over) {
+        const StoryLevel* L = story_cur();
+        char obuf[40];
+        switch (L->objective) {
+            case OBJ_HUNT:
+                siprintf(obuf, "HUNTERS %d/%d", s_story_kills, (int)L->quota);
+                break;
+            case OBJ_SURVIVE:
+                siprintf(obuf, "SURVIVE %ds", (s_story_timer + 89) / 90);
+                break;
+            case OBJ_BOSS:
+                siprintf(obuf, "%s", story_boss_name(story_boss_for_level(s_story_level)));
+                break;
+            default: {
+                int left = count_active_asteroids() + count_active_drones() + s_story_to_spawn;
+                siprintf(obuf, "CLEAR %d LEFT", left);
+                break;
+            }
+        }
+        gfx_draw_text_centered((SCREEN_WIDTH - 120) / 2, 12, 120, obuf, PAL_TEXT_GOLD);
     }
 
     if (g_game.combo > 1) {
@@ -2405,7 +3322,23 @@ void game_draw(void) {
     }
 #endif
 
-    if (g_game.wave_banner_timer > 0) {
+    if (g_game.wave_banner_timer > 0 && g_game.mode == GAME_MODE_STORY) {
+        const StoryLevel* L = story_cur();
+        int boss_id = story_boss_for_level(s_story_level);
+        int banner_w = 200;
+        int bx = (SCREEN_WIDTH - banner_w) / 2;
+        gfx_draw_glass_card(bx, 62, banner_w, 34, PAL_TEXT_WHITE, 15);
+        if (boss_id >= 0) {
+            gfx_draw_text_centered(bx, 66, banner_w, story_boss_name(boss_id), PAL_TEXT_RED);
+            gfx_draw_text_centered(bx, 76, banner_w, story_boss_taunt(boss_id), PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, 86, banner_w, story_sector_name(story_sector_of(s_story_level)), 17);
+        } else {
+            siprintf(buf, "LEVEL %d", s_story_level);
+            gfx_draw_text_centered(bx, 66, banner_w, buf, PAL_TEXT_CYAN);
+            gfx_draw_text_centered(bx, 76, banner_w, L->name, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 86, banner_w, story_sector_name(story_sector_of(s_story_level)), 17);
+        }
+    } else if (g_game.wave_banner_timer > 0) {
         bool first_boss = g_game.mode == GAME_MODE_WAVES && g_game.wave == 5;
         int banner_w = first_boss ? 180 : 120;
         int banner_h = 24;
@@ -2488,6 +3421,28 @@ void game_draw(void) {
         }
 #endif
 
+        /* Story boss extras: the Twins' second hull and the Warden/Titan
+         * nodes are real, shootable parts, so they must be drawn. */
+        if (g_game.mode == GAME_MODE_STORY) {
+            const Boss* sb = &g_game.boss;
+            if (sb->story_id == SBOSS_TWINS && sb->clone_active) {
+                int qx = FROM_FIXED(sb->clone_x) + ox;
+                int qy = FROM_FIXED(sb->clone_y) + oy;
+                gfx_draw_boss_drone(qx, qy, true, sb->flash_timer > 0, s_game_frame);
+            }
+            if (sb->story_id == SBOSS_VAULTWARDEN || sb->story_id == SBOSS_SCRAPTITAN) {
+                for (int i = 0; i < 4; i++) {
+                    if (sb->node_hp[i] <= 0) continue;
+                    int ang = sb->spin + i * 16384;
+                    int nx = bxi + ((lu_cos(ang) * 30) >> 12);
+                    int ny = byi + ((lu_sin(ang) * 22) >> 12);
+                    u8 col = (sb->story_id == SBOSS_VAULTWARDEN) ? PAL_TEXT_CYAN : PAL_TEXT_GOLD;
+                    gfx_fill_rect(nx - 4, ny - 4, 8, 8, col);
+                    gfx_fill_rect(nx - 2, ny - 2, 4, 4, PAL_TEXT_WHITE);
+                }
+            }
+        }
+
         // HP bar across top
         int bar_w = SCREEN_WIDTH - 40;
         int bar_x = 20;
@@ -2506,9 +3461,33 @@ void game_draw(void) {
         if (hp_w < 0) hp_w = 0;
         if (hp_w > bar_w) hp_w = bar_w;
         gfx_fill_rect(bar_x, bar_y, hp_w, 5, PAL_TEXT_RED);
-        gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,
-                              g_game.boss.mini ? "MINI BOSS" : "BOSS",
-                              g_game.boss.mini ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+        if (g_game.mode == GAME_MODE_STORY) {
+            int sid = g_game.boss.story_id;
+            gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH, story_boss_name(sid), PAL_TEXT_RED);
+            /* Vault Warden: show how many turret nodes are still sealing the
+             * hull, so the player understands why damage is bouncing off. */
+            if (sid == SBOSS_VAULTWARDEN) {
+                int alive = 0;
+                for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) alive++;
+                if (alive > 0) {
+                    char nbuf[28];
+                    siprintf(nbuf, "SHIELDED - %d NODES", alive);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
+                }
+            } else if (sid == SBOSS_SCRAPTITAN) {
+                int plates = 0;
+                for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) plates++;
+                if (plates > 0) {
+                    char nbuf[28];
+                    siprintf(nbuf, "ARMOUR %d/4", plates);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
+                }
+            }
+        } else {
+            gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,
+                                  g_game.boss.mini ? "MINI BOSS" : "BOSS",
+                                  g_game.boss.mini ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+        }
     }
 
     // Boss bullets
