@@ -18,11 +18,14 @@ void story_init(void) {
     if (g_story.cleared_count > STORY_LEVEL_COUNT) g_story.cleared_count = STORY_LEVEL_COUNT;
 }
 
+static void story_shop_forget(void);
+
 void story_reset_progress(void) {
     memset(&g_story, 0, sizeof(g_story));
     g_story.level = 1;
     g_story.unlocked = 1;
     g_story.lives = STORY_START_LIVES;
+    story_shop_forget();
 }
 
 int story_current_level(void) { return g_story.level; }
@@ -141,7 +144,15 @@ void story_mark_intro_seen(void) {
  * shows a few things at a time — you never meet him, just his prices. */
 
 static StoryStockItem s_stock[STORY_SHOP_SLOTS];
+static bool s_stock_held[STORY_SHOP_SLOTS];
 static int s_stock_level = -1;
+
+/* Wipe the carried-over shelf (fresh campaign). */
+static void story_shop_forget(void) {
+    memset(s_stock, 0, sizeof(s_stock));
+    memset(s_stock_held, 0, sizeof(s_stock_held));
+    s_stock_level = -1;
+}
 
 /* Tiny deterministic hash -> pseudo-random, no rand() state involved. */
 static u32 stock_hash(u32 x) {
@@ -191,12 +202,48 @@ static int stock_price(const StoryStockItem* it, int dock) {
     }
 }
 
-void story_shop_open(int level) {
-    if (s_stock_level == level) return;        /* same dock: same shelf */
-    s_stock_level = level;
-    memset(s_stock, 0, sizeof(s_stock));
+/* Roll one gear slot for a dock. */
+static void stock_roll_slot(StoryStockItem* it, int level, int i, int dock) {
+    u32 r = stock_hash((u32)(level * 7919 + i * 104729));
+    int kind_roll = (int)(r % 100u);
+    if (kind_roll < 34)      it->kind = SSTOCK_WEAPON;
+    else if (kind_roll < 58) it->kind = SSTOCK_LASER;
+    else if (kind_roll < 78) it->kind = SSTOCK_UPGRADE;
+    else                     it->kind = SSTOCK_PAINT;
 
-    int dock = level / 5;                      /* 1, 2, 3 ... */
+    u32 r2 = stock_hash(r ^ 0x9e3779b9u);
+    switch (it->kind) {
+        case SSTOCK_WEAPON:  it->item = (u8)stock_rig_for(dock, r2); break;
+        case SSTOCK_LASER:   it->item = (u8)stock_laser_for(dock, r2); break;
+        case SSTOCK_PAINT:   it->item = (u8)stock_paint_for(r2); break;
+        default:             it->item = (u8)stock_upgrade_for(r2); break;
+    }
+    it->qty = 1;
+    it->price = (u16)stock_price(it, dock);
+}
+
+/* Has this item already been bought elsewhere (so it is dead stock)? */
+static bool stock_is_dead(const StoryStockItem* it) {
+    switch (it->kind) {
+        case SSTOCK_WEAPON:  return (g_settings.owned_rigs & (1u << it->item)) != 0;
+        case SSTOCK_LASER:   return (g_settings.owned_lasers & (1u << it->item)) != 0;
+        case SSTOCK_PAINT:   return (g_settings.owned_accents & (1u << it->item)) != 0;
+        case SSTOCK_UPGRADE: return g_settings.upgrade_levels[it->item] >= UPG_MAX_LEVEL;
+        default:             return false;
+    }
+}
+
+void story_shop_open(int level) {
+    if (level < 1) level = 1;
+    if (level > STORY_LEVEL_COUNT) level = STORY_LEVEL_COUNT;
+    if (s_stock_level == level) return;        /* same dock: same shelf */
+
+    bool first_ever = (s_stock_level < 0);
+    s_stock_level = level;
+
+    /* Dock tier still moves in fives, so the shelf improves at the same rate
+     * it always did even though he now docks after every level. */
+    int dock = (level + 4) / 5;
     if (dock < 1) dock = 1;
 
     /* Slot 0 is always lives — cheap-ish, and strictly limited so you can't
@@ -205,27 +252,97 @@ void story_shop_open(int level) {
     s_stock[0].item = 0;
     s_stock[0].qty = (u8)(1 + (dock % 2));     /* 1 or 2 in stock */
     s_stock[0].price = (u16)stock_price(&s_stock[0], dock);
+    s_stock_held[0] = false;
 
-    /* Slots 1..3: a small random shelf of gear. */
+    /* Slots 1..3: gear. Anything you walked past last time is still sitting
+     * there — he does not clear the shelf just because you were broke. Only
+     * sold, claimed or now-useless slots get restocked. */
     for (int i = 1; i < STORY_SHOP_SLOTS; i++) {
-        u32 r = stock_hash((u32)(level * 7919 + i * 104729));
-        int kind_roll = (int)(r % 100u);
         StoryStockItem* it = &s_stock[i];
-        if (kind_roll < 34)      it->kind = SSTOCK_WEAPON;
-        else if (kind_roll < 58) it->kind = SSTOCK_LASER;
-        else if (kind_roll < 78) it->kind = SSTOCK_UPGRADE;
-        else                     it->kind = SSTOCK_PAINT;
-
-        u32 r2 = stock_hash(r ^ 0x9e3779b9u);
-        switch (it->kind) {
-            case SSTOCK_WEAPON:  it->item = (u8)stock_rig_for(dock, r2); break;
-            case SSTOCK_LASER:   it->item = (u8)stock_laser_for(dock, r2); break;
-            case SSTOCK_PAINT:   it->item = (u8)stock_paint_for(r2); break;
-            default:             it->item = (u8)stock_upgrade_for(r2); break;
+        bool keep = !first_ever && it->kind != SSTOCK_EMPTY && it->qty > 0 && !stock_is_dead(it);
+        if (keep) {
+            s_stock_held[i] = true;
+            continue;
         }
-        it->qty = 1;
-        it->price = (u16)stock_price(it, dock);
+        memset(it, 0, sizeof(*it));
+        s_stock_held[i] = false;
+        stock_roll_slot(it, level, i, dock);
+        /* Never shelve something the player already has. */
+        if (stock_is_dead(it)) stock_roll_slot(it, level + 13, i, dock);
+        if (stock_is_dead(it)) { it->kind = SSTOCK_LIFE; it->qty = 1;
+                                 it->price = (u16)stock_price(it, dock); }
     }
+}
+
+int story_shop_level(void) { return s_stock_level > 0 ? s_stock_level : 0; }
+
+bool story_shop_slot_held_over(int i) {
+    if (i < 0 || i >= STORY_SHOP_SLOTS) return false;
+    return s_stock_held[i];
+}
+
+/* The level you fly out of this dock is the one after it. */
+bool story_shop_is_boss_dock(void) {
+    return story_boss_dock(story_shop_level() + 1);
+}
+
+/* Mr Chubbs on the radio. Before a boss he stops haggling and talks you up;
+ * the rest of the time he is a shopkeeper with a queue behind you. */
+static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
+    "JACK. LISTEN. RUSTJAW IS ALL TEETH.",
+    "TWO OF THEM, ONE OF YOU. GOOD ODDS.",
+    "SHE FREEZES WHAT STOPS MOVING.",
+    "THE TITAN PULLS. LET IT PULL.",
+    "EMBERLASH BURNS OUT BEFORE YOU DO.",
+    "THE WARDEN HAS NEVER MET YOU.",
+    "THIS IS THE ONE. THE QUEEN. GO."
+};
+static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
+    "TAKE A LIFE. NO CHARGE. REALLY.",
+    "TAKE A LIFE. BRING IT BACK WHOLE.",
+    "TAKE A LIFE. STAY WARM OUT THERE.",
+    "TAKE A LIFE. AND MIND THE PLATES.",
+    "TAKE A LIFE. DO NOT GET COCKY.",
+    "TAKE A LIFE. NOT CHARGING TODAY.",
+    "TAKE A LIFE. AND TAKE YOUR REVENGE."
+};
+static const char* const s_chubb_idle[6] = {
+    "STILL BREATHING. GOOD FOR BUSINESS.",
+    "FRESH STOCK. SAME OLD PRICES.",
+    "WHAT DID NOT SELL IS STILL HERE.",
+    "BUY OR DO NOT. THE SHELF WAITS.",
+    "I DOCK, YOU SPEND. THAT IS THE DEAL.",
+    "NO REFUNDS. NEVER HAS BEEN."
+};
+
+const char* story_shop_line1(void) {
+    int next = story_shop_level() + 1;
+    if (story_shop_is_boss_dock()) {
+        int s = story_sector_of(next);
+        return s_chubb_pep1[s];
+    }
+    return s_chubb_idle[story_shop_level() % 6];
+}
+
+const char* story_shop_line2(void) {
+    int next = story_shop_level() + 1;
+    if (story_shop_is_boss_dock()) {
+        int s = story_sector_of(next);
+        return s_chubb_pep2[s];
+    }
+    return "PICK SOMETHING OR FLY ON.";
+}
+
+int story_shop_take_gift(void) {
+    if (!story_shop_is_boss_dock()) return 0;
+    int boss = story_sector_of(story_shop_level() + 1);
+    if (boss < 0 || boss >= STORY_SECTOR_COUNT) return 0;
+    u8 bit = (u8)(1u << boss);
+    if (g_story.boss_gifts & bit) return 0;    /* one gift per boss, ever */
+    g_story.boss_gifts |= bit;
+    story_add_lives(1);
+    save_write();
+    return 1;
 }
 
 const StoryStockItem* story_shop_slot(int i) {
