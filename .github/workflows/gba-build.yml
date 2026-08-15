@@ -54,6 +54,113 @@ jobs:
           test -f SpaceUnlimited.gba
           echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
 
+      # ── 2. UNIQUE RELEASE + ANDROID APP VERSION ──
+      # This runs before Gradle so the version is embedded inside the APK,
+      # rather than only changing the GitHub release tag after the build.
+      - name: Determine release and APK versions
+        id: versioning
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
+          if [ -n "$CUSTOM_TAG" ]; then
+            TAG_NAME="$CUSTOM_TAG"
+          else
+            RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' || true)
+            HIGHEST_NUM=0
+            for tag in $RELEASES; do
+              if [[ $tag =~ (spaceshooter|game)-v([0-9]+) ]]; then
+                NUM="${BASH_REMATCH[2]}"
+                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
+                  HIGHEST_NUM=$NUM
+                fi
+              elif [[ $tag =~ v([0-9]+) ]]; then
+                NUM="${BASH_REMATCH[1]}"
+                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
+                  HIGHEST_NUM=$NUM
+                fi
+              fi
+            done
+            NEXT_NUM=$((HIGHEST_NUM + 1))
+            TAG_NAME="spaceshooter-v${NEXT_NUM}"
+          fi
+
+          # github.run_number increases on every workflow run. A high base
+          # guarantees every new APK upgrades the old versionCode 1 builds.
+          VERSION_CODE=$((2000000000 + GITHUB_RUN_NUMBER))
+          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
+          if [ "$VERSION_CODE" -gt 2100000000 ]; then
+            echo "Android versionCode limit exceeded: $VERSION_CODE" >&2
+            exit 1
+          fi
+
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Building Android $VERSION_NAME (versionCode $VERSION_CODE)"
+
+      # ── 3. MULTIPLAYER ANDROID APK ──
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build multiplayer Android APK via Gradle
+        env:
+          ANDROID_VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
+          ANDROID_VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
+          EOS_PRODUCT_ID: ${{ secrets.EOS_PRODUCT_ID }}
+          EOS_SANDBOX_ID: ${{ secrets.EOS_SANDBOX_ID }}
+          EOS_DEPLOYMENT_ID: ${{ secrets.EOS_DEPLOYMENT_ID }}
+          EOS_CLIENT_ID: ${{ secrets.EOS_CLIENT_ID }}
+          EOS_CLIENT_SECRET: ${{ secrets.EOS_CLIENT_SECRET }}
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../SpaceUnlimited-Multiplayer.apk
+
+      - name: Verify Android APK artifact
+        run: |
+          test -f SpaceUnlimited-Multiplayer.apk
+          echo "Android APK version: ${{ steps.versioning.outputs.version_name }}"
+          echo "Android APK versionCode: ${{ steps.versioning.outputs.version_code }}"
+          echo "Android APK size: $(wc -c < SpaceUnlimited-Multiplayer.apk) bytes"
+
+      # ── 4. PUBLISH GITHUB RELEASE ──
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.versioning.outputs.tag_name }}" \
+            SpaceUnlimited.gba \
+            SpaceUnlimited-Multiplayer.apk \
+            --title "${{ steps.versioning.outputs.tag_name }} (Android ${{ steps.versioning.outputs.version_name }})" \
+            --generate-notes        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Validate GBA source assets
+        run: python3 tools/validate-assets.py
+
+      - name: Generate GBA audio and graphics data
+        run: npm run generate-assets
+
+      - name: Compile GBA ROM (SpaceUnlimited.gba)
+        run: node tools/build_gba.js
+
+      - name: Verify GBA ROM artifact
+        run: |
+          test -f SpaceUnlimited.gba
+          echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
+
       # ── 2. MULTIPLAYER ANDROID APK (android/ IS the EOS multiplayer app) ──
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
