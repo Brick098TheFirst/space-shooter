@@ -3486,7 +3486,7 @@ void game_draw(void) {
         /* The campaign never pays arcade coins, so a "$0" up here was just
          * a lie. Story flies on CHUBBCOIN: show that balance instead. */
         char cbuf[24];
-        siprintf(cbuf, "%u Coins", (unsigned int)story_chubbcoin());
+        siprintf(cbuf, "%u CHUBBCOIN", (unsigned int)story_chubbcoin());
         int cw = (int)strlen(cbuf) * 6;
         gfx_draw_text(right_card_x + 72 - 3 - cw, 4, cbuf, PAL_TEXT_GOLD);
     } else {

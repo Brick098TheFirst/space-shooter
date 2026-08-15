@@ -1090,10 +1090,10 @@ static void render_story_map(void) {
     starfield_draw_base(0, 0);
     starfield_draw_stars(0, 0);
 
-    /* Header: sector, credits, lives. */
+    /* Header: sector, Chubbcoin, lives. */
     gfx_draw_text(6, 4, story_sector_name(s_map_sector), PAL_TEXT_CYAN);
     char buf[40];
-    siprintf(buf, "%lu Credits", (unsigned long)story_chubbcoin());
+    siprintf(buf, "%lu CHUBBCOIN", (unsigned long)story_chubbcoin());
     gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 14, SCREEN_WIDTH - 8, 1, 20);
 
@@ -1188,7 +1188,7 @@ static void render_story_map(void) {
     }
     gfx_draw_text(SCREEN_WIDTH - 18 - (int)strlen(goal) * 6, 57, goal,
                   L->objective == OBJ_BOSS ? PAL_TEXT_RED : PAL_TEXT_GOLD);
-    siprintf(buf, "PAYS %d Coins", story_is_cleared(s_map_cursor) ? L->reward / 2 : L->reward);
+    siprintf(buf, "PAYS %d CHUBBCOIN", story_is_cleared(s_map_cursor) ? L->reward / 2 : L->reward);
     gfx_draw_text(SCREEN_WIDTH - 18 - (int)strlen(buf) * 6, 47, buf, PAL_TEXT_GOLD);
     /* The level's own line of story, so the map reads as a narrative - and
      * its twist, so you can see at a glance that no two levels are alike. */
@@ -1309,7 +1309,7 @@ static void shopz_buy(int i) {
         s_shopz_flash = 20;
         audio_play_sfx(SFX_PICKUP);
     } else if (r == 1) {
-        shopz_msg("NOT ENOUGH COINS", PAL_TEXT_RED, 110);
+        shopz_msg("NOT ENOUGH CHUBBCOIN", PAL_TEXT_RED, 110);
     } else {
         shopz_msg("SOLD OUT OR ALREADY YOURS", 18, 110);
     }
@@ -1424,9 +1424,9 @@ static void render_story_shop(void) {
 
     /* ── Header: name on the left, the purse on the right ──
      * Same 15 px strip + rule the hangar uses. */
-    gfx_draw_text(6, 4, "SCAVENGER", PAL_TEXT_GOLD);
+    gfx_draw_text(6, 4, "MR CHUBBS", PAL_TEXT_GOLD);
     gfx_draw_text(6 + 10 * 6, 4, "TRADING POST", 17);
-    siprintf(buf, "%lu Credits", (unsigned long)story_chubbcoin());
+    siprintf(buf, "%lu CHUBBCOIN", (unsigned long)story_chubbcoin());
     gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
@@ -1509,7 +1509,7 @@ static void render_story_shop(void) {
             siprintf(buf, "COST: %d   x%d LEFT", (int)it->price, (int)it->qty);
             gfx_draw_text_centered(right_x, 82, right_w, buf, afford ? PAL_TEXT_GOLD : PAL_TEXT_RED);
         } else {
-            siprintf(buf, "COST: %d Coins", (int)it->price);
+            siprintf(buf, "COST: %d CHUBBCOIN", (int)it->price);
             gfx_draw_text_centered(right_x, 82, right_w, buf, afford ? PAL_TEXT_GOLD : PAL_TEXT_RED);
         }
 
@@ -1716,14 +1716,14 @@ static void render_story_result(void) {
         gfx_draw_text_centered(20, 30, card_w, "THE REALITY QUEEN FALLS", PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 42, card_w, "Revenge, finally.", PAL_TEXT_WHITE);
         gfx_draw_text_centered(20, 54, card_w, "Everything is unlocked.", PAL_TEXT_CYAN);
-        siprintf(buf, "+%d COINS", s_result_earned);
+        siprintf(buf, "+%d CHUBBCOIN", s_result_earned);
         gfx_draw_text_centered(20, 68, card_w, buf, PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 82, card_w, "SHOP, MULTIPLAYER, ALL MODES", 17);
     } else if (s_result_win) {
         siprintf(buf, "LEVEL %d CLEARED", s_result_level);
         gfx_draw_text_centered(20, 32, card_w, buf, PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 46, card_w, g_story_levels[s_result_level - 1].name, PAL_TEXT_WHITE);
-        siprintf(buf, "+%d COINS", s_result_earned);
+        siprintf(buf, "+%d CHUBBCOIN", s_result_earned);
         gfx_draw_text_centered(20, 60, card_w, buf, PAL_TEXT_GOLD);
         siprintf(buf, "LIVES %d", story_lives());
         gfx_draw_text_centered(20, 74, card_w, buf, PAL_TEXT_GREEN);
@@ -1773,7 +1773,7 @@ static void render_story_result(void) {
 #ifdef PLATFORM_HOST
 static const char* s_mode_titles[PLAY_CARD_COUNT] = { "STORY", "WAVES", "ENDLESS" };
 static const char* s_mode_lines[PLAY_CARD_COUNT] = {
-    "70 levels. Kaelen's revenge.",
+    "70 levels. Jack RK's revenge.",
     "Clear waves. Classic run.",
     "No waves. Endless hunters."
 };

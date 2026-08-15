@@ -347,33 +347,33 @@ bool story_shop_is_boss_dock(void) {
     return story_boss_dock(story_shop_level() + 1);
 }
 
-/* The Scavenger on the radio. Before a boss he stops haggling and talks you up;
- * the rest of the time he is a shopkeeper with a queue behind you. */
+/* Mr Chubbs on the radio. Before a boss he stops haggling and talks Jack up;
+ * the rest of the time he runs his Trading Post with a queue behind Jack. */
 static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
-    "KAELEN. LISTEN. VANGUARD IS FAST.",
-    "TWO OF THEM, ONE OF YOU. STEADY NOW.",
-    "STAY MOVING OR SHE WILL FREEZE YOU.",
-    "THE TITAN IS HUGE. FIND THE GAP.",
-    "DRAKE BURNS HOT, BUT YOU ARE COOLER.",
-    "THE WARDEN IS WATCHING. BLIND HIM.",
-    "THIS IS IT. THE QUEEN. END HER."
+    "JACK. RUSTJAW HITS HARD.",
+    "TWO OF THEM. STAY STEADY, JACK.",
+    "KEEP MOVING OR FROSTWIDOW WINS.",
+    "SCRAP TITAN IS HUGE. FIND A GAP.",
+    "EMBERLASH BURNS HOT. STAY COOL.",
+    "VAULT WARDEN WATCHES. BLIND IT.",
+    "THIS IS IT, JACK. THE REALITY QUEEN."
 };
 static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. NO CHARGE. GO.",
     "TAKE A LIFE. COME BACK IN ONE PIECE.",
     "TAKE A LIFE. STAY WARM OUT THERE.",
     "TAKE A LIFE. DON'T GET CRUSHED.",
-    "TAKE A LIFE. DON'T MELT, PILOT.",
+    "TAKE A LIFE. DON'T MELT, JACK.",
     "TAKE A LIFE. IT'S ON THE HOUSE.",
-    "TAKE A LIFE. FINISH THE REBELLION."
+    "TAKE A LIFE. FINISH YOUR REVENGE."
 };
 static const char* const s_chubb_idle[6] = {
-    "STILL ALIVE? GOOD FOR BUSINESS.",
-    "NEW SCRAP. SAME OLD PRICES.",
-    "STILL HAVE WHAT YOU MISSED LAST TIME.",
+    "STILL ALIVE, JACK? GOOD FOR TRADE.",
+    "FRESH SCRAP. FAIR CHUBB PRICES.",
+    "I KEPT WHAT YOU MISSED LAST TIME.",
     "BUY OR DON'T. THE STARS WAIT.",
     "I DOCK, YOU SPEND. THAT'S THE DEAL.",
-    "NO REFUNDS IN THE VOID."
+    "NO REFUNDS IN THE CHUBB SYSTEM."
 };
 
 const char* story_shop_line1(void) {
