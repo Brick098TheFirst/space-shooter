@@ -1090,10 +1090,10 @@ static void render_story_map(void) {
     starfield_draw_base(0, 0);
     starfield_draw_stars(0, 0);
 
-    /* Header: sector, chubbcoin, lives. */
+    /* Header: sector, credits, lives. */
     gfx_draw_text(6, 4, story_sector_name(s_map_sector), PAL_TEXT_CYAN);
     char buf[40];
-    siprintf(buf, "%lu Coins", (unsigned long)story_chubbcoin());
+    siprintf(buf, "%lu Credits", (unsigned long)story_chubbcoin());
     gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 14, SCREEN_WIDTH - 8, 1, 20);
 
@@ -1422,11 +1422,11 @@ static void render_story_shop(void) {
     int right_w = shopz_right_w();
     bool boss_dock = story_shop_is_boss_dock();
 
-    /* ── Header: his name on the left, the purse on the right ──
+    /* ── Header: name on the left, the purse on the right ──
      * Same 15 px strip + rule the hangar uses. */
-    gfx_draw_text(6, 4, "MR CHUBBS", PAL_TEXT_GOLD);
+    gfx_draw_text(6, 4, "SCAVENGER", PAL_TEXT_GOLD);
     gfx_draw_text(6 + 10 * 6, 4, "TRADING POST", 17);
-    siprintf(buf, "%lu Coins", (unsigned long)story_chubbcoin());
+    siprintf(buf, "%lu Credits", (unsigned long)story_chubbcoin());
     gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
@@ -1773,7 +1773,7 @@ static void render_story_result(void) {
 #ifdef PLATFORM_HOST
 static const char* s_mode_titles[PLAY_CARD_COUNT] = { "STORY", "WAVES", "ENDLESS" };
 static const char* s_mode_lines[PLAY_CARD_COUNT] = {
-    "70 levels. Jack's revenge.",
+    "70 levels. Kaelen's revenge.",
     "Clear waves. Classic run.",
     "No waves. Endless hunters."
 };

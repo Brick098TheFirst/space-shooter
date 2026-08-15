@@ -111,7 +111,7 @@ typedef enum {
     /* ── Story Mode screens (Android) ── */
     SCREEN_STORY_INTRO,   /* the opening speech, typed out page by page */
     SCREEN_STORY_MAP,     /* fly a mini ship between level nodes */
-    SCREEN_STORY_SHOP,    /* Mr Chubbs' docked ship */
+    SCREEN_STORY_SHOP,    /* Scavenger's docked ship */
     SCREEN_STORY_RESULT   /* level cleared / failed card */
 } GameScreen;
 

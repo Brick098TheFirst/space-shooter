@@ -36,7 +36,7 @@ void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
  * remapping accent mask pixels (241..243) so every paint - including the
  * animated rainbow - works on every hull. */
 void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style);
-void gfx_draw_enemy_ship(int x, int y);
+void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style);
 #ifdef PLATFORM_HOST
 /* Boss hull: the unused mini-drone sprite, recolored + scaled so it
  * cannot be mistaken for a hunter (crimson player ship) or a rock. */

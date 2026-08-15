@@ -308,10 +308,15 @@ IWRAM_CODE void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_fram
     }
 }
 
-/* Enemy fighters use the exact player silhouette and Crimson paint, rotated
- * 180 degrees so their cannons and flight direction face down-screen. */
-IWRAM_CODE void gfx_draw_enemy_ship(int x, int y) {
-    const u8* src = spr_ship[5];
+/* Enemy fighters use any hull style and paint, rotated 180 degrees so their
+ * cannons and flight direction face down-screen. */
+IWRAM_CODE void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style) {
+    if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 5;
+    if (style < 0 || style >= NUM_SHIP_STYLES) style = 0;
+
+    const u8* src = (style == 0) ? spr_ship[accent_idx] : spr_ship_styles[style];
+    bool is_styled = (style > 0);
+
     for (int sy = 0; sy < 16; sy++) {
         int py = y + sy;
         if ((unsigned)py >= SCREEN_HEIGHT) continue;
@@ -319,7 +324,13 @@ IWRAM_CODE void gfx_draw_enemy_ship(int x, int y) {
             int px = x + sx;
             if ((unsigned)px >= SCREEN_WIDTH) continue;
             u8 pix = src[(15 - sy) * 20 + (19 - sx)];
-            if (pix != 0) s_rt[py * SCREEN_WIDTH + px] = pix;
+            if (pix == 0) continue;
+            if (is_styled && pix >= 241 && pix <= 243) {
+                int shade = pix - 240;
+                s_rt[py * SCREEN_WIDTH + px] = (u8)(48 + accent_idx * 4 + shade);
+            } else {
+                s_rt[py * SCREEN_WIDTH + px] = pix;
+            }
         }
     }
 }
