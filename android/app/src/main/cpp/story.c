@@ -18,6 +18,14 @@ void story_init(void) {
     if (g_story.cleared_count > STORY_LEVEL_COUNT) g_story.cleared_count = STORY_LEVEL_COUNT;
     /* Only the 14 real docks have bits; drop anything a corrupt save set. */
     g_story.docks_used &= (u16)((1u << STORY_DOCK_COUNT) - 1u);
+    /* A repair deadline further out than the repair itself means the device
+     * clock moved; clamp it rather than grounding the player for ever. */
+    if (g_story.repair_until != 0) {
+        u32 now = platform_epoch_seconds();
+        if (g_story.repair_until <= now) g_story.repair_until = 0;
+        else if (g_story.repair_until - now > (u32)STORY_REPAIR_SECONDS)
+            g_story.repair_until = now + STORY_REPAIR_SECONDS;
+    }
 }
 
 static void story_shop_forget(void);
@@ -58,12 +66,92 @@ static void story_mark_cleared(int level) {
     }
 }
 
-int story_complete_level(int level) {
+/* ── Dynamic payouts ─────────────────────────────────────────────────────
+ * The level's `reward` is the floor.  Four bonuses ride on top of it, all
+ * expressed as a percentage of that floor, so the level tables stay the
+ * single place difficulty and value are tuned:
+ *
+ *   speed      up to +60%   finishing well inside par
+ *   combat     up to +50%   what you actually shot down
+ *   precision  up to +20%   accuracy
+ *   clean      flat  +25%   not losing a life
+ *
+ * The combat term is the important one: it is what makes SURVIVE levels pay
+ * for fighting rather than for hiding behind the clock. */
+#define STORY_BONUS_SPEED_PCT 60
+#define STORY_BONUS_COMBAT_PCT 50
+#define STORY_BONUS_PRECISION_PCT 20
+#define STORY_BONUS_CLEAN_PCT 25
+
+/* Last payout's breakdown, so the result card can show where it came from. */
+static int s_pay_base = 0;
+static int s_pay_speed = 0;
+static int s_pay_combat = 0;
+static int s_pay_precision = 0;
+static int s_pay_clean = 0;
+
+int story_pay_base(void)      { return s_pay_base; }
+int story_pay_speed(void)     { return s_pay_speed; }
+int story_pay_combat(void)    { return s_pay_combat; }
+int story_pay_precision(void) { return s_pay_precision; }
+int story_pay_clean(void)     { return s_pay_clean; }
+
+static int pct_of(int base, int pct) {
+    if (base <= 0 || pct <= 0) return 0;
+    return (base * pct) / 100;
+}
+
+int story_complete_level(int level, const StoryPerf* perf) {
     if (level < 1 || level > STORY_LEVEL_COUNT) return 0;
     bool replay = story_is_cleared(level);
-    int reward = g_story_levels[level - 1].reward;
+    int base = g_story_levels[level - 1].reward;
+
+    s_pay_base = base;
+    s_pay_speed = s_pay_combat = s_pay_precision = s_pay_clean = 0;
+
+    if (perf) {
+        /* SPEED: full bonus at half par or better, nothing at par or over.
+         * A level with no meaningful par (survive levels run a fixed clock)
+         * passes par_secs = 0 and simply skips this term. */
+        if (perf->par_secs > 0 && perf->secs < perf->par_secs) {
+            int spare = perf->par_secs - perf->secs;          /* seconds saved */
+            int pct = (spare * 2 * STORY_BONUS_SPEED_PCT) / perf->par_secs;
+            if (pct > STORY_BONUS_SPEED_PCT) pct = STORY_BONUS_SPEED_PCT;
+            s_pay_speed = pct_of(base, pct);
+        }
+
+        /* COMBAT: paid for what you actually destroyed, against the body
+         * count the level expects.  Sitting out a SURVIVE timer without
+         * firing banks the floor and nothing more. */
+        if (perf->par_kills > 0) {
+            int pct = (perf->kills * STORY_BONUS_COMBAT_PCT) / perf->par_kills;
+            if (pct > STORY_BONUS_COMBAT_PCT) pct = STORY_BONUS_COMBAT_PCT;
+            s_pay_combat = pct_of(base, pct);
+        }
+
+        /* PRECISION: accuracy, but only once enough shots were fired for the
+         * number to mean anything. */
+        if (perf->shots >= 20) {
+            int acc = (perf->hits * 100) / perf->shots;
+            if (acc > 100) acc = 100;
+            s_pay_precision = pct_of(base, (acc * STORY_BONUS_PRECISION_PCT) / 100);
+        }
+
+        /* CLEAN: no lives lost the whole level. */
+        if (perf->hits_taken == 0) s_pay_clean = pct_of(base, STORY_BONUS_CLEAN_PCT);
+    }
+
+    int reward = s_pay_base + s_pay_speed + s_pay_combat +
+                 s_pay_precision + s_pay_clean;
     /* Replays pay half, so grinding an easy level is never the fast route. */
-    if (replay) reward /= 2;
+    if (replay) {
+        reward /= 2;
+        s_pay_base /= 2;
+        s_pay_speed /= 2;
+        s_pay_combat /= 2;
+        s_pay_precision /= 2;
+        s_pay_clean /= 2;
+    }
 
     story_mark_cleared(level);
     if (level == g_story.unlocked && g_story.unlocked < STORY_LEVEL_COUNT) {
@@ -88,18 +176,112 @@ void story_add_lives(int n) {
     g_story.lives = (u8)v;
 }
 
+/* ── The wreck ────────────────────────────────────────────────────────────
+ * Losing the last life used to claim it "reset" you to a checkpoint, which
+ * it never really did.  It now does something concrete instead: the last two
+ * levels you got through are re-locked, the money they paid is taken back,
+ * and the ship goes into the yard for fifteen real minutes. */
+
+static int s_repair_bill = 0;     /* chubbcoin the last wreck cost */
+static int s_relocked = 0;        /* levels the last wreck took back */
+
+int story_last_repair_bill(void) { return s_repair_bill; }
+int story_last_relocked(void)    { return s_relocked; }
+
+static void story_unmark_cleared(int level) {
+    if (level < 1 || level > STORY_LEVEL_COUNT) return;
+    if (story_is_cleared(level)) {
+        g_story.cleared[(level - 1) >> 3] &= (u8)~(1u << ((level - 1) & 7));
+        if (g_story.cleared_count > 0) g_story.cleared_count--;
+    }
+}
+
+int story_wreck_ship(void) {
+    /* The two levels behind the one that just went wrong: those are the ones
+     * the wreck costs you.  Level 1 can never be taken away, so an early
+     * wreck simply re-locks fewer levels. */
+    int from = g_story.level;
+    if (from < 1) from = 1;
+    if (from > STORY_LEVEL_COUNT) from = STORY_LEVEL_COUNT;
+
+    s_repair_bill = 0;
+    s_relocked = 0;
+    for (int i = 0; i < STORY_RELOCK_LEVELS; i++) {
+        int lv = from - i;
+        if (lv < 2) break;                    /* level 1 always stays open */
+        if (!story_is_cleared(lv)) continue;  /* nothing banked, nothing lost */
+        story_unmark_cleared(lv);
+        s_repair_bill += g_story_levels[lv - 1].reward;
+        s_relocked++;
+    }
+
+    /* Walk the unlock frontier back over everything just re-locked. */
+    int unlocked = g_story.unlocked - s_relocked;
+    if (unlocked < 1) unlocked = 1;
+    g_story.unlocked = (u8)unlocked;
+
+    /* Take back what those levels paid (never below zero). */
+    if (s_repair_bill > 0) {
+        if (g_story.chubbcoin > (u32)s_repair_bill) g_story.chubbcoin -= (u32)s_repair_bill;
+        else { s_repair_bill = (int)g_story.chubbcoin; g_story.chubbcoin = 0; }
+    }
+
+    /* Resume at the earliest level the wreck took back, or where you were. */
+    int resume = from - s_relocked + 1;
+    if (resume < 1) resume = 1;
+    if (resume > g_story.unlocked) resume = g_story.unlocked;
+    g_story.level = (u8)resume;
+
+    /* Into the yard: fifteen real minutes of repairs. */
+    g_story.lives = STORY_START_LIVES;
+    g_story.repair_until = platform_epoch_seconds() + STORY_REPAIR_SECONDS;
+
+    save_write();
+    return resume;
+}
+
+int story_repair_seconds_left(void) {
+    if (g_story.repair_until == 0) return 0;
+    u32 now = platform_epoch_seconds();
+    if (now >= g_story.repair_until) {
+        /* Repairs finished while we were away: hand the ship back. */
+        g_story.repair_until = 0;
+        return 0;
+    }
+    u32 left = g_story.repair_until - now;
+    /* A clock that jumped backwards (device time change) must not strand the
+     * player for longer than the repair ever takes. */
+    if (left > (u32)STORY_REPAIR_SECONDS) {
+        g_story.repair_until = now + STORY_REPAIR_SECONDS;
+        left = STORY_REPAIR_SECONDS;
+    }
+    return (int)left;
+}
+
+bool story_is_grounded(void) { return story_repair_seconds_left() > 0; }
+
+void story_finish_repairs(void) {
+    if (g_story.repair_until != 0) {
+        g_story.repair_until = 0;
+        save_write();
+    }
+}
+
+void story_format_repair(char* dst, int cap) {
+    if (!dst || cap <= 0) return;
+    int left = story_repair_seconds_left();
+    if (left < 0) left = 0;
+    snprintf(dst, (size_t)cap, "%d:%02d", left / 60, left % 60);
+}
+
 int story_lose_life(void) {
     if (g_story.lives > 0) g_story.lives--;
     if (g_story.lives > 0) {
         save_write();
         return g_story.level;              /* retry the same level */
     }
-    /* Out of lives: back to the level right after the previous boss. */
-    int resume = story_checkpoint_for(g_story.level);
-    g_story.lives = STORY_START_LIVES;
-    g_story.level = (u8)resume;
-    save_write();
-    return resume;
+    /* Out of lives: the ship is a write-off. */
+    return story_wreck_ship();
 }
 
 u32 story_chubbcoin(void) { return g_story.chubbcoin; }

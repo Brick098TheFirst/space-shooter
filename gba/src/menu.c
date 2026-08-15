@@ -837,20 +837,52 @@ static void update_options(void) {
  * little ship around, Mr Chubbs' docked shop, and the level result card. */
 #ifdef PLATFORM_HOST
 
-/* ── Intro speech ─────────────────────────────────────────────────────── */
-static int  s_intro_page = 0;
-static int  s_intro_chars = 0;    /* characters revealed on this page */
-static int  s_intro_hold = 0;     /* pause once a page finishes typing */
+/* ── Intro speech ─────────────────────────────────────────────────────────
+ * The opening cinematic: 14 pages of two lines each, typed out one character
+ * at a time over the starfield with Story Mode's own track (story_mode.mp3)
+ * underneath.  A page holds for a beat once it finishes typing, then moves on
+ * by itself; a tap fills the current page instantly, and the SKIP target in
+ * the corner drops straight into the level map.
+ *
+ * It plays once, on the very first launch of the campaign: menu_go_back(),
+ * SKIP and the final page all call story_mark_intro_seen(), which sets
+ * g_story.intro_seen in the save. */
 
+/* One character every N frames (the host ticks at 90Hz, so ~45 chars/s). */
+#define INTRO_TYPE_FRAMES 2
+/* How long a finished page waits before it turns itself over. */
+#define INTRO_PAGE_HOLD   150
+/* Shorter hold when the player filled the page with a tap. */
+#define INTRO_FILL_HOLD   45
+
+static int s_intro_page = 0;
+static int s_intro_chars = 0;    /* plain characters revealed on this page */
+static int s_intro_hold = 0;     /* pause once a page finishes typing */
+static int s_intro_tick = 0;     /* frame counter driving the typewriter */
+
+/* Plain (marker-free) character count of a page: both lines together. */
 static int intro_page_len(int page) {
     if (page < 0 || page >= STORY_INTRO_PAGES) return 0;
-    return (int)strlen(g_story_intro[page][0]) + (int)strlen(g_story_intro[page][1]);
+    return story_intro_len(g_story_intro[page][0]) +
+           story_intro_len(g_story_intro[page][1]);
 }
 
 static void intro_reset(void) {
     s_intro_page = 0;
     s_intro_chars = 0;
     s_intro_hold = 0;
+    s_intro_tick = 0;
+}
+
+/* The SKIP target: a real button in the bottom-right corner. */
+static int intro_skip_x(void) { return SCREEN_WIDTH - 58; }
+static int intro_skip_y(void) { return SCREEN_HEIGHT - 22; }
+#define INTRO_SKIP_W 50
+#define INTRO_SKIP_H 16
+
+static void intro_finish(void) {
+    story_mark_intro_seen();
+    menu_open(SCREEN_STORY_MAP);
 }
 
 /* Advance to the next page, or finish and drop into the map. */
@@ -858,40 +890,73 @@ static void intro_advance(void) {
     if (s_intro_chars < intro_page_len(s_intro_page)) {
         /* Tapping mid-type reveals the rest of the page instantly. */
         s_intro_chars = intro_page_len(s_intro_page);
-        s_intro_hold = 30;
+        s_intro_hold = INTRO_FILL_HOLD;
         return;
     }
     s_intro_page++;
     s_intro_chars = 0;
     s_intro_hold = 0;
-    if (s_intro_page >= STORY_INTRO_PAGES) {
-        story_mark_intro_seen();
-        menu_open(SCREEN_STORY_MAP);
-    }
+    s_intro_tick = 0;
+    if (s_intro_page >= STORY_INTRO_PAGES) intro_finish();
 }
 
 static void update_story_intro(void) {
     int len = intro_page_len(s_intro_page);
     if (s_intro_chars < len) {
-        s_intro_chars += 1;            /* ~1 char per frame at 90Hz */
-        if (s_intro_chars >= len) s_intro_hold = 45;
+        /* Typewriter: a frame counter meters the reveal so the speed does not
+         * depend on how long the page is. */
+        if (++s_intro_tick >= INTRO_TYPE_FRAMES) {
+            s_intro_tick = 0;
+            s_intro_chars++;
+            if (s_intro_chars >= len) s_intro_hold = INTRO_PAGE_HOLD;
+        }
     } else if (s_intro_hold > 0) {
-        s_intro_hold--;
+        /* Fully typed: wait for a tap, or turn the page on the timer. */
+        if (--s_intro_hold == 0) { intro_advance(); return; }
     }
 
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
-        /* A tap anywhere advances; the SKIP corner jumps the whole speech. */
-        if (tx > SCREEN_WIDTH - 56 && ty > SCREEN_HEIGHT - 20) {
-            story_mark_intro_seen();
-            menu_open(SCREEN_STORY_MAP);
+        if (in_rect(tx, ty, intro_skip_x() - 4, intro_skip_y() - 4,
+                    INTRO_SKIP_W + 8, INTRO_SKIP_H + 8)) {
+            intro_finish();
             return;
         }
         intro_advance();
         return;
     }
     if (key_hit(KEY_A) || key_hit(KEY_START)) { intro_advance(); return; }
-    if (key_hit(KEY_B)) { story_mark_intro_seen(); menu_open(SCREEN_STORY_MAP); }
+    if (key_hit(KEY_B) || key_hit(KEY_SELECT)) intro_finish();
+}
+
+/* Draw a marked-up story line, centered, one character at a time.
+ * `shown` is how many of this line's plain characters have been typed. */
+static void intro_draw_line(int y, const char* src, int shown, u8 color) {
+    char text[STORY_INTRO_LINE_MAX];
+    u8   style[STORY_INTRO_LINE_MAX];
+    int n = story_intro_markup(src, text, style, STORY_INTRO_LINE_MAX);
+    if (shown < n) n = shown;
+    if (n <= 0) return;
+
+    /* Centre on the FULL line so the text does not crawl sideways as it
+     * types - it grows out from a fixed left edge instead. */
+    int full = story_intro_len(src);
+    if (full > STORY_INTRO_LINE_MAX - 1) full = STORY_INTRO_LINE_MAX - 1;
+    int x = (SCREEN_WIDTH - (full * 6 - 1)) / 2;
+    if (x < 2) x = 2;
+
+    for (int i = 0; i < n; i++) {
+        if (style[i] == STORY_MK_BOLD) {
+            /* Bold: the glyph plus a one-pixel offset copy. */
+            gfx_draw_char(x + 1, y, text[i], color);
+            gfx_draw_char(x, y, text[i], PAL_TEXT_WHITE);
+        } else if (style[i] == STORY_MK_FAINT) {
+            gfx_draw_char(x, y, text[i], 18);   /* dim grey */
+        } else {
+            gfx_draw_char(x, y, text[i], color);
+        }
+        x += 6;
+    }
 }
 
 static void render_story_intro(void) {
@@ -900,40 +965,26 @@ static void render_story_intro(void) {
 
     if (s_intro_page >= STORY_INTRO_PAGES) return;
 
-    /* Type the two lines out character by character. */
-    char l0[64], l1[64];
     const char* a = g_story_intro[s_intro_page][0];
     const char* b = g_story_intro[s_intro_page][1];
-    int alen = (int)strlen(a);
+    int alen = story_intro_len(a);
     int shown = s_intro_chars;
 
-    int n0 = shown < alen ? shown : alen;
-    if (n0 > 63) n0 = 63;
-    memcpy(l0, a, n0); l0[n0] = '\0';
-
-    int n1 = shown - alen;
-    if (n1 < 0) n1 = 0;
-    int blen = (int)strlen(b);
-    if (n1 > blen) n1 = blen;
-    if (n1 > 63) n1 = 63;
-    memcpy(l1, b, n1); l1[n1] = '\0';
-
-    int box_w = SCREEN_WIDTH - 40;
-    int box_x = 20;
-    gfx_draw_glass_card(box_x, 52, box_w, 46, PAL_BTN_BORDER, 14);
-    gfx_draw_text_centered(box_x, 62, box_w, l0, PAL_TEXT_WHITE);
-    gfx_draw_text_centered(box_x, 76, box_w, l1, PAL_TEXT_CYAN);
+    /* Upper-middle of the screen: the starfield keeps the top and the
+     * bottom rows are left to the page counter and the SKIP prompt. */
+    intro_draw_line(56, a, shown, PAL_TEXT_WHITE);
+    intro_draw_line(70, b, shown - alen, PAL_TEXT_CYAN);
 
     /* Blinking "more" caret once the page has finished typing. */
-    if (s_intro_chars >= intro_page_len(s_intro_page) && ((s_anim_frame >> 4) & 1)) {
-        gfx_draw_text(box_x + box_w - 14, 86, ">", PAL_TEXT_GOLD);
-    }
+    if (s_intro_chars >= intro_page_len(s_intro_page) && ((s_anim_frame >> 4) & 1))
+        gfx_draw_text(SCREEN_WIDTH / 2 - 3, 84, ">", PAL_TEXT_GOLD);
 
     char pbuf[16];
     siprintf(pbuf, "%d / %d", s_intro_page + 1, STORY_INTRO_PAGES);
     gfx_draw_text_centered(0, 110, SCREEN_WIDTH, pbuf, 17);
-    gfx_draw_text_centered(0, SCREEN_HEIGHT - 14, SCREEN_WIDTH, "TAP TO CONTINUE", PAL_TEXT_WHITE);
-    gfx_draw_text(SCREEN_WIDTH - 52, SCREEN_HEIGHT - 14, "SKIP", PAL_TEXT_GOLD);
+    gfx_draw_text(8, SCREEN_HEIGHT - 14, "TAP TO CONTINUE", PAL_TEXT_WHITE);
+    gfx_draw_button(intro_skip_x(), intro_skip_y(), INTRO_SKIP_W, INTRO_SKIP_H,
+                    "SKIP", false);
 }
 
 /* ── Level map ────────────────────────────────────────────────────────────
@@ -1018,6 +1069,16 @@ static void map_move_cursor(int delta) {
 
 static void map_launch(void) {
     if (!story_is_unlocked(s_map_cursor)) { map_set_msg("LOCKED"); return; }
+    /* A wrecked ship is in the yard: nothing flies until the repairs are
+     * done.  The countdown is real time, so it keeps running with the game
+     * closed. */
+    if (story_is_grounded()) {
+        char rbuf[16];
+        story_format_repair(rbuf, sizeof(rbuf));
+        siprintf(s_map_msg, "SHIP IN REPAIR - %s LEFT", rbuf);
+        s_map_msg_timer = 120;
+        return;
+    }
     if (story_lives() <= 0) { map_set_msg("NO LIVES - SEE MR CHUBBS"); return; }
     story_set_current_level(s_map_cursor);
     game_story_set_level(s_map_cursor);
@@ -1211,10 +1272,18 @@ static void render_story_map(void) {
         }
     }
 
-    /* Launch button. */
+    /* Launch button - or the repair countdown when the ship is grounded. */
     int bx = (SCREEN_WIDTH - 96) / 2;
-    gfx_draw_button(bx, SCREEN_HEIGHT - 26, 96, 20,
-                    story_is_cleared(s_map_cursor) ? "REPLAY" : "LAUNCH", true);
+    if (story_is_grounded()) {
+        char rbuf[16];
+        story_format_repair(rbuf, sizeof(rbuf));
+        siprintf(buf, "REPAIR %s", rbuf);
+        gfx_draw_glass_card(bx, SCREEN_HEIGHT - 26, 96, 20, PAL_TEXT_RED, PAL_BTN_BG);
+        gfx_draw_text_centered(bx, SCREEN_HEIGHT - 19, 96, buf, PAL_TEXT_RED);
+    } else {
+        gfx_draw_button(bx, SCREEN_HEIGHT - 26, 96, 20,
+                        story_is_cleared(s_map_cursor) ? "REPLAY" : "LAUNCH", true);
+    }
 
     if (s_map_msg_timer > 0)
         gfx_draw_text_centered(0, SCREEN_HEIGHT - 38, SCREEN_WIDTH, s_map_msg, PAL_TEXT_RED);
@@ -1586,6 +1655,10 @@ static int  s_result_win = 0;
 static int  s_result_earned = 0;
 static int  s_result_resume = 1;
 static bool s_result_lost_run = false;
+/* What the wreck actually cost: levels taken back, chubbcoin clawed back and
+ * the repair countdown. Filled in when the failure card opens. */
+static int  s_result_relocked = 0;
+static int  s_result_bill = 0;
 static bool s_result_finale = false;
 static int  s_result_auto = 0;      /* frames until the card moves on itself */
 /* Mr Chubbs only catches up every fifth level, so a clear either ends at his
@@ -1616,13 +1689,16 @@ static void story_enter_result(void) {
          * only if that dock has not already been spent. */
         s_result_dock = story_shop_can_open(s_result_level);
         s_result_fly_on = (s_result_next != s_result_level) &&
-                          story_is_unlocked(s_result_next) && story_lives() > 0;
+                          story_is_unlocked(s_result_next) && story_lives() > 0 &&
+                          !story_is_grounded();
         if (s_result_level >= STORY_LEVEL_COUNT) s_result_finale = true;
         else s_result_auto = 200;   /* ~2.2s to read the card, then move on */
     } else {
         int before = story_lives();
         s_result_resume = story_lose_life();
         s_result_lost_run = (before <= 1);   /* the pool ran dry */
+        s_result_relocked = s_result_lost_run ? story_last_relocked() : 0;
+        s_result_bill = s_result_lost_run ? story_last_repair_bill() : 0;
     }
     save_write();
     menu_open(SCREEN_STORY_RESULT);
@@ -1637,7 +1713,8 @@ static bool story_open_dock(int cleared_level) {
     int next = cleared_level + 1;
     if (next > STORY_LEVEL_COUNT) next = STORY_LEVEL_COUNT;
     s_shopz_next_level = next;
-    s_shopz_fly_on = (next != cleared_level) && story_is_unlocked(next) && story_lives() > 0;
+    s_shopz_fly_on = (next != cleared_level) && story_is_unlocked(next) &&
+                     story_lives() > 0 && !story_is_grounded();
     story_shop_open(cleared_level);
     menu_open(SCREEN_STORY_SHOP);
     return true;
@@ -1661,7 +1738,8 @@ static void result_activate(int idx) {
         menu_open(SCREEN_STORY_MAP);
         return;
     }
-    if (idx == 0 && !s_result_lost_run && story_lives() > 0) {
+    /* No retry while the ship is in the yard - it is not flyable. */
+    if (idx == 0 && !s_result_lost_run && story_lives() > 0 && !story_is_grounded()) {
         story_set_current_level(s_result_resume);
         game_story_set_level(s_result_resume);
         game_set_mode(GAME_MODE_STORY);
@@ -1724,16 +1802,50 @@ static void render_story_result(void) {
         gfx_draw_text_centered(20, 32, card_w, buf, PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 46, card_w, g_story_levels[s_result_level - 1].name, PAL_TEXT_WHITE);
         siprintf(buf, "+%d CHUBBCOIN", s_result_earned);
-        gfx_draw_text_centered(20, 60, card_w, buf, PAL_TEXT_GOLD);
+        gfx_draw_text_centered(20, 58, card_w, buf, PAL_TEXT_GOLD);
+        /* Where the money came from: the payout is earned, so show the work.
+         * Only the bonuses that actually paid are listed. */
+        {
+            char bd[48];
+            int n = 0;
+            bd[0] = '\0';
+            if (story_pay_speed() > 0)     { siprintf(bd, "FAST +%d", story_pay_speed()); n++; }
+            if (story_pay_combat() > 0) {
+                char t[24]; siprintf(t, "%sKILLS +%d", n ? "  " : "", story_pay_combat());
+                strncat(bd, t, sizeof(bd) - strlen(bd) - 1); n++;
+            }
+            if (story_pay_precision() > 0) {
+                char t[24]; siprintf(t, "%sAIM +%d", n ? "  " : "", story_pay_precision());
+                strncat(bd, t, sizeof(bd) - strlen(bd) - 1); n++;
+            }
+            if (story_pay_clean() > 0) {
+                char t[24]; siprintf(t, "%sCLEAN +%d", n ? "  " : "", story_pay_clean());
+                strncat(bd, t, sizeof(bd) - strlen(bd) - 1); n++;
+            }
+            if (n) gfx_draw_text_centered(20, 68, card_w, bd, PAL_TEXT_CYAN);
+        }
         siprintf(buf, "LIVES %d", story_lives());
-        gfx_draw_text_centered(20, 74, card_w, buf, PAL_TEXT_GREEN);
+        gfx_draw_text_centered(20, 80, card_w, buf, PAL_TEXT_GREEN);
     } else {
         gfx_draw_text_centered(20, 32, card_w, "SHIP DOWN", PAL_TEXT_RED);
         if (s_result_lost_run) {
-            gfx_draw_text_centered(20, 46, card_w, "OUT OF LIVES", PAL_TEXT_WHITE);
-            siprintf(buf, "BACK TO LEVEL %d", s_result_resume);
-            gfx_draw_text_centered(20, 60, card_w, buf, PAL_TEXT_GOLD);
-            gfx_draw_text_centered(20, 74, card_w, "LIVES RESTOCKED TO 3", PAL_TEXT_GREEN);
+            /* The wreck is spelled out: what got re-locked, what it cost and
+             * how long the yard has the ship for. */
+            gfx_draw_text_centered(20, 44, card_w, "SHIP WRECKED", PAL_TEXT_WHITE);
+            if (s_result_relocked > 0) {
+                siprintf(buf, "LAST %d LEVELS RELOCKED", s_result_relocked);
+                gfx_draw_text_centered(20, 55, card_w, buf, PAL_TEXT_RED);
+            } else {
+                gfx_draw_text_centered(20, 55, card_w, "NOTHING LEFT TO RELOCK", PAL_TEXT_RED);
+            }
+            if (s_result_bill > 0) {
+                siprintf(buf, "-%d CHUBBCOIN", s_result_bill);
+                gfx_draw_text_centered(20, 65, card_w, buf, PAL_TEXT_GOLD);
+            }
+            char rbuf[16];
+            story_format_repair(rbuf, sizeof(rbuf));
+            siprintf(buf, "REPAIRS: %s LEFT", rbuf);
+            gfx_draw_text_centered(20, 78, card_w, buf, PAL_TEXT_CYAN);
         } else {
             siprintf(buf, "LIVES LEFT %d", story_lives());
             gfx_draw_text_centered(20, 50, card_w, buf, PAL_TEXT_GOLD);
@@ -1754,7 +1866,8 @@ static void render_story_result(void) {
         }
         opts[1] = "MAP";
     } else {
-        opts[0] = (!s_result_lost_run && story_lives() > 0) ? "RETRY" : "MAP";
+        opts[0] = (!s_result_lost_run && story_lives() > 0 && !story_is_grounded())
+                  ? "RETRY" : "MAP";
         opts[1] = "MAP";
     }
     for (int i = 0; i < 2; i++)

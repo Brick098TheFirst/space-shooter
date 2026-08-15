@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "renderer.h"
 #include "gfx_data.h"
+#include <time.h>
 
 volatile u8 platform_sram[PLATFORM_SRAM_SIZE];
 volatile u16 REG_VCOUNT = 0;
@@ -70,6 +71,13 @@ void platform_host_init(void) {
     s_save_path[0] = '\0';
     s_haptic_head = 0;
     s_haptic_count = 0;
+}
+
+/* Wall clock for Story Mode's fifteen-minute repair timer.  Uses the real
+ * calendar clock so the yard keeps working while the app is backgrounded or
+ * shut down entirely. */
+u32 platform_epoch_seconds(void) {
+    return (u32)time(NULL);
 }
 
 void platform_set_save_dir(const char* dir) {

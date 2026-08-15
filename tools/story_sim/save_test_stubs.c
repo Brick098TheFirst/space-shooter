@@ -6,6 +6,10 @@ static int s_w = HOST_SCREEN_W_DEFAULT;
 int host_screen_width(void){return s_w;}
 int host_set_screen_width(int w){ if(w==s_w) return 0; s_w=w; return 1;}
 void platform_host_init(void){}
+/* Story Mode's repair yard needs a wall clock; the harness drives it by hand
+ * so a fifteen-minute timer can be tested without waiting fifteen minutes. */
+u32 g_fake_epoch = 1700000000u;
+u32 platform_epoch_seconds(void){ return g_fake_epoch; }
 void platform_set_save_dir(const char* d){(void)d;}
 void platform_persist_save(void){}
 bool platform_restore_save(void){return false;}

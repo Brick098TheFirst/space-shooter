@@ -3,6 +3,7 @@
 #include "save.h"
 #include "story.h"
 #include "game.h"
+extern u32 g_fake_epoch;   /* the harness' hand-driven wall clock */
 static int fails=0;
 #define CHK(c,msg) do{ if(!(c)){ printf("FAIL: %s\n", msg); fails++; } }while(0)
 int main(void){
@@ -40,23 +41,109 @@ int main(void){
       for(int j=i+1;j<STORY_LEVEL_COUNT;j++)
         if(!strcmp(g_story_levels[i].name,g_story_levels[j].name)){printf("FAIL: dup name %s\n",g_story_levels[i].name);fails++;}
 
-    /* progression + replay half pay */
-    int paid = story_complete_level(1);
+    /* progression + replay half pay (no perf data = the floor only) */
+    int paid = story_complete_level(1, NULL);
     CHK(paid==g_story_levels[0].reward,"first clear full reward");
     CHK(story_highest_unlocked()==2,"level 2 unlocked");
     CHK(story_current_level()==2,"cursor advanced");
     story_set_current_level(1);
-    int paid2 = story_complete_level(1);
+    int paid2 = story_complete_level(1, NULL);
     CHK(paid2==g_story_levels[0].reward/2,"replay pays half");
 
-    /* checkpoint on death */
-    for(int lv=1; lv<25; lv++){ story_complete_level(lv); }
+    /* ── Dynamic payouts: the same level pays differently by how it flew ── */
+    {
+        const StoryLevel* L3 = &g_story_levels[2];
+        int floor3 = L3->reward;
+        /* Idler: ran the clock out, shot nothing, took a hit. Floor only. */
+        StoryPerf idle = {0};
+        idle.secs = 200; idle.par_secs = 100; idle.par_kills = 20;
+        idle.hits_taken = 2;
+        g_story.cleared[0]=0; g_story.cleared_count=0;
+        int lazy = story_complete_level(3, &idle);
+        CHK(lazy==floor3, "doing nothing pays only the floor");
+        CHK(story_pay_combat()==0, "no kills, no combat bonus");
+        CHK(story_pay_speed()==0,  "over par, no speed bonus");
+
+        /* Ace: half par, everything destroyed, sharp shooting, untouched. */
+        StoryPerf ace = {0};
+        ace.secs = 40; ace.par_secs = 100;
+        ace.kills = 40; ace.par_kills = 20;
+        ace.shots = 100; ace.hits = 90; ace.hits_taken = 0;
+        g_story.cleared[0]=0; g_story.cleared_count=0;
+        int good = story_complete_level(3, &ace);
+        CHK(good > lazy, "flying it well pays more than idling");
+        CHK(story_pay_speed()>0 && story_pay_combat()>0 &&
+            story_pay_precision()>0 && story_pay_clean()>0, "every bonus paid");
+        CHK(good <= floor3*3, "bonuses stay bounded");
+
+        /* Slow but thorough sits in between. */
+        StoryPerf mid = {0};
+        mid.secs = 95; mid.par_secs = 100;
+        mid.kills = 20; mid.par_kills = 20;
+        mid.shots = 100; mid.hits = 40; mid.hits_taken = 1;
+        g_story.cleared[0]=0; g_story.cleared_count=0;
+        int okay = story_complete_level(3, &mid);
+        CHK(okay > lazy && okay < good, "a middling clear pays in between");
+    }
+
+    /* ── Dying: the wreck, not a reset ──────────────────────────────────── */
+    save_init_defaults();
+    story_init();
+    for(int lv=1; lv<25; lv++){ story_complete_level(lv, NULL); }
     story_set_current_level(24);
+    u32 purse = story_chubbcoin();
+    int unlocked_before = story_highest_unlocked();
     story_lose_life(); story_lose_life();
     CHK(story_lives()==1,"lives burn down");
+    CHK(!story_is_grounded(),"losing a life alone does not ground the ship");
     int resume = story_lose_life();
-    CHK(resume==21,"reset to level after previous boss");
-    CHK(story_lives()==3,"lives refill at checkpoint");
+    CHK(story_last_relocked()==2,"the wreck relocks the last two levels");
+    CHK(!story_is_cleared(24) && !story_is_cleared(23),"those two clears are wiped");
+    CHK(story_is_cleared(22),"the level before them is untouched");
+    CHK(story_highest_unlocked()==unlocked_before-2,"the frontier walks back two");
+    CHK(resume==23,"you resume at the first relocked level");
+    CHK(story_chubbcoin() < purse,"the wreck costs money");
+    CHK(story_last_repair_bill() ==
+        (int)(purse - story_chubbcoin()),"the bill matches what was taken");
+    CHK(story_lives()==3,"lives restocked for the repaired ship");
+
+    /* Fifteen real minutes in the yard, and nothing flies until it is up. */
+    CHK(story_is_grounded(),"the ship is grounded after a wreck");
+    CHK(story_repair_seconds_left() > 14*60,"about fifteen minutes to wait");
+    CHK(story_repair_seconds_left() <= 15*60,"and no more than fifteen");
+    { char rb[16]; story_format_repair(rb,sizeof rb); CHK(rb[0],"countdown formats"); }
+
+    /* The clock is wall-clock, so it runs while the game is closed. */
+    save_write();
+    memset(&g_story,0,sizeof(g_story));
+    save_load();
+    CHK(story_is_grounded(),"the repair deadline survives a save/load");
+    g_fake_epoch += 14*60;
+    CHK(story_is_grounded(),"still grounded after fourteen minutes");
+    g_fake_epoch += 2*60;
+    CHK(!story_is_grounded(),"the ship comes back after fifteen");
+    CHK(story_repair_seconds_left()==0,"and the countdown reads zero");
+
+    /* A device clock jumping backwards must not strand the player. */
+    story_wreck_ship();
+    g_fake_epoch -= 60*60;
+    CHK(story_repair_seconds_left() <= 15*60,"a backwards clock is clamped");
+    story_finish_repairs();
+    CHK(!story_is_grounded(),"repairs can be handed back early");
+
+    /* Wrecking at the very start cannot take level 1 away. */
+    save_init_defaults();
+    story_init();
+    story_set_current_level(1);
+    int r1 = story_wreck_ship();
+    CHK(r1==1,"a wreck on level 1 resumes at level 1");
+    CHK(story_is_unlocked(1),"level 1 is never relocked");
+    CHK(story_last_relocked()==0,"nothing to relock that early");
+    story_finish_repairs();
+
+    save_init_defaults();
+    story_init();
+    for(int lv=1; lv<25; lv++){ story_complete_level(lv, NULL); }
 
     /* save round-trip through SRAM */
     g_story.chubbcoin=4242; g_story.level=21; g_story.unlocked=25;
@@ -146,6 +233,41 @@ int main(void){
         CHK(g_story_levels[i].brief1 && g_story_levels[i].brief1[0],"level has a story line");
         CHK(g_story_levels[i].brief2 && g_story_levels[i].brief2[0],"level has a second story line");
     }
+
+    /* ── The opening speech ─────────────────────────────────────────────
+     * Fourteen pages, two lines each, and the markers must be invisible to
+     * the typewriter (they are styling, not characters). */
+    for(int i=0;i<STORY_INTRO_PAGES;i++){
+        CHK(g_story_intro[i][0] && g_story_intro[i][0][0], "intro page has a first line");
+        CHK(g_story_intro[i][1] && g_story_intro[i][1][0], "intro page has a second line");
+        for(int l=0;l<2;l++){
+            char plain[STORY_INTRO_LINE_MAX]; u8 sp[STORY_INTRO_LINE_MAX];
+            int n = story_intro_markup(g_story_intro[i][l], plain, sp, sizeof plain);
+            CHK(n == story_intro_len(g_story_intro[i][l]), "markup length matches");
+            CHK(n < STORY_INTRO_LINE_MAX, "line fits the draw buffer");
+            for(int c=0;c<n;c++) CHK(plain[c] != '*' && plain[c] != '!', "markers stripped");
+        }
+    }
+    CHK(STORY_INTRO_PAGES==14, "fourteen pages of story");
+    {
+        char plain[STORY_INTRO_LINE_MAX]; u8 sp[STORY_INTRO_LINE_MAX];
+        int n = story_intro_markup("He wanted *revenge*.", plain, sp, sizeof plain);
+        CHK(!strcmp(plain,"He wanted revenge."), "bold markers vanish from the text");
+        CHK(sp[0]==STORY_MK_PLAIN && sp[10]==STORY_MK_BOLD, "the bold span is marked");
+        (void)n;
+        story_intro_markup("!one that can kill!", plain, sp, sizeof plain);
+        CHK(!strcmp(plain,"one that can kill"), "faint markers vanish too");
+        CHK(sp[0]==STORY_MK_FAINT, "the faint span is marked");
+    }
+    /* It plays once and once only. */
+    g_story.intro_seen = 0;
+    CHK(!story_intro_seen(), "a fresh save has not seen the intro");
+    story_mark_intro_seen();
+    CHK(story_intro_seen(), "watching it sets the flag");
+    save_write();
+    memset(&g_story,0,sizeof(g_story));
+    save_load();
+    CHK(story_intro_seen(), "the flag persists, so it never replays");
 
     /* escape hatch */
     story_free_everything();

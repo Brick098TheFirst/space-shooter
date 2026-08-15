@@ -53,6 +53,36 @@ int main(int argc, char** argv) {
     game_init();
     menu_init();
 
+    /* ── The opening speech ──────────────────────────────────────────────
+     * It is the very first thing a new player sees, so it gets shot first:
+     * mid-type, fully typed, and the marked-up pages that use *bold* and
+     * !faint!.  A fresh save has never seen it, so the campaign entry point
+     * must land on the intro rather than the map. */
+    g_story.intro_seen = 0;
+    menu_open(SCREEN_STORY_INTRO);
+    pump(14);
+    dump(dir, "00a_intro_typing");
+    pump(120);
+    dump(dir, "00b_intro_page_full");
+    /* Page 11 is the *bold* one, page 13 the !faint! one. */
+    for (int p = 0; p < 10; p++) { menu_queue_tap(4, 4); pump(2); menu_queue_tap(4, 4); pump(2); }
+    pump(2);
+    dump(dir, "00c_intro_bold_page");
+    for (int p = 0; p < 2; p++) { menu_queue_tap(4, 4); pump(2); menu_queue_tap(4, 4); pump(2); }
+    pump(2);
+    dump(dir, "00d_intro_faint_page");
+    /* SKIP drops straight into the map and marks the intro as seen. */
+    menu_queue_tap(SCREEN_WIDTH - 34, SCREEN_HEIGHT - 14);
+    pump(2);
+    if (menu_current_screen() != SCREEN_STORY_MAP) {
+        fprintf(stderr, "SKIP did not reach the level map\n");
+        return 1;
+    }
+    if (!story_intro_seen()) {
+        fprintf(stderr, "SKIP did not mark the intro as seen\n");
+        return 1;
+    }
+
     /* PLAY tab, fresh save: Story unlocked, Waves + Endless padlocked. */
     menu_open(SCREEN_MODE_SELECT);
     pump(4);
@@ -104,11 +134,87 @@ int main(int argc, char** argv) {
     pump(4);
     dump(dir, "07_shop_too_poor");
 
-    /* Level result card, the beat before the dock opens itself. */
-    g_story.chubbcoin = 1840; g_story.level = 8;
-    game_story_set_level(7);
-    menu_open(SCREEN_STORY_RESULT);
+    /* The wreck card, driven through the REAL failure path: fly level 12 on
+     * the last life and let the field take the ship.  Losing that life must
+     * re-lock the last two levels, bill the player and ground them. */
+    save_init_defaults();
+    story_init();
+    for (int lv = 1; lv <= 12; lv++) story_complete_level(lv, NULL);
+    story_set_current_level(12);
+    g_story.lives = 1;
+    game_story_set_level(12);
+    game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
+    game_start();
     pump(2);
+    menu_queue_tap(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);   /* dismiss the brief */
+    pump(1);
+    {
+        int guard = 0;
+        while (menu_current_screen() != SCREEN_STORY_RESULT && guard++ < 90 * 240) {
+            /* An idle pilot with a single life: the field does the rest. */
+            g_game.player.lives = 1;
+            g_game.player.shield_charges = 0;
+            g_game.player.invulnerable_timer = 0;
+            pump(1);
+        }
+        if (menu_current_screen() != SCREEN_STORY_RESULT) {
+            fprintf(stderr, "the story level never ended\n");
+            return 1;
+        }
+    }
+    if (!story_is_grounded()) {
+        fprintf(stderr, "losing the run did not ground the ship\n");
+        return 1;
+    }
+    if (story_is_cleared(12) || story_is_cleared(11)) {
+        fprintf(stderr, "losing the run did not relock the last two levels\n");
+        return 1;
+    }
+    dump(dir, "13_wreck_repair_yard");
+    /* And the map, grounded: LAUNCH becomes the repair countdown. */
+    menu_open(SCREEN_STORY_MAP);
+    pump(6);
+    dump(dir, "14_map_grounded");
+    story_finish_repairs();
+
+    /* Level result card, driven by a REAL clear so the dynamic payout is the
+     * one the game actually computed: the breakdown line under the total is
+     * whatever the flight earned. */
+    save_init_defaults();
+    story_init();
+    g_story.chubbcoin = 1840;
+    game_story_set_level(1);
+    game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
+    game_start();
+    pump(2);
+    menu_queue_tap(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+    pump(1);
+    {
+        int guard = 0;
+        while (menu_current_screen() != SCREEN_STORY_RESULT && guard++ < 90 * 300) {
+            /* Hold fire and sweep, and stay alive so the CLEAN bonus lands. */
+            platform_set_keys((u16)(KEY_A | (((guard / 40) & 1) ? KEY_LEFT : KEY_RIGHT)));
+            g_game.player.invulnerable_timer = 60;
+            pump(1);
+        }
+        platform_set_keys(0);
+        if (menu_current_screen() != SCREEN_STORY_RESULT) {
+            fprintf(stderr, "level 1 never resolved\n");
+            return 1;
+        }
+    }
+    if (game_story_outcome() != 1) {
+        fprintf(stderr, "level 1 was not cleared\n");
+        return 1;
+    }
+    /* The payout must be more than the level's floor: this clear earned it. */
+    if (game_story_earned() <= g_story_levels[0].reward) {
+        fprintf(stderr, "a good clear did not beat the floor payout (%d vs %d)\n",
+                game_story_earned(), g_story_levels[0].reward);
+        return 1;
+    }
     dump(dir, "08_result_cleared");
 
     /* In-game HUD during a story level: CHUBBCOIN, never "$0". */
