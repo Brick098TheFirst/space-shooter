@@ -247,6 +247,9 @@ extern GameState g_game;
 /* ── Story Mode (Android) ─────────────────────────────────────────────── */
 int  game_story_level(void);
 void game_story_set_level(int level);
+/* The opening story card pauses the world until the player acknowledges it. */
+int  game_story_waiting_for_start(void);
+void game_story_continue(void);
 /* 0 = still flying, 1 = level cleared, 2 = failed. */
 int  game_story_outcome(void);
 /* Chubbcoin banked by the level that just ended. */

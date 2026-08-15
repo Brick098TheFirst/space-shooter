@@ -115,12 +115,22 @@ int main(int argc, char** argv) {
     g_story.chubbcoin = 10; g_story.level = 3; g_story.lives = 3;
     game_story_set_level(3);
     game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
     game_start();
-    for (int i = 0; i < 30; i++) { game_update(); }
-    game_draw();
+    /* The menu must leave this card up forever, then dismiss it on one tap. */
+    pump(30);
+    if (!game_story_waiting_for_start()) {
+        fprintf(stderr, "story card continued without a tap\n");
+        return 1;
+    }
     dump(dir, "09_story_hud_banner");
-    for (int i = 0; i < 260; i++) { game_update(); }
-    game_draw();
+    menu_queue_tap(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+    pump(1);
+    if (game_story_waiting_for_start()) {
+        fprintf(stderr, "story card ignored tap\n");
+        return 1;
+    }
+    pump(260);
     dump(dir, "10_story_hud");
 
     /* Same HUD in an arcade run still shows the dollar balance. */

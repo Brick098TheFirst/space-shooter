@@ -54,9 +54,29 @@ def clientSecret = eosValue('clientSecret', 'EOS_CLIENT_SECRET')
 def eosConfigured = [productId, sandboxId, deploymentId, clientId, clientSecret].every { !it.isEmpty() }
 def javaString = { String value -> '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"' }
 
+/* GitHub Actions supplies a new build number on every run. The high base keeps
+ * CI builds newer than the old versionCode 1 APK and than ordinary local
+ * builds, while still staying below Android's 2,100,000,000 limit. */
+def appVersionCode = (System.getenv('ANDROID_VERSION_CODE') ?: '2000000000') as int
+def appVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.local'
+
 android {
     namespace 'com.brick.spaceshooter'
     compileSdk 34
+
+    /* CI runners otherwise create a different ~/.android/debug.keystore each
+     * time, making Android reject the next APK even with a higher versionCode.
+     * This repository-owned DEBUG identity is intentionally public and gives
+     * all downloadable debug builds the same update-compatible signature. */
+    signingConfigs {
+        debug {
+            storeFile file('space-unlimited-debug.p12')
+            storePassword 'spaceunlimited'
+            keyAlias 'space-unlimited'
+            keyPassword 'spaceunlimited'
+            storeType 'PKCS12'
+        }
+    }
 
     defaultConfig {
         // This multiplayer build is the repository's primary Android app.
@@ -64,8 +84,8 @@ android {
         // EOS Android SDK 1.19.1.2 supports API 26+ and 64-bit ABIs.
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode appVersionCode
+        versionName appVersionName
         ndk {
             abiFilters 'arm64-v8a', 'x86_64'
         }
