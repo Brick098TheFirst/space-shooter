@@ -83,6 +83,11 @@ const s8* audio_host_mix_buffer(void){return 0;}
 void starfield_init(void){} void starfield_update(void){}
 void starfield_draw_base(int a,int b){(void)a;(void)b;}
 void starfield_draw_stars(int a,int b){(void)a;(void)b;}
+/* Backdrop themes are purely cosmetic, so the headless sim just records the
+ * last one asked for. */
+static int s_theme_stub = 0;
+void starfield_set_theme(int t){ s_theme_stub = t; }
+int  starfield_theme(void){ return s_theme_stub; }
 void coop_init(void){} void coop_tick(void){}
 void coop_on_matched(int h){(void)h;} void coop_on_unmatched(void){}
 int coop_in_session(void){return 0;} int coop_is_host(void){return 0;}

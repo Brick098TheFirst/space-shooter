@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
      * mid-tier rig and some upgrades, as Mr Chubbs' shelf allows. */
     int fails = 0, timeouts = 0;
     long total_ticks = 0;
-    printf("%-4s %-16s %-9s %6s %8s %5s\n", "LV", "NAME", "OBJ", "SECS", "RESULT", "HITS");
+    printf("%-4s %-16s %-9s %-15s %6s %8s %5s\n", "LV", "NAME", "OBJ", "TWIST",
+           "SECS", "RESULT", "HITS");
     for (int lv = 1; lv <= STORY_LEVEL_COUNT; lv++) {
         /* Loadout progression: story shop purchases over the campaign. */
         int rig = upgrade_tier ? (lv / 6) : 0;
@@ -119,18 +120,23 @@ int main(int argc, char** argv) {
 
         const StoryLevel* L = &g_story_levels[lv-1];
         const char* on = L->objective==OBJ_BOSS?"BOSS":L->objective==OBJ_HUNT?"HUNT":
-                         L->objective==OBJ_SURVIVE?"SURVIVE":"CLEAR";
+                         L->objective==OBJ_SURVIVE?"SURVIVE":
+                         L->objective==OBJ_BIGGAME?"BIGGAME":
+                         L->objective==OBJ_TIMED?"TIMED":"CLEAR";
         int max_ticks = 90 * 400;   /* 400 seconds of patience */
         int ticks = play_level(lv, max_ticks);
         if (ticks >= 0) {
             total_ticks += ticks;
-            printf("%-4d %-16s %-9s %6.1f %8s %5d\n", lv, L->name, on, ticks/90.0, "WIN", g_hits);
+            printf("%-4d %-16s %-9s %-15s %6.1f %8s %5d\n", lv, L->name, on,
+                   story_modifier_name(L->modifier), ticks/90.0, "WIN", g_hits);
         } else if (ticks == -1) {
             fails++;
-            printf("%-4d %-16s %-9s %6s %8s\n", lv, L->name, on, "-", "DIED");
+            printf("%-4d %-16s %-9s %-15s %6s %8s\n", lv, L->name, on,
+                   story_modifier_name(L->modifier), "-", "DIED");
         } else {
             timeouts++;
-            printf("%-4d %-16s %-9s %6s %8s\n", lv, L->name, on, ">400", "STALL");
+            printf("%-4d %-16s %-9s %-15s %6s %8s\n", lv, L->name, on,
+                   story_modifier_name(L->modifier), ">400", "STALL");
         }
     }
     printf("\ntier=%d  deaths=%d  stalls=%d  total=%.1f min\n",

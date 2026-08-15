@@ -21,8 +21,18 @@ gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
 #   godmode 1 = keep the probe pilot alive (measures winnability + damage taken)
 ```
 
-`stalls=0` is the property that matters: it means no level can ever soft-lock.
-Boss fights currently land at ~66-108 s each on a mid-progression loadout.
+`stalls=0` at `tier=1` is the property that matters: it means no level can ever
+soft-lock for a player who buys from Mr Chubbs as intended. The report's `TWIST`
+column shows each level's objective and field modifier, which is the quickest
+way to confirm the campaign is still varied rather than 70 rounds of the same
+level.
+
+`tier=0` models a player who never spends a single chubbcoin for all 70 levels,
+so it deliberately stalls on the late kill-quota and boss levels (the baseline
+did too). Treat it as a stress probe for relative regressions, not a pass/fail
+gate.
+
+Boss fights currently land at ~47-108 s each on a mid-progression loadout.
 
 ## UI screenshots
 
@@ -43,9 +53,12 @@ gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABL
 
 ## Save tests
 
-Round-trips the V9 save block through SRAM and checks progression rules
+Round-trips the V10 save block through SRAM and checks progression rules
 (unlock frontier, half-pay replays, checkpoint-on-death, deterministic shop
-stock, the "LET ME BE FREE" flag).
+stock, the "LET ME BE FREE" flag) plus Mr Chubbs' docking rules: that he only
+docks every fifth level, that leaving a dock spends it permanently, that a
+spent dock never reopens, and that the unsold shelf still carries over to the
+next one.
 
 ```bash
 gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \

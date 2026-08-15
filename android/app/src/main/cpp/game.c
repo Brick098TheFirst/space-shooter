@@ -92,6 +92,7 @@ void game_set_mode(GameMode mode) {
  * layer reads once the level ends. */
 static int  s_story_level = 1;          /* 1..70 */
 static int  s_story_kills = 0;          /* hunters downed (OBJ_HUNT) */
+static int  s_story_bigs  = 0;          /* large rocks cracked (OBJ_BIGGAME) */
 static int  s_story_timer = 0;          /* ticks left  (OBJ_SURVIVE) */
 static int  s_story_spawned = 0;        /* rocks released so far */
 static int  s_story_to_spawn = 0;       /* rocks still owed to the field */
@@ -103,6 +104,7 @@ static void story_finish(int outcome);
 static void story_begin_level(void);
 static void story_update_objective(void);
 static void story_on_hunter_killed(void);
+static void story_on_large_killed(void);
 
 int  game_story_level(void)   { return s_story_level; }
 int  game_story_outcome(void) { return s_story_outcome; }
@@ -595,6 +597,8 @@ static void destroy_asteroid(int idx, bool award) {
     Asteroid* a = &g_game.asteroids[idx];
     AsteroidType t = a->type;
     a->active = false;
+    /* OBJ_BIGGAME levels only care about the big ones. */
+    if (award && t == AST_LARGE) story_on_large_killed();
     int ax = FROM_FIXED(a->x);
     int ay = FROM_FIXED(a->y);
     trigger_explosion(ax, ay);
@@ -676,6 +680,36 @@ static void destroy_drone(int idx, bool award) {
 static int count_active_asteroids(void) {
     int n = 0;
     for (int i = 0; i < MAX_ASTEROIDS; i++) if (g_game.asteroids[i].active) n++;
+    return n;
+}
+
+/* ── The CLEAR counter, in medium-rock units ──────────────────────────────
+ * The HUD counts MEDIUM rocks, because that is the unit the field is really
+ * made of: a big rock is worth exactly the two mediums it breaks into, and
+ * the small/tiny debris that mediums shed is not counted at all (it still
+ * exists and still has to be dodged - it just is not the objective).
+ *
+ * So five big rocks read as 10, two big rocks read as 4, and popping a big
+ * rock leaves the number where it was - it becomes the two mediums it just
+ * turned into.  The number only drops when a MEDIUM dies. */
+#define MED_PER_LARGE 2
+
+static int asteroid_med_value(AsteroidType t) {
+    switch (t) {
+        case AST_LARGE:  return MED_PER_LARGE;   /* becomes 2 mediums */
+        case AST_MED_A:
+        case AST_MED_B:  return 1;
+        default:         return 0;               /* small / tiny: not counted */
+    }
+}
+
+/* Medium-equivalents currently on screen. */
+static int count_medium_equivalents(void) {
+    int n = 0;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        if (g_game.asteroids[i].active)
+            n += asteroid_med_value(g_game.asteroids[i].type);
+    }
     return n;
 }
 
@@ -924,8 +958,78 @@ static int  get_diff_speed_mult(void);
  * escalator, so every level is finite and beatable. Enemy speed and HP are
  * scaled by the level's own curve. */
 
-static int story_speed_scale(void) { return story_cur()->speed_pct; }
-static int story_hp_scale(void)    { return story_cur()->hp_pct; }
+static int story_mod(void) { return story_cur()->modifier; }
+
+/* ── Modifier hooks ───────────────────────────────────────────────────────
+ * Each modifier leans on exactly one or two of these, so a twist changes
+ * what you are flying through instead of only how much of it there is. */
+
+static int story_speed_scale(void) {
+    int s = story_cur()->speed_pct;
+    if (story_mod() == MOD_SWIFT) s = (s * 145) / 100;   /* everything hurries */
+    return s;
+}
+
+static int story_hp_scale(void) {
+    const StoryLevel* L = story_cur();
+    int h = L->hp_pct;
+    if (story_mod() == MOD_TOUGH) {
+        /* Armoured rock. Big-game levels are already gated on cracking the
+         * big ones, so they get a gentler plating than the rest. */
+        h = (h * (L->objective == OBJ_BIGGAME ? 130 : 165)) / 100;
+    }
+    /* Big-game asks you to crack a fixed number of the toughest rocks in the
+     * game, so the late-campaign HP curve is capped here. Without this the
+     * objective turns into a chore for anyone flying a mid-tier gun, which
+     * tools/story_sim catches as a stall at tier 0. */
+    if (L->objective == OBJ_BIGGAME && h > 200) h = 200;
+    return h;
+}
+
+/* Chance (percent) that the next rock is a big one. */
+static int story_large_chance(void) {
+    switch (story_mod()) {
+        case MOD_BOULDERS: return 88;   /* almost nothing but big rocks */
+        case MOD_SHARDS:   return 0;    /* no big rocks at all */
+        default:           return 12 + s_story_level;
+    }
+}
+
+/* How many hunters the level wants on screen at once. */
+static int story_drone_target(void) {
+    const StoryLevel* L = story_cur();
+    int d = L->drones;
+    if (story_mod() == MOD_SWARM)   d += 3;
+    if (story_mod() == MOD_SNIPERS && d > 2) d -= 1;
+    if (d > MAX_DRONES) d = MAX_DRONES;
+    if (d < 0) d = 0;
+    return d;
+}
+
+/* Reinforcement cadence scalar, in percent of the base cooldown. */
+static int story_spawn_cd_pct(void) {
+    switch (story_mod()) {
+        case MOD_TRICKLE: return 220;   /* a few at a time, slowly */
+        case MOD_STORM:   return 45;    /* relentless */
+        default:          return 100;
+    }
+}
+
+/* The rocks a CLEAR level still owes the field, pre-rolled at level start so
+ * the HUD's medium-equivalent counter is exact from the very first frame
+ * (see s_story_pending_med). Each entry is simply "is this one large?". */
+static u8  s_story_queue[MAX_ASTEROIDS];
+static int s_story_queue_len = 0;
+static int s_story_queue_pos = 0;
+static int s_story_pending_med = 0;    /* medium-equivalents still to spawn */
+
+/* Pop the next pre-rolled rock size; falls back to a fresh roll if the queue
+ * ran dry (HUNT/SURVIVE levels top the field up indefinitely). */
+static bool story_next_rock_is_large(void) {
+    if (s_story_queue_pos < s_story_queue_len)
+        return s_story_queue[s_story_queue_pos++] != 0;
+    return (rand() % 100) < story_large_chance();
+}
 
 static void story_spawn_rock(void) {
     int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
@@ -933,12 +1037,35 @@ static void story_spawn_rock(void) {
     int y = -TO_FIXED((rand() % 60) + 8);
     int vx = ((rand() % 150) - 75) * mult >> 8;
     int vy = ((rand() % 70) + 70) * mult >> 8;
-    int lv = s_story_level;
-    bool is_large = (rand() % 100) < (12 + lv);
+    bool is_large = story_next_rock_is_large();
     AsteroidType type = is_large ? AST_LARGE : ((rand() & 1) ? AST_MED_A : AST_MED_B);
+    /* This rock has left the "still owed" pile and joined the field, so move
+     * its medium-equivalents from pending to on-screen. */
+    s_story_pending_med -= asteroid_med_value(type);
+    if (s_story_pending_med < 0) s_story_pending_med = 0;
     int tmult = asteroid_speed_mult(type);
     spawn_asteroid(type, x, y, (vx * tmult) >> 8, (vy * tmult) >> 8);
     /* Apply the level HP curve to whichever slot just filled. */
+    for (int i = MAX_ASTEROIDS - 1; i >= 0; i--) {
+        if (g_game.asteroids[i].active && g_game.asteroids[i].y == y) {
+            int hp = (g_game.asteroids[i].hp * story_hp_scale()) / 100;
+            if (hp < 1) hp = 1;
+            g_game.asteroids[i].hp = hp;
+            break;
+        }
+    }
+}
+
+/* OBJ_BIGGAME needs a guaranteed big rock on the board: the queue may be
+ * exhausted or rolling mediums, and the objective would stall behind them. */
+static void story_force_spawn_large(void) {
+    int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
+    int x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+    int y = -TO_FIXED((rand() % 60) + 8);
+    int vx = ((rand() % 150) - 75) * mult >> 8;
+    int vy = ((rand() % 70) + 70) * mult >> 8;
+    int tmult = asteroid_speed_mult(AST_LARGE);
+    spawn_asteroid(AST_LARGE, x, y, (vx * tmult) >> 8, (vy * tmult) >> 8);
     for (int i = MAX_ASTEROIDS - 1; i >= 0; i--) {
         if (g_game.asteroids[i].active && g_game.asteroids[i].y == y) {
             int hp = (g_game.asteroids[i].hp * story_hp_scale()) / 100;
@@ -959,6 +1086,8 @@ static bool story_spawn_hunter(void) {
         g_game.drones[i].vy = (60 + s_story_level) * mult >> 8;
         int base_cd = 78 - s_story_level;
         if (base_cd < 26) base_cd = 26;
+        /* Sharpshooters: fewer of them, but they hardly stop firing. */
+        if (story_mod() == MOD_SNIPERS) base_cd = (base_cd * 45) / 100;
         g_game.drones[i].shoot_timer = (rand() % 40) + base_cd;
         g_game.drones[i].burst_timer = 0;
         g_game.drones[i].burst_shots = 0;
@@ -979,11 +1108,13 @@ static void story_spawn_boss(int boss_id);
 static void story_begin_level(void) {
     const StoryLevel* L = story_cur();
     s_story_kills = 0;
+    s_story_bigs = 0;
     s_story_spawned = 0;
     s_story_outcome = 0;
     s_story_earned = 0;
     s_story_end_delay = 0;
-    s_story_timer = (L->objective == OBJ_SURVIVE) ? L->quota * 90 : 0;
+    s_story_timer = (L->objective == OBJ_SURVIVE || L->objective == OBJ_TIMED)
+                  ? L->quota * 90 : 0;
     g_game.wave = s_story_level;
     /* Longer hold on the opening card - it now carries two lines of story
      * (and a boss taunt) that deserve to be readable. */
@@ -993,16 +1124,32 @@ static void story_begin_level(void) {
 
     if (L->objective == OBJ_BOSS) {
         s_story_to_spawn = 0;
+        s_story_queue_len = s_story_queue_pos = 0;
+        s_story_pending_med = 0;
         int boss_id = story_boss_for_level(s_story_level);
         story_spawn_boss(boss_id >= 0 ? boss_id : 0);
         return;
     }
 
+    /* Pre-roll every rock this level will release, so the HUD can state the
+     * exact medium-equivalent total up front instead of guessing. */
+    int total = L->rocks;
+    if (total > MAX_ASTEROIDS) total = MAX_ASTEROIDS;
+    s_story_queue_len = total;
+    s_story_queue_pos = 0;
+    s_story_pending_med = 0;
+    for (int i = 0; i < total; i++) {
+        bool large = (rand() % 100) < story_large_chance();
+        s_story_queue[i] = large ? 1 : 0;
+        s_story_pending_med += asteroid_med_value(large ? AST_LARGE : AST_MED_A);
+    }
+
     /* Open the level with roughly half the field; the rest trickles in so
      * the screen is never instantly unsurvivable. */
-    int opening = L->rocks / 2;
+    int opening = total / 2;
     if (opening < 3) opening = 3;
-    s_story_to_spawn = L->rocks - opening;
+    if (opening > total) opening = total;
+    s_story_to_spawn = total - opening;
     if (s_story_to_spawn < 0) s_story_to_spawn = 0;
     for (int i = 0; i < opening; i++) story_spawn_rock();
     for (int i = 0; i < L->drones; i++) story_spawn_hunter();
@@ -1012,6 +1159,12 @@ static void story_begin_level(void) {
 static void story_on_hunter_killed(void) {
     if (g_game.mode != GAME_MODE_STORY) return;
     s_story_kills++;
+}
+
+/* OBJ_BIGGAME counts the big rocks you personally crack. */
+static void story_on_large_killed(void) {
+    if (g_game.mode != GAME_MODE_STORY) return;
+    s_story_bigs++;
 }
 
 static void story_finish(int outcome) {
@@ -1035,6 +1188,8 @@ static void story_update_objective(void) {
     const StoryLevel* L = story_cur();
     int rocks = count_active_asteroids();
     int hunters = count_active_drones();
+    int want_hunters = story_drone_target();
+    int cd_pct = story_spawn_cd_pct();
 
     switch (L->objective) {
         case OBJ_BOSS:
@@ -1047,6 +1202,8 @@ static void story_update_objective(void) {
             if (s_story_to_spawn > 0) {
                 if (--g_game.spawn_timer <= 0) {
                     int batch = 1 + s_story_level / 18;
+                    if (story_mod() == MOD_TRICKLE) batch = 1;
+                    if (story_mod() == MOD_STORM)   batch += 2;
                     for (int i = 0; i < batch && s_story_to_spawn > 0; i++) {
                         if (rocks >= MAX_ASTEROIDS - 8) break;
                         story_spawn_rock();
@@ -1055,11 +1212,77 @@ static void story_update_objective(void) {
                     }
                     int cd = 70 - s_story_level;
                     if (cd < 22) cd = 22;
-                    g_game.spawn_timer = cd;
+                    g_game.spawn_timer = (cd * cd_pct) / 100;
                 }
-            } else if (rocks == 0 && hunters == 0) {
+            } else if (count_medium_equivalents() == 0 && s_story_pending_med == 0 &&
+                       hunters == 0) {
+                /* The objective is the counter: once every big and medium is
+                 * gone the level is cleared. Leftover small/tiny debris is
+                 * still on screen and still lethal, but it was never part of
+                 * the count and does not hold the level open. */
                 s_story_end_delay = 45;
                 story_finish(1);
+            }
+            break;
+
+        case OBJ_TIMED:
+            /* Same job as CLEAR, but against a clock: run it out and the
+             * level is lost. The only failure that is not "you died", which
+             * makes these play completely differently from a plain clear. */
+            if (s_story_timer > 0) s_story_timer--;
+            if (s_story_timer <= 0) {
+                story_finish(2);
+                break;
+            }
+            if (s_story_to_spawn > 0) {
+                if (--g_game.spawn_timer <= 0) {
+                    int batch = 2 + s_story_level / 16;
+                    if (story_mod() == MOD_TRICKLE) batch = 1;
+                    if (story_mod() == MOD_STORM)   batch += 2;
+                    for (int i = 0; i < batch && s_story_to_spawn > 0; i++) {
+                        if (rocks >= MAX_ASTEROIDS - 8) break;
+                        story_spawn_rock();
+                        s_story_to_spawn--;
+                        rocks++;
+                    }
+                    int cd = 46 - s_story_level / 3;
+                    if (cd < 16) cd = 16;
+                    g_game.spawn_timer = (cd * cd_pct) / 100;
+                }
+            } else if (count_medium_equivalents() == 0 && s_story_pending_med == 0 &&
+                       hunters == 0) {
+                s_story_end_delay = 45;
+                story_finish(1);
+            }
+            break;
+
+        case OBJ_BIGGAME:
+            /* Crack N LARGE rocks. The mediums and debris they shed are
+             * weather, not the objective, so the field is a constant churn
+             * you fly through looking for the next big one. */
+            if (s_story_bigs >= L->quota) {
+                s_story_end_delay = 45;
+                story_finish(1);
+                break;
+            }
+            if (--g_game.spawn_timer <= 0) {
+                /* Keep at least one big rock on offer at all times, or the
+                 * objective would stall behind a screen of debris. */
+                int bigs_up = 0;
+                for (int i = 0; i < MAX_ASTEROIDS; i++)
+                    if (g_game.asteroids[i].active && g_game.asteroids[i].type == AST_LARGE)
+                        bigs_up++;
+                int want_bigs = 2 + s_story_level / 20;
+                if (bigs_up < want_bigs && rocks < MAX_ASTEROIDS - 6) {
+                    story_force_spawn_large();
+                } else if (hunters < want_hunters) {
+                    story_spawn_hunter();
+                } else if (rocks < L->rocks) {
+                    story_spawn_rock();
+                }
+                int cd = 66 - s_story_level / 2;
+                if (cd < 20) cd = 20;
+                g_game.spawn_timer = (cd * cd_pct) / 100;
             }
             break;
 
@@ -1072,12 +1295,11 @@ static void story_update_objective(void) {
                 break;
             }
             if (--g_game.spawn_timer <= 0) {
-                int want_hunters = L->drones;
                 if (hunters < want_hunters) story_spawn_hunter();
                 else if (rocks < L->rocks) story_spawn_rock();
                 int cd = 80 - s_story_level;
                 if (cd < 26) cd = 26;
-                g_game.spawn_timer = cd;
+                g_game.spawn_timer = (cd * cd_pct) / 100;
             }
             break;
 
@@ -1090,10 +1312,10 @@ static void story_update_objective(void) {
             }
             if (--g_game.spawn_timer <= 0) {
                 if (rocks < L->rocks) story_spawn_rock();
-                else if (hunters < L->drones) story_spawn_hunter();
+                else if (hunters < want_hunters) story_spawn_hunter();
                 int cd = 60 - s_story_level / 2;
                 if (cd < 18) cd = 18;
-                g_game.spawn_timer = cd;
+                g_game.spawn_timer = (cd * cd_pct) / 100;
             }
             break;
 
@@ -2053,10 +2275,14 @@ void game_start(void) {
     s_game_static_valid = false;
 
     if (g_game.mode == GAME_MODE_STORY) {
+        /* Each kingdom flies over its own sky. */
+        starfield_set_theme(story_theme_for_level(s_story_level));
         story_begin_level();
     } else if (g_game.mode == GAME_MODE_WAVES) {
+        starfield_set_theme(SF_THEME_ARCADE);
         g_game.intermission_timer = 30;
     } else {
+        starfield_set_theme(SF_THEME_ARCADE);
         g_game.wave = 1;
         g_game.wave_banner_timer = 110;
         g_game.spawn_timer = 12;
@@ -3265,11 +3491,26 @@ void game_draw(void) {
             case OBJ_SURVIVE:
                 siprintf(obuf, "SURVIVE %ds", (s_story_timer + 89) / 90);
                 break;
+            case OBJ_BIGGAME:
+                siprintf(obuf, "BIG ROCKS %d/%d", s_story_bigs, (int)L->quota);
+                break;
+            case OBJ_TIMED: {
+                int left = count_medium_equivalents() + s_story_pending_med
+                         + count_active_drones();
+                siprintf(obuf, "%d LEFT  %ds", left, (s_story_timer + 89) / 90);
+                break;
+            }
             case OBJ_BOSS:
                 siprintf(obuf, "%s", story_boss_name(story_boss_for_level(s_story_level)));
                 break;
             default: {
-                int left = count_active_asteroids() + count_active_drones() + s_story_to_spawn;
+                /* Counted in MEDIUM rocks: a big rock is the two mediums it
+                 * will break into, and the small/tiny debris those shed is
+                 * not counted (it is still out there, it just is not the
+                 * objective). Five bigs read 10; popping one keeps it at 10
+                 * until a medium actually dies. */
+                int left = count_medium_equivalents() + s_story_pending_med
+                         + count_active_drones();
                 siprintf(obuf, "CLEAR %d LEFT", left);
                 break;
             }
@@ -3353,8 +3594,24 @@ void game_draw(void) {
             siprintf(buf, "LEVEL %d  -  %s", s_story_level, story_sector_name(story_sector_of(s_story_level)));
             gfx_draw_text_centered(bx, 60, banner_w, buf, 17);
             gfx_draw_text_centered(bx, 70, banner_w, L->name, PAL_TEXT_CYAN);
-            gfx_draw_text_centered(bx, 84, banner_w, L->brief1, PAL_TEXT_WHITE);
-            gfx_draw_text_centered(bx, 94, banner_w, L->brief2, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 82, banner_w, L->brief1, PAL_TEXT_WHITE);
+            gfx_draw_text_centered(bx, 91, banner_w, L->brief2, PAL_TEXT_WHITE);
+            /* Announce the twist, so you know what kind of level this is
+             * before the first rock reaches you. */
+            {
+                const char* objn;
+                switch (L->objective) {
+                    case OBJ_HUNT:    objn = "HUNT THE FIGHTERS"; break;
+                    case OBJ_SURVIVE: objn = "SURVIVE THE FIELD"; break;
+                    case OBJ_BIGGAME: objn = "CRACK THE BIG ONES"; break;
+                    case OBJ_TIMED:   objn = "CLEAR IT BEFORE THE CLOCK"; break;
+                    default:          objn = "CLEAR EVERYTHING"; break;
+                }
+                const char* modn = story_modifier_name(L->modifier);
+                if (modn[0]) siprintf(buf, "%s  -  %s", objn, modn);
+                else         siprintf(buf, "%s", objn);
+                gfx_draw_text_centered(bx, 102, banner_w, buf, PAL_TEXT_GOLD);
+            }
         }
     } else if (g_game.wave_banner_timer > 0) {
         bool first_boss = g_game.mode == GAME_MODE_WAVES && g_game.wave == 5;

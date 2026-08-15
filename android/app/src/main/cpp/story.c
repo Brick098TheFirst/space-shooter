@@ -16,6 +16,8 @@ void story_init(void) {
     if (g_story.lives < 1) g_story.lives = STORY_START_LIVES;
     if (g_story.lives > STORY_MAX_LIVES) g_story.lives = STORY_MAX_LIVES;
     if (g_story.cleared_count > STORY_LEVEL_COUNT) g_story.cleared_count = STORY_LEVEL_COUNT;
+    /* Only the 14 real docks have bits; drop anything a corrupt save set. */
+    g_story.docks_used &= (u16)((1u << STORY_DOCK_COUNT) - 1u);
 }
 
 static void story_shop_forget(void);
@@ -140,17 +142,54 @@ void story_mark_intro_seen(void) {
 
 /* ── Mr Chubbs' Shop ──────────────────────────────────────────────────────
  * Stock is a deterministic roll from the dock level, so the shelf is stable
- * for that dock no matter how many times you fly in and out. He only ever
- * shows a few things at a time — you never meet him, just his prices. */
+ * for that dock. He only ever shows a few things at a time — you never meet
+ * him, just his prices.
+ *
+ * He docks once every five levels and that dock is a single visit: leaving
+ * closes it permanently (g_story.docks_used) and the player flies the next
+ * five levels without a shop. Unsold stock is NOT lost — it rides along to
+ * whichever dock comes next. */
 
 static StoryStockItem s_stock[STORY_SHOP_SLOTS];
 static bool s_stock_held[STORY_SHOP_SLOTS];
 static int s_stock_level = -1;
+/* True once a dock has rolled its shelf at least this session; the shelf
+ * outlives s_stock_level, which only marks the currently open dock. */
+static bool s_stock_seeded = false;
 
 /* Wipe the carried-over shelf (fresh campaign). */
 static void story_shop_forget(void) {
     memset(s_stock, 0, sizeof(s_stock));
     memset(s_stock_held, 0, sizeof(s_stock_held));
+    s_stock_level = -1;
+    s_stock_seeded = false;
+}
+
+bool story_shop_can_open(int level) {
+    int d = story_dock_index(level);
+    if (d < 0 || d >= STORY_DOCK_COUNT) return false;
+    return (g_story.docks_used & (u16)(1u << d)) == 0;
+}
+
+int story_shop_next_dock(int from_level) {
+    if (from_level < 0) from_level = 0;
+    for (int lv = from_level + 1; lv <= STORY_LEVEL_COUNT; lv++) {
+        if (story_shop_can_open(lv)) return lv;
+    }
+    return 0;
+}
+
+void story_shop_close(void) {
+    int d = story_dock_index(s_stock_level);
+    if (d >= 0 && d < STORY_DOCK_COUNT) {
+        u16 bit = (u16)(1u << d);
+        if (!(g_story.docks_used & bit)) {
+            g_story.docks_used |= bit;
+            save_write();
+        }
+    }
+    /* Keep s_stock/s_stock_held: the unsold shelf follows him to the next
+     * dock.  Only the "which dock is open" marker is cleared. */
     s_stock_level = -1;
 }
 
@@ -236,14 +275,18 @@ static bool stock_is_dead(const StoryStockItem* it) {
 void story_shop_open(int level) {
     if (level < 1) level = 1;
     if (level > STORY_LEVEL_COUNT) level = STORY_LEVEL_COUNT;
-    if (s_stock_level == level) return;        /* same dock: same shelf */
+    /* He only docks every fifth level, and only once per dock. Callers ask
+     * story_shop_can_open() first; this is the belt-and-braces guard. */
+    if (!story_shop_can_open(level)) return;
+    if (s_stock_level == level) return;        /* already open: same shelf */
 
-    bool first_ever = (s_stock_level < 0);
+    bool first_ever = !s_stock_seeded;
+    s_stock_seeded = true;
     s_stock_level = level;
 
-    /* Dock tier still moves in fives, so the shelf improves at the same rate
-     * it always did even though he now docks after every level. */
-    int dock = (level + 4) / 5;
+    /* Which dock this is, 1-based: level 4 is his first catch-up, 9 the
+     * second, and so on. The shelf tier climbs with it. */
+    int dock = story_dock_index(level) + 1;
     if (dock < 1) dock = 1;
 
     /* Slot 0 is always lives — cheap-ish, and strictly limited so you can't
@@ -266,11 +309,29 @@ void story_shop_open(int level) {
         }
         memset(it, 0, sizeof(*it));
         s_stock_held[i] = false;
-        stock_roll_slot(it, level, i, dock);
-        /* Never shelve something the player already has. */
-        if (stock_is_dead(it)) stock_roll_slot(it, level + 13, i, dock);
-        if (stock_is_dead(it)) { it->kind = SSTOCK_LIFE; it->qty = 1;
-                                 it->price = (u16)stock_price(it, dock); }
+
+        /* Roll until the slot is something the player can actually use AND
+         * is not already sitting in another slot - two identical rows on a
+         * four-item shelf made the dock look broken. */
+        int salt = 0;
+        for (; salt < 8; salt++) {
+            stock_roll_slot(it, level + salt * 13, i, dock);
+            if (stock_is_dead(it)) continue;
+            bool dupe = false;
+            for (int j = 1; j < STORY_SHOP_SLOTS && !dupe; j++) {
+                if (j == i) continue;
+                const StoryStockItem* o = &s_stock[j];
+                if (o->kind == it->kind && o->item == it->item && o->qty > 0) dupe = true;
+            }
+            if (!dupe) break;
+        }
+        if (salt >= 8) {
+            /* Nothing distinct left to sell: fall back to a spare life. */
+            memset(it, 0, sizeof(*it));
+            it->kind = SSTOCK_LIFE;
+            it->qty = 1;
+            it->price = (u16)stock_price(it, dock);
+        }
     }
 }
 
@@ -330,7 +391,9 @@ const char* story_shop_line2(void) {
         int s = story_sector_of(next);
         return s_chubb_pep2[s];
     }
-    return "PICK SOMETHING OR FLY ON.";
+    /* Always reminds the player this dock is a one-shot: leaving undocks him
+     * until he catches up five levels later. */
+    return "LEAVE AND I UNDOCK. STOCK KEEPS.";
 }
 
 int story_shop_take_gift(void) {

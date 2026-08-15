@@ -73,13 +73,15 @@ int main(int argc, char** argv) {
     pump(20);
     dump(dir, "03_story_map");
 
-    /* Mr Chubbs, ordinary dock (after level 7). */
-    story_shop_open(7);
+    /* Mr Chubbs, ordinary dock. He only catches up every fifth level, so the
+     * dock levels are 4, 9, 14, ... - level 4 is his first. */
+    story_shop_open(4);
     menu_open(SCREEN_STORY_SHOP);
     pump(4);
     dump(dir, "04_shop_normal");
 
     /* Mr Chubbs, boss dock (after level 9 -> Rustjaw next): free life. */
+    story_shop_close();
     story_shop_open(9);
     menu_open(SCREEN_STORY_SHOP);
     pump(4);
@@ -91,12 +93,14 @@ int main(int argc, char** argv) {
 
     /* Buy attempt with an empty wallet -> the red status line. */
     g_story.chubbcoin = 0;
-    story_shop_open(11);
+    story_shop_close();
+    g_story.docks_used = 0;      /* re-open a dock for the screenshot */
+    story_shop_open(14);
     menu_open(SCREEN_STORY_SHOP);
     pump(2);
-    menu_queue_tap(40, 52 + 21); /* select row 1 */
+    menu_queue_tap(40, 34 + 21); /* select row 1 */
     pump(2);
-    menu_queue_tap(40, 52 + 21); /* buy it */
+    menu_queue_tap(40, 34 + 21); /* buy it */
     pump(4);
     dump(dir, "07_shop_too_poor");
 
@@ -127,12 +131,28 @@ int main(int argc, char** argv) {
     game_draw();
     dump(dir, "11_arcade_hud");
 
+    /* One shot per kingdom backdrop, so a theme regression is visible at a
+     * glance rather than only on a device. */
+    for (int t = 0; t < SF_THEME_COUNT; t++) {
+        starfield_set_theme(t);
+        for (int i = 0; i < 120; i++) starfield_update();
+        starfield_draw_base(0, 0);
+        starfield_draw_stars(0, 0);
+        gfx_flip();
+        char nm[32];
+        snprintf(nm, sizeof(nm), "sky_%d", t);
+        dump(dir, nm);
+    }
+    starfield_set_theme(SF_THEME_ARCADE);
+
     /* Widest supported viewport: the shop must not just stretch, it must
      * still breathe. */
     host_set_screen_width(HOST_SCREEN_W_MAX);
     menu_request_full_redraw();
     game_request_full_redraw();
     g_story.chubbcoin = 1840;
+    story_shop_close();
+    g_story.docks_used = 0;
     story_shop_open(9);
     menu_open(SCREEN_STORY_SHOP);
     pump(4);
