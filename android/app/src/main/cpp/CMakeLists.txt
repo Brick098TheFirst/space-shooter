@@ -33,6 +33,8 @@ add_library(spacegame SHARED
     ${GBA_DIR}/src/save.c
     ${GBA_DIR}/src/starfield.c
     ${GBA_DIR}/src/gfx_data.c
+    # Boss hull sprites (same template language as the player ships).
+    ${GBA_DIR}/src/boss_gfx.c
 )
 
 # The Android multiplayer edition compiles its own FORKED copy of game.c/game.h

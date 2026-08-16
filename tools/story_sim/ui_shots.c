@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
     pump(4);
     dump(dir, "04_shop_normal");
 
-    /* Mr Chubbs, boss dock (after level 9 -> Rustjaw next): free life. */
+    /* Mr Chubbs, boss dock (after level 9 -> Ironmaw next): free life. */
     story_shop_close();
     story_shop_open(9);
     menu_open(SCREEN_STORY_SHOP);

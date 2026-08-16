@@ -335,26 +335,34 @@ IWRAM_CODE void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style) {
     }
 }
 
-#ifdef PLATFORM_HOST
-/* Remap the stock purple drone (indices 112-120) onto a gold or cyan hull
- * so the boss cannot be confused with hunters (crimson player ships). */
-IWRAM_CODE void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int anim_frame) {
-    int scale = mini ? 1 : 2;
-    int w = 18, h = 14;
+/* ── Boss hulls ──────────────────────────────────────────────────────────
+ * Every boss is a real pixel-art ship from spr_boss (boss_gfx.c), authored
+ * in the SAME template language as the player hulls: shared lighting ramp
+ * 33..38, glow 16, and accent mask 241..243 remapped onto one of the eight
+ * paint ramps at draw time.  Bosses fly nose-down, so the sprites are
+ * authored nose-down and need no flipping here. */
+IWRAM_CODE void gfx_draw_boss_ship(int cx, int cy, int sprite_id, int scale,
+                                   bool flash, int anim_frame) {
+    if (sprite_id < 0 || sprite_id >= NUM_BOSS_SPRITES) sprite_id = 0;
+    if (scale < 1) scale = 1;
+    const u8* src = spr_boss[sprite_id];
+    int accent = boss_default_accent[sprite_id];
+    int w = BOSS_SPR_W, h = BOSS_SPR_H;
     int x = cx - (w * scale) / 2;
     int y = cy - (h * scale) / 2;
-    /* Gold (full) vs electric cyan (mini). Flash blows out to white. */
-    const u8 gold[9]  = { 64, 65, 66, 67, 24, 66, 16, 16, 16 };
-    const u8 cyan[9]  = { 52, 53, 54, 55, 21, 54, 16, 16, 16 };
-    const u8 white[9] = { 16, 16, 16, 16, 16, 16, 16, 16, 16 };
-    const u8* map = flash ? white : (mini ? cyan : gold);
 
     for (int sy = 0; sy < h; sy++) {
         for (int sx = 0; sx < w; sx++) {
-            u8 pix = spr_drone[sy * w + sx];
+            u8 pix = src[sy * w + sx];
             if (pix == 0) continue;
-            u8 col = pix;
-            if (pix >= 112 && pix <= 120) col = map[pix - 112];
+            u8 col;
+            if (flash) {
+                col = PAL_TEXT_WHITE;
+            } else if (pix >= 241 && pix <= 243) {
+                col = (u8)(48 + accent * 4 + (pix - 240));
+            } else {
+                col = pix;
+            }
             for (int dy = 0; dy < scale; dy++) {
                 int py = y + sy * scale + dy;
                 if ((unsigned)py >= SCREEN_HEIGHT) continue;
@@ -367,112 +375,19 @@ IWRAM_CODE void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int a
         }
     }
 
-    /* Subtle engine pulse under the hull — 1px flicker, not a strobe. */
-    int pulse = (anim_frame >> 3) & 1;
-    int ey = y + h * scale + pulse;
-    int ew = mini ? 6 : 10;
-    int ex = cx - ew / 2;
-    u8 ecol = flash ? PAL_TEXT_WHITE : (mini ? PAL_TEXT_CYAN : PAL_TEXT_GOLD);
-    gfx_fill_rect(ex, ey, ew, 1, ecol);
-    if (!mini) gfx_fill_rect(ex + 2, ey + 1, ew - 4, 1, ecol);
-
-    /* Thin distinguishing ring so a 1x mini-boss still reads as "boss". */
-    u8 ring = flash ? PAL_TEXT_WHITE : (mini ? PAL_TEXT_CYAN : PAL_TEXT_GOLD);
-    int rw = w * scale + 4;
-    int rh = h * scale + 4;
-    int rx = cx - rw / 2;
-    int ry = cy - rh / 2;
-    if (((anim_frame >> 4) & 1) == 0) {
-        gfx_draw_rect(rx, ry, rw, rh, ring);
+    /* Engine flare: bosses fly nose-down, so their engines burn at the TOP
+     * of the hull — same flicker cadence as the player's trail. */
+    if (!flash) {
+        int pulse = (anim_frame >> 2) & 1;
+        u8 hot  = PAL_TEXT_WHITE;
+        u8 cool = (u8)(48 + accent * 4 + 1);
+        int ew = (w * scale) / 3;
+        int ex = cx - ew / 2;
+        gfx_fill_rect(ex, y - 1 - pulse, ew, 1, cool);
+        gfx_fill_rect(ex + ew / 4, y - pulse, ew / 2, 1, hot);
     }
 }
 
-/* Purpose-built campaign pixel ships. These are drawn from chunky 1-3 px
- * primitives so their silhouettes remain distinct on a phone without
- * borrowing the same drone sprite seven times. */
-IWRAM_CODE void gfx_draw_story_boss(int cx, int cy, int id, bool flash, int anim_frame) {
-    u8 hull = flash ? PAL_TEXT_WHITE : (u8)(64 + (id % 4));
-    u8 trim = flash ? PAL_TEXT_WHITE : (id == 2 ? PAL_TEXT_CYAN :
-              (id == 4 ? PAL_TEXT_RED : (id == 6 ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD)));
-    u8 core = flash ? PAL_TEXT_WHITE : (id == 0 ? PAL_TEXT_RED : PAL_TEXT_CYAN);
-    int pulse = (anim_frame >> 3) & 1;
-
-    switch (id) {
-        case 0: /* Rustjaw: broad scrap mandibles and visible teeth. */
-            gfx_fill_rect(cx - 18, cy - 9, 36, 8, hull);
-            gfx_fill_rect(cx - 23, cy - 5, 9, 13, hull);
-            gfx_fill_rect(cx + 14, cy - 5, 9, 13, hull);
-            gfx_fill_rect(cx - 15, cy + 5, 30, 4, trim);
-            for (int x = -11; x <= 11; x += 7) gfx_fill_rect(cx + x, cy + 9, 3, 5, PAL_TEXT_WHITE);
-            gfx_fill_rect(cx - 5, cy - 6, 10, 5, core);
-            break;
-        case 1: /* Twins: two arrowhead hulls divided by a hot seam. */
-            gfx_fill_rect(cx - 21, cy - 7, 17, 15, hull);
-            gfx_fill_rect(cx + 4, cy - 7, 17, 15, hull);
-            gfx_fill_rect(cx - 16, cy - 12, 8, 5, trim);
-            gfx_fill_rect(cx + 8, cy - 12, 8, 5, trim);
-            gfx_fill_rect(cx - 4, cy - 2, 8, 4, core);
-            gfx_fill_rect(cx - 18, cy + 8, 7, 4 + pulse, trim);
-            gfx_fill_rect(cx + 11, cy + 8, 7, 4 + pulse, trim);
-            break;
-        case 2: /* Frostwidow: icy spider frame, thin legs, tiny body. */
-            gfx_fill_rect(cx - 8, cy - 10, 16, 20, hull);
-            gfx_fill_rect(cx - 4, cy - 14, 8, 5, trim);
-            for (int side = -1; side <= 1; side += 2) {
-                gfx_fill_rect(cx + side * 9 - (side < 0 ? 8 : 0), cy - 8, 8, 3, trim);
-                gfx_fill_rect(cx + side * 15 - (side < 0 ? 7 : 0), cy - 5, 7, 3, hull);
-                gfx_fill_rect(cx + side * 9 - (side < 0 ? 10 : 0), cy + 1, 10, 3, trim);
-                gfx_fill_rect(cx + side * 17 - (side < 0 ? 6 : 0), cy + 4, 6, 5, hull);
-                gfx_fill_rect(cx + side * 8 - (side < 0 ? 8 : 0), cy + 8, 8, 3, trim);
-            }
-            gfx_fill_rect(cx - 3, cy - 3, 6, 6, core);
-            break;
-        case 3: /* Scrap Titan: asymmetrical industrial slab. */
-            gfx_fill_rect(cx - 21, cy - 12, 42, 23, hull);
-            gfx_fill_rect(cx - 26, cy - 5, 8, 14, trim);
-            gfx_fill_rect(cx + 18, cy - 9, 10, 18, hull);
-            gfx_fill_rect(cx - 13, cy - 16, 20, 5, trim);
-            gfx_fill_rect(cx - 14, cy + 4, 28, 4, PAL_TEXT_GOLD);
-            gfx_fill_rect(cx - 5, cy - 7, 10, 8, core);
-            gfx_fill_rect(cx - 17, cy + 11, 7, 4 + pulse, PAL_TEXT_RED);
-            gfx_fill_rect(cx + 10, cy + 11, 7, 4 + pulse, PAL_TEXT_RED);
-            break;
-        case 4: /* Emberlash: sharp solar manta with split tail. */
-            gfx_fill_rect(cx - 7, cy - 14, 14, 25, hull);
-            gfx_fill_rect(cx - 24, cy - 5, 48, 8, trim);
-            gfx_fill_rect(cx - 18, cy - 10, 11, 5, hull);
-            gfx_fill_rect(cx + 7, cy - 10, 11, 5, hull);
-            gfx_fill_rect(cx - 13, cy + 3, 8, 8, hull);
-            gfx_fill_rect(cx + 5, cy + 3, 8, 8, hull);
-            gfx_fill_rect(cx - 3, cy - 7, 6, 7, PAL_TEXT_GOLD);
-            gfx_fill_rect(cx - 9, cy + 11, 5, 4 + pulse, PAL_TEXT_RED);
-            gfx_fill_rect(cx + 4, cy + 11, 5, 4 + pulse, PAL_TEXT_RED);
-            break;
-        case 5: /* Vault Warden: sealed hexagonal fortress. */
-            gfx_fill_rect(cx - 18, cy - 10, 36, 21, hull);
-            gfx_fill_rect(cx - 23, cy - 5, 5, 11, trim);
-            gfx_fill_rect(cx + 18, cy - 5, 5, 11, trim);
-            gfx_fill_rect(cx - 12, cy - 15, 24, 5, trim);
-            gfx_fill_rect(cx - 12, cy + 11, 24, 5, trim);
-            gfx_draw_rect(cx - 10, cy - 8, 20, 17, PAL_TEXT_CYAN);
-            gfx_fill_rect(cx - 4, cy - 3, 8, 7, core);
-            break;
-        default: /* Reality Queen: crown, swept royal wings and violet heart. */
-            gfx_fill_rect(cx - 8, cy - 13, 16, 27, hull);
-            gfx_fill_rect(cx - 24, cy - 7, 16, 15, trim);
-            gfx_fill_rect(cx + 8, cy - 7, 16, 15, trim);
-            gfx_fill_rect(cx - 19, cy - 12, 11, 5, hull);
-            gfx_fill_rect(cx + 8, cy - 12, 11, 5, hull);
-            gfx_fill_rect(cx - 12, cy - 18, 4, 7, PAL_TEXT_GOLD);
-            gfx_fill_rect(cx - 2, cy - 21, 4, 10, PAL_TEXT_GOLD);
-            gfx_fill_rect(cx + 8, cy - 18, 4, 7, PAL_TEXT_GOLD);
-            gfx_fill_rect(cx - 4, cy - 5, 8, 9, PAL_TEXT_VIOLET);
-            gfx_fill_rect(cx - 15, cy + 8, 7, 4 + pulse, core);
-            gfx_fill_rect(cx + 8, cy + 8, 7, 4 + pulse, core);
-            break;
-    }
-}
-#endif
 
 /* Draw a complete player-style laser.  Rainbow Laser is deliberately rendered
  * here rather than cached: each coloured edge pixel gets a moving spectrum

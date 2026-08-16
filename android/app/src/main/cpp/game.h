@@ -98,12 +98,14 @@ typedef struct {
 /* Boss ship (wave 10/20/30...) and mini-boss (wave 5/15/25...). */
 typedef enum {
     BOSS_IDLE,
-    BOSS_SWEEP,        // side-to-side sweep firing straight down
-    BOSS_BURST,        // radial 8-way burst
-    BOSS_BEAM_WIND,    // warning flash before laser
-    BOSS_BEAM_FIRE,    // huge sweeping beam
-    BOSS_DIVE,         // fast chase lunge
-    BOSS_REPOSITION    // recover high
+    BOSS_SWEEP,        // Corsair: strafing bomb run across the screen
+    BOSS_BURST,        // Corsair: snap fans / Dreadnought: ring barrage
+    BOSS_BEAM_WIND,    // Dreadnought: siege beam warning column
+    BOSS_BEAM_FIRE,    // Dreadnought: constant-speed sweeping siege beam
+    BOSS_DIVE,         // Corsair: feint dive at the player
+    BOSS_REPOSITION,   // recover high
+    BOSS_WALL,         // Dreadnought: walking curtain walls with a gap
+    BOSS_SCISSOR       // Dreadnought: crossing broadsides from both wings
 } BossPhase;
 
 /* Story-mode boss phases. Each of the seven story bosses drives its own
@@ -141,17 +143,18 @@ typedef struct {
      * Only meaningful while g_game.mode == GAME_MODE_STORY. Each of the
      * seven story bosses reads these differently (see story_boss_ai). */
     int  story_id;       // StoryBossId, -1 for the arcade boss
-    int  stage;          // phase-change counter (Queen has 3, Twins 2, ...)
+    int  stage;          // phase-change counter (Empress has 3, Gemini 2, ...)
     int  attack_timer;   // generic per-attack countdown
-    int  spin;           // rotating attack angle (Emberlash whips, Queen ring)
+    int  spin;           // rotating attack angle (Inferno whips, Empress ring)
     int  anchor_x;       // 8.8 - home position for attacks that return
     int  charge;         // wind-up accumulator
-    int  shield;         // Vault Warden node shield (damage blocked while >0)
-    int  node_hp[4];     // Vault Warden turret nodes / Titan armour plates
-    int  clone_x;        // 8.8 - the Twins' second half
+    int  shield;         // Aegis node shield (damage blocked while >0)
+    int  node_hp[4];     // Aegis turret nodes / Juggernaut armour plates
+    int  clone_x;        // 8.8 - Gemini's second half
     int  clone_y;
     int  clone_hp;
     bool clone_active;
+    int  last_move;      // previous attack roll, so moves never repeat twice
 } Boss;
 
 typedef enum {
@@ -254,6 +257,8 @@ int  game_story_waiting_for_start(void);
 void game_story_continue(void);
 /* 0 = still flying, 1 = level cleared, 2 = failed. */
 int  game_story_outcome(void);
+/* SIGNAL HUNT puzzles: asteroid slot carrying the scanner mark (-1 none). */
+int  game_story_puzzle_mark(void);
 /* Chubbcoin banked by the level that just ended. */
 int  game_story_earned(void);
 

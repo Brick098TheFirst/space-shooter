@@ -218,12 +218,12 @@ int main(void){
     story_shop_open(4);                        /* level 5 next: not a boss */
     CHK(!story_shop_is_boss_dock(),"level 5 is not a boss dock");
     CHK(story_shop_take_gift()==0,"no gift off a boss dock");
-    story_shop_open(9);                        /* level 10 next: Rustjaw */
+    story_shop_open(9);                        /* level 10 next: Ironmaw */
     CHK(story_shop_is_boss_dock(),"dock before level 10 is a boss dock");
     CHK(story_shop_take_gift()==1,"boss dock gifts a life");
     CHK(story_lives()==4,"the free life landed");
     CHK(story_shop_take_gift()==0,"the gift is one per boss");
-    story_shop_open(19);                       /* level 20 next: the Twins */
+    story_shop_open(19);                       /* level 20 next: Gemini */
     CHK(story_shop_take_gift()==1,"each boss has its own gift");
     CHK(story_lives()==5,"second free life landed");
     CHK(story_shop_line1()[0] && story_shop_line2()[0],"Mr Chubbs has something to say");

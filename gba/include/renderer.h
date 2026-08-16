@@ -4,6 +4,7 @@
 #include "platform.h"
 #include "types.h"
 #include "gfx_data.h"
+#include "boss_gfx.h"
 
 void gfx_init(void);
 void gfx_flip(void);
@@ -37,16 +38,11 @@ void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
  * animated rainbow - works on every hull. */
 void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style);
 void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style);
-#ifdef PLATFORM_HOST
-/* Boss hull: the unused mini-drone sprite, recolored + scaled so it
- * cannot be mistaken for a hunter (crimson player ship) or a rock. */
-void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int anim_frame);
-#ifdef PLATFORM_HOST
-/* Seven Android campaign silhouettes; unlike the arcade drone, each story
- * boss has its own hand-built pixel hull. */
-void gfx_draw_story_boss(int cx, int cy, int boss_id, bool flash, int anim_frame);
-#endif
-#endif
+/* Boss hull: a real pixel-art ship from spr_boss (boss_gfx.c), authored in
+ * the same template language as the player hulls (shared lighting ramp +
+ * accent mask), drawn nose-down at an integer scale.  sprite_id is a
+ * BossSpriteId; flash blows the hull out white on hits. */
+void gfx_draw_boss_ship(int cx, int cy, int sprite_id, int scale, bool flash, int anim_frame);
 void gfx_draw_laser(int center_x, int center_y, bool heavy, int laser_idx, int anim_frame, bool downward);
 bool gfx_laser_is_animated(int laser_idx);
 void gfx_draw_sprite_rotated(int cx, int cy, int w, int h, const u8* data, int angle_deg);

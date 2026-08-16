@@ -1262,6 +1262,11 @@ static void render_story_map(void) {
         case OBJ_SURVIVE: goal = "SURVIVE THE FIELD"; break;
         case OBJ_BIGGAME: goal = "CRACK THE BIG ONES"; break;
         case OBJ_TIMED:   goal = "CLEAR IT ON THE CLOCK"; break;
+        case OBJ_PUZZLE:
+            goal = (L->modifier == MOD_PZ_SALVO)  ? "PUZZLE: LIMITED AMMO" :
+                   (L->modifier == MOD_PZ_SIGNAL) ? "PUZZLE: SIGNAL HUNT" :
+                                                    "PUZZLE: GUNS OFFLINE";
+            break;
         case OBJ_BOSS:    goal = story_boss_name(story_boss_for_level(s_map_cursor)); break;
         default:          goal = "CLEAR EVERYTHING"; break;
     }
