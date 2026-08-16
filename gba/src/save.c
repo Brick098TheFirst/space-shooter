@@ -1147,6 +1147,12 @@ int save_apply_cheat(const char* code) {
         save_write();
         return 1;
     }
+    /* Kept out of player-facing documentation on purpose. Unlocks the map,
+     * but does not fake clears, rewards, gifts, or the ending. */
+    if (cheat_matches(code, "OPENALLKINGDOMS")) {
+        story_unlock_all_levels();
+        return 2;
+    }
     return 0;
 }
 #endif

@@ -386,6 +386,92 @@ IWRAM_CODE void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int a
         gfx_draw_rect(rx, ry, rw, rh, ring);
     }
 }
+
+/* Purpose-built campaign pixel ships. These are drawn from chunky 1-3 px
+ * primitives so their silhouettes remain distinct on a phone without
+ * borrowing the same drone sprite seven times. */
+IWRAM_CODE void gfx_draw_story_boss(int cx, int cy, int id, bool flash, int anim_frame) {
+    u8 hull = flash ? PAL_TEXT_WHITE : (u8)(64 + (id % 4));
+    u8 trim = flash ? PAL_TEXT_WHITE : (id == 2 ? PAL_TEXT_CYAN :
+              (id == 4 ? PAL_TEXT_RED : (id == 6 ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD)));
+    u8 core = flash ? PAL_TEXT_WHITE : (id == 0 ? PAL_TEXT_RED : PAL_TEXT_CYAN);
+    int pulse = (anim_frame >> 3) & 1;
+
+    switch (id) {
+        case 0: /* Rustjaw: broad scrap mandibles and visible teeth. */
+            gfx_fill_rect(cx - 18, cy - 9, 36, 8, hull);
+            gfx_fill_rect(cx - 23, cy - 5, 9, 13, hull);
+            gfx_fill_rect(cx + 14, cy - 5, 9, 13, hull);
+            gfx_fill_rect(cx - 15, cy + 5, 30, 4, trim);
+            for (int x = -11; x <= 11; x += 7) gfx_fill_rect(cx + x, cy + 9, 3, 5, PAL_TEXT_WHITE);
+            gfx_fill_rect(cx - 5, cy - 6, 10, 5, core);
+            break;
+        case 1: /* Twins: two arrowhead hulls divided by a hot seam. */
+            gfx_fill_rect(cx - 21, cy - 7, 17, 15, hull);
+            gfx_fill_rect(cx + 4, cy - 7, 17, 15, hull);
+            gfx_fill_rect(cx - 16, cy - 12, 8, 5, trim);
+            gfx_fill_rect(cx + 8, cy - 12, 8, 5, trim);
+            gfx_fill_rect(cx - 4, cy - 2, 8, 4, core);
+            gfx_fill_rect(cx - 18, cy + 8, 7, 4 + pulse, trim);
+            gfx_fill_rect(cx + 11, cy + 8, 7, 4 + pulse, trim);
+            break;
+        case 2: /* Frostwidow: icy spider frame, thin legs, tiny body. */
+            gfx_fill_rect(cx - 8, cy - 10, 16, 20, hull);
+            gfx_fill_rect(cx - 4, cy - 14, 8, 5, trim);
+            for (int side = -1; side <= 1; side += 2) {
+                gfx_fill_rect(cx + side * 9 - (side < 0 ? 8 : 0), cy - 8, 8, 3, trim);
+                gfx_fill_rect(cx + side * 15 - (side < 0 ? 7 : 0), cy - 5, 7, 3, hull);
+                gfx_fill_rect(cx + side * 9 - (side < 0 ? 10 : 0), cy + 1, 10, 3, trim);
+                gfx_fill_rect(cx + side * 17 - (side < 0 ? 6 : 0), cy + 4, 6, 5, hull);
+                gfx_fill_rect(cx + side * 8 - (side < 0 ? 8 : 0), cy + 8, 8, 3, trim);
+            }
+            gfx_fill_rect(cx - 3, cy - 3, 6, 6, core);
+            break;
+        case 3: /* Scrap Titan: asymmetrical industrial slab. */
+            gfx_fill_rect(cx - 21, cy - 12, 42, 23, hull);
+            gfx_fill_rect(cx - 26, cy - 5, 8, 14, trim);
+            gfx_fill_rect(cx + 18, cy - 9, 10, 18, hull);
+            gfx_fill_rect(cx - 13, cy - 16, 20, 5, trim);
+            gfx_fill_rect(cx - 14, cy + 4, 28, 4, PAL_TEXT_GOLD);
+            gfx_fill_rect(cx - 5, cy - 7, 10, 8, core);
+            gfx_fill_rect(cx - 17, cy + 11, 7, 4 + pulse, PAL_TEXT_RED);
+            gfx_fill_rect(cx + 10, cy + 11, 7, 4 + pulse, PAL_TEXT_RED);
+            break;
+        case 4: /* Emberlash: sharp solar manta with split tail. */
+            gfx_fill_rect(cx - 7, cy - 14, 14, 25, hull);
+            gfx_fill_rect(cx - 24, cy - 5, 48, 8, trim);
+            gfx_fill_rect(cx - 18, cy - 10, 11, 5, hull);
+            gfx_fill_rect(cx + 7, cy - 10, 11, 5, hull);
+            gfx_fill_rect(cx - 13, cy + 3, 8, 8, hull);
+            gfx_fill_rect(cx + 5, cy + 3, 8, 8, hull);
+            gfx_fill_rect(cx - 3, cy - 7, 6, 7, PAL_TEXT_GOLD);
+            gfx_fill_rect(cx - 9, cy + 11, 5, 4 + pulse, PAL_TEXT_RED);
+            gfx_fill_rect(cx + 4, cy + 11, 5, 4 + pulse, PAL_TEXT_RED);
+            break;
+        case 5: /* Vault Warden: sealed hexagonal fortress. */
+            gfx_fill_rect(cx - 18, cy - 10, 36, 21, hull);
+            gfx_fill_rect(cx - 23, cy - 5, 5, 11, trim);
+            gfx_fill_rect(cx + 18, cy - 5, 5, 11, trim);
+            gfx_fill_rect(cx - 12, cy - 15, 24, 5, trim);
+            gfx_fill_rect(cx - 12, cy + 11, 24, 5, trim);
+            gfx_draw_rect(cx - 10, cy - 8, 20, 17, PAL_TEXT_CYAN);
+            gfx_fill_rect(cx - 4, cy - 3, 8, 7, core);
+            break;
+        default: /* Reality Queen: crown, swept royal wings and violet heart. */
+            gfx_fill_rect(cx - 8, cy - 13, 16, 27, hull);
+            gfx_fill_rect(cx - 24, cy - 7, 16, 15, trim);
+            gfx_fill_rect(cx + 8, cy - 7, 16, 15, trim);
+            gfx_fill_rect(cx - 19, cy - 12, 11, 5, hull);
+            gfx_fill_rect(cx + 8, cy - 12, 11, 5, hull);
+            gfx_fill_rect(cx - 12, cy - 18, 4, 7, PAL_TEXT_GOLD);
+            gfx_fill_rect(cx - 2, cy - 21, 4, 10, PAL_TEXT_GOLD);
+            gfx_fill_rect(cx + 8, cy - 18, 4, 7, PAL_TEXT_GOLD);
+            gfx_fill_rect(cx - 4, cy - 5, 8, 9, PAL_TEXT_VIOLET);
+            gfx_fill_rect(cx - 15, cy + 8, 7, 4 + pulse, core);
+            gfx_fill_rect(cx + 8, cy + 8, 7, 4 + pulse, core);
+            break;
+    }
+}
 #endif
 
 /* Draw a complete player-style laser.  Rainbow Laser is deliberately rendered

@@ -1054,6 +1054,28 @@ static void map_focus_current(void) {
     map_snap_ship();
 }
 
+static void map_page_sector(int delta) {
+    int next = s_map_sector + delta;
+    if (next < 0 || next >= STORY_SECTOR_COUNT) return;
+    int first = next * STORY_SECTOR_LEVELS + 1;
+    if (first > story_highest_unlocked()) {
+        map_set_msg("KINGDOM LOCKED - CLEAR THE PATH");
+        return;
+    }
+    s_map_sector = next;
+    /* Paging is also navigation: put the cursor in the kingdom being shown,
+     * rather than leaving the ship and level card stranded on the old page. */
+    int last = first + STORY_SECTOR_LEVELS - 1;
+    int frontier = story_highest_unlocked();
+    s_map_cursor = (delta > 0 && frontier < last) ? frontier : first;
+    if (s_map_cursor < first) s_map_cursor = first;
+    if (s_map_cursor > last) s_map_cursor = last;
+    map_snap_ship();
+    starfield_set_theme(story_theme_for_sector(s_map_sector));
+}
+
+static int map_chubbs_chip_x(void) { return SCREEN_WIDTH - 104; }
+
 static void map_move_cursor(int delta) {
     int want = s_map_cursor + delta;
     if (want < 1) want = 1;
@@ -1064,7 +1086,10 @@ static void map_move_cursor(int delta) {
         return;
     }
     s_map_cursor = want;
+    int old_sector = s_map_sector;
     s_map_sector = story_sector_of(s_map_cursor);
+    if (s_map_sector != old_sector)
+        starfield_set_theme(story_theme_for_sector(s_map_sector));
 }
 
 static void map_launch(void) {
@@ -1099,26 +1124,19 @@ static void update_story_map(void) {
 
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
-        /* Mr Chubbs' status chip sits top-right. He is not a shop you can
-         * walk into from the map: he only docks on the clear of every fifth
-         * level, and only once. The chip just tells you how far off he is. */
-        if (in_rect(tx, ty, SCREEN_WIDTH - 92, 18, 88, 22)) {
+        /* Sector arrows get first claim on their hit areas. The old right
+         * arrow sat underneath the Chubbs chip, making forward paging
+         * impossible by touch even though backward paging worked. */
+        if (in_rect(tx, ty, 4, 20, 24, 22)) { map_page_sector(-1); return; }
+        if (in_rect(tx, ty, SCREEN_WIDTH - 28, 20, 24, 22)) { map_page_sector(1); return; }
+        /* Chubbs is a status chip, not a second route into the shop. */
+        if (in_rect(tx, ty, map_chubbs_chip_x(), 18, 76, 22)) {
             map_set_msg(map_chubbs_hint());
             return;
         }
         /* LAUNCH button. */
         if (in_rect(tx, ty, (SCREEN_WIDTH - 96) / 2, SCREEN_HEIGHT - 26, 96, 20)) {
             map_launch();
-            return;
-        }
-        /* Sector arrows. */
-        if (in_rect(tx, ty, 4, 20, 24, 22)) {
-            if (s_map_sector > 0) s_map_sector--;
-            return;
-        }
-        if (in_rect(tx, ty, SCREEN_WIDTH - 28, 20, 24, 22)) {
-            if (s_map_sector < STORY_SECTOR_COUNT - 1 &&
-                story_highest_unlocked() > (s_map_sector + 1) * STORY_SECTOR_LEVELS) s_map_sector++;
             return;
         }
         /* Tap a node to select it (and tap again to launch). */
@@ -1139,9 +1157,8 @@ static void update_story_map(void) {
     if (key_hit(KEY_RIGHT)) map_move_cursor(1);
     if (key_hit(KEY_UP))    map_move_cursor(-STORY_SECTOR_LEVELS);
     if (key_hit(KEY_DOWN))  map_move_cursor(STORY_SECTOR_LEVELS);
-    if (key_hit(KEY_L) && s_map_sector > 0) s_map_sector--;
-    if (key_hit(KEY_R) && s_map_sector < STORY_SECTOR_COUNT - 1 &&
-        story_highest_unlocked() > (s_map_sector + 1) * STORY_SECTOR_LEVELS) s_map_sector++;
+    if (key_hit(KEY_L)) map_page_sector(-1);
+    if (key_hit(KEY_R)) map_page_sector(1);
     if (key_hit(KEY_A) || key_hit(KEY_START)) map_launch();
     if (key_hit(KEY_SELECT)) map_set_msg(map_chubbs_hint());
     if (key_hit(KEY_B)) menu_open(SCREEN_MAIN_MENU);
@@ -1174,14 +1191,15 @@ static void render_story_map(void) {
     {
         int next_dock = map_next_dock();
         bool boss_dock = (next_dock > 0) && story_boss_dock(next_dock + 1);
-        gfx_draw_glass_card(SCREEN_WIDTH - 92, 18, 88, 22,
+        int chip_x = map_chubbs_chip_x();
+        gfx_draw_glass_card(chip_x, 18, 76, 22,
                             boss_dock ? PAL_TEXT_RED : 20, 14);
-        gfx_draw_text_centered(SCREEN_WIDTH - 92, 21, 88, "MR CHUBBS", PAL_TEXT_GOLD);
+        gfx_draw_text_centered(chip_x, 21, 76, "MR CHUBBS", PAL_TEXT_GOLD);
         if (next_dock <= 0) {
-            gfx_draw_text_centered(SCREEN_WIDTH - 92, 30, 88, "GONE FOR GOOD", 18);
+            gfx_draw_text_centered(chip_x, 30, 76, "GONE", 18);
         } else {
-            siprintf(buf, "DOCKS AT LV %d", next_dock);
-            gfx_draw_text_centered(SCREEN_WIDTH - 92, 30, 88, buf,
+            siprintf(buf, "DOCKS LV %d", next_dock);
+            gfx_draw_text_centered(chip_x, 30, 76, buf,
                                    boss_dock ? PAL_TEXT_RED : PAL_TEXT_WHITE);
         }
     }
@@ -1294,6 +1312,8 @@ static void render_story_map(void) {
  * hull, the radio text and the prices. */
 
 static int s_shopz_sel = 0;
+static int s_shopz_scroll = 0;
+#define SHOPZ_VISIBLE_ROWS 4
 static int s_shopz_msg_timer = 0;
 static u8  s_shopz_msg_col = PAL_TEXT_GOLD;
 static char s_shopz_msg[40];
@@ -1311,6 +1331,7 @@ static void shopz_msg(const char* m, u8 col, int timer) {
 
 static void story_shop_reset_ui(void) {
     s_shopz_sel = 0;
+    s_shopz_scroll = 0;
     s_shopz_msg_timer = 0;
     s_shopz_flash = 0;
     /* Boss docks: Mr Chubbs talks you up and hands over a life, free. */
@@ -1332,7 +1353,7 @@ static void story_shop_reset_ui(void) {
  *   hangar: tabs at y=17 h=13, panels at y=31 h=112, rows 21 px, msg y=148
  *   dock:   radio at y=17 h=13, panels at y=31 h=112, rows 21 px, msg y=148
  *
- * Mr Chubbs has no tab strip (one shelf, four slots), so the row that the
+ * Mr Chubbs has no tab strip (one scrolling shelf), so the row that the
  * hangar spends on tabs becomes his radio line - the layout below it is
  * identical. */
 #define SHOPZ_ROW_H     LIST_ROW_H   /* 21: the hangar's row pitch */
@@ -1390,12 +1411,21 @@ static void update_story_shop(void) {
     if (s_shopz_flash > 0) s_shopz_flash--;
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
-        for (int i = 0; i < STORY_SHOP_SLOTS; i++) {
-            if (in_rect(tx, ty, shopz_row_x(), shopz_row_y(i), shopz_row_w(), SHOPZ_ROW_H)) {
+        for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
+            int i = s_shopz_scroll + row;
+            if (i >= STORY_SHOP_SLOTS) break;
+            if (in_rect(tx, ty, shopz_row_x(), shopz_row_y(row), shopz_row_w(), SHOPZ_ROW_H)) {
                 /* Tap to select, tap the selected row again to buy - the
                  * same double-tap the hangar list uses. */
                 if (s_shopz_sel == i) shopz_buy(i);
-                else { s_shopz_sel = i; s_shopz_flash = 0; }
+                else {
+                    s_shopz_sel = i; s_shopz_flash = 0;
+                    /* Edge rows act like a phone list: selecting the bottom
+                     * or top item reveals more of the eight-item shelf. */
+                    if (row == SHOPZ_VISIBLE_ROWS - 1 &&
+                        s_shopz_scroll + SHOPZ_VISIBLE_ROWS < STORY_SHOP_SLOTS) s_shopz_scroll++;
+                    else if (row == 0 && s_shopz_scroll > 0) s_shopz_scroll--;
+                }
                 return;
             }
         }
@@ -1405,8 +1435,19 @@ static void update_story_shop(void) {
                     shopz_row_w(), shopz_leave_h())) { shopz_leave(); return; }
         return;
     }
-    if (key_hit(KEY_UP)) { s_shopz_sel = (s_shopz_sel + STORY_SHOP_SLOTS - 1) % STORY_SHOP_SLOTS; s_shopz_flash = 0; }
-    if (key_hit(KEY_DOWN)) { s_shopz_sel = (s_shopz_sel + 1) % STORY_SHOP_SLOTS; s_shopz_flash = 0; }
+    if (key_hit(KEY_UP)) {
+        s_shopz_sel = (s_shopz_sel + STORY_SHOP_SLOTS - 1) % STORY_SHOP_SLOTS;
+        if (s_shopz_sel < s_shopz_scroll) s_shopz_scroll = s_shopz_sel;
+        if (s_shopz_sel == STORY_SHOP_SLOTS - 1) s_shopz_scroll = STORY_SHOP_SLOTS - SHOPZ_VISIBLE_ROWS;
+        s_shopz_flash = 0;
+    }
+    if (key_hit(KEY_DOWN)) {
+        s_shopz_sel = (s_shopz_sel + 1) % STORY_SHOP_SLOTS;
+        if (s_shopz_sel >= s_shopz_scroll + SHOPZ_VISIBLE_ROWS)
+            s_shopz_scroll = s_shopz_sel - SHOPZ_VISIBLE_ROWS + 1;
+        if (s_shopz_sel == 0) s_shopz_scroll = 0;
+        s_shopz_flash = 0;
+    }
     if (key_hit(KEY_A)) shopz_buy(s_shopz_sel);
     if (key_hit(KEY_B) || key_hit(KEY_START)) shopz_leave();
 }
@@ -1437,6 +1478,15 @@ static void shopz_draw_icon(int x, int y, int kind, bool dim) {
             gfx_fill_rect(x + 1, y + 7, 2, 3, c);
             gfx_fill_rect(x + 4, y + 4, 2, 6, c);
             gfx_fill_rect(x + 7, y + 1, 2, 9, c);
+            break;
+        case SSTOCK_TRAIL:                      /* exhaust streak */
+            gfx_fill_rect(x + 1, y + 2, 7, 2, c);
+            gfx_fill_rect(x + 3, y + 5, 6, 2, dim ? (u8)18 : PAL_TEXT_GOLD);
+            gfx_fill_rect(x + 5, y + 8, 4, 2, c);
+            break;
+        case SSTOCK_SHIP:                       /* tiny winged hull */
+            gfx_fill_rect(x + 3, y + 1, 4, 9, c);
+            gfx_fill_rect(x + 1, y + 5, 8, 3, dim ? (u8)18 : PAL_TEXT_WHITE);
             break;
         default: break;
     }
@@ -1477,6 +1527,8 @@ static const char* shopz_slot_kind_line(int kind) {
         case SSTOCK_LASER:   return "Laser crystal core";
         case SSTOCK_PAINT:   return "Hull skin finish";
         case SSTOCK_UPGRADE: return "Permanent stat upgrade";
+        case SSTOCK_TRAIL:   return "Engine exhaust trail";
+        case SSTOCK_SHIP:    return "Complete hull style";
         default:             return "";
     }
 }
@@ -1512,10 +1564,12 @@ static void render_story_shop(void) {
     gfx_draw_glass_card(4, SHOPZ_PANEL_Y, list_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
     gfx_draw_glass_card(right_x, SHOPZ_PANEL_Y, right_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
 
-    /* ── Left panel: the shelf, one 21 px row per slot ── */
-    for (int i = 0; i < STORY_SHOP_SLOTS; i++) {
+    /* ── Left panel: four visible rows from the larger travelling shelf ── */
+    for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
+        int i = s_shopz_scroll + row;
+        if (i >= STORY_SHOP_SLOTS) break;
         const StoryStockItem* it = story_shop_slot(i);
-        int y = shopz_row_y(i);
+        int y = shopz_row_y(row);
         int rx = shopz_row_x(), rw = shopz_row_w();
         bool sel = (s_shopz_sel == i);
         bool gone = (it->qty == 0);

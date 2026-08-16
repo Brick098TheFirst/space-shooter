@@ -1444,7 +1444,9 @@ static int story_boss_hp(int boss_id) {
      * ladder is strictly monotonic. Real players out-damage the test pilot,
      * so these land a little faster in practice. */
     static const int base[STORY_SECTOR_COUNT] = {
-        340, 780, 2400, 3200, 8500, 5800, 30000
+        /* Shorter, readable duels: difficulty comes from each ship's gimmick,
+         * not from repeating its hardest barrage against an HP sponge. */
+        300, 650, 1800, 2500, 6200, 4600, 22000
     };
     int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
     int hp = base[id];
@@ -1471,6 +1473,9 @@ static void story_spawn_boss(int boss_id) {
     b->beam_width = TO_FIXED(10);
     b->active = true;
     b->stage = 0;
+    /* Last attack index. Scripts use it to avoid choosing the same move
+     * twice in a row; -1 also lets every rematch open differently. */
+    b->attack_timer = -1;
     b->sweep_dir = 1;
     b->clone_active = false;
 
@@ -1537,6 +1542,16 @@ static int sb_hp_pct(const Boss* b) {
     return (b->hp * 100) / b->hp_max;
 }
 
+/* Pick from this boss's move set without immediately repeating a move. The
+ * random starting point means rematches do not replay a memorised script. */
+static int sb_next_attack(Boss* b, int count) {
+    if (count < 2) return SB_ATTACK_A;
+    int pick = rand() % count;
+    if (pick == b->attack_timer) pick = (pick + 1 + rand() % (count - 1)) % count;
+    b->attack_timer = pick;
+    return SB_ATTACK_A + pick;
+}
+
 /* ── BOSS 1 - RUSTJAW (L10) ───────────────────────────────────────────────
  * A scrapyard jaw. Slams down at the player, spits chewed scrap in a wide
  * arc, and gets faster the closer to death it is. Teaches dodging a telegraph. */
@@ -1551,7 +1566,7 @@ static void sb_rustjaw(Boss* b) {
                 b->cooldown = (sb_hp_pct(b) < 40) ? 26 : 40;
             }
             if (b->phase_timer <= 0) {
-                b->phase = (rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B;
+                b->phase = sb_next_attack(b, 2);
                 b->phase_timer = 150;
                 b->aim_x = ai_target_ship()->x;
                 b->charge = 0;
@@ -1611,7 +1626,7 @@ static void sb_twins(Boss* b) {
                 b->cooldown = b->clone_active ? 30 : 42;
             }
             if (b->phase_timer <= 0) {
-                b->phase = b->clone_active ? SB_ATTACK_C : ((rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B);
+                b->phase = sb_next_attack(b, b->clone_active ? 3 : 2);
                 b->phase_timer = 140;
             }
             break;
@@ -1667,8 +1682,7 @@ static void sb_frostwidow(Boss* b) {
             sb_drift(b, TO_FIXED(1) + 100);
             if (--b->cooldown <= 0) { sb_fan(cx, cy + 12, 3, TO_FIXED(4), 6000); b->cooldown = 34; }
             if (b->phase_timer <= 0) {
-                int roll = rand() % 3;
-                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase = sb_next_attack(b, 3);
                 b->phase_timer = 160;
                 b->beam_x = ai_target_ship()->x;
                 b->spin = 0;
@@ -1731,8 +1745,7 @@ static void sb_scraptitan(Boss* b) {
             sb_drift(b, TO_FIXED(1));
             if (--b->cooldown <= 0) { sb_fan(cx, cy + 16, 5, TO_FIXED(3) + 100, 11000); b->cooldown = 44; }
             if (b->phase_timer <= 0) {
-                int roll = rand() % 3;
-                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase = sb_next_attack(b, 3);
                 b->phase_timer = 170;
             }
             break;
@@ -1791,7 +1804,7 @@ static void sb_emberlash(Boss* b) {
                                 (lu_sin(b->spin + 32768) * (TO_FIXED(3))) >> 12, false);
             }
             if (b->phase_timer <= 0) {
-                b->phase = (rand() & 1) ? SB_ATTACK_A : SB_ATTACK_B;
+                b->phase = sb_next_attack(b, 2);
                 b->phase_timer = 150;
             }
             break;
@@ -1907,8 +1920,7 @@ static void sb_realityqueen(Boss* b) {
                 b->cooldown = 30 - b->stage * 6;
             }
             if (b->phase_timer <= 0) {
-                int roll = rand() % (b->stage >= 1 ? 3 : 2);
-                b->phase = (roll == 0) ? SB_ATTACK_A : (roll == 1 ? SB_ATTACK_B : SB_ATTACK_C);
+                b->phase = sb_next_attack(b, b->stage >= 1 ? 3 : 2);
                 b->phase_timer = 170;
                 b->beam_x = ai_target_ship()->x;
             }
@@ -2106,7 +2118,11 @@ static bool add_boss_bullet(int x, int y, int vx, int vy, int heavy) {
             g_game.boss_bullets[i].vx = vx;
             g_game.boss_bullets[i].vy = vy;
             g_game.boss_bullets[i].radius = heavy ? 3 : 2;
-            g_game.boss_bullets[i].damage = heavy ? 2 : 1;
+            /* Story heavies stay visually distinct but only deal two hearts
+             * on Ace. This keeps the varied patterns learnable on a phone. */
+            g_game.boss_bullets[i].damage =
+                (g_game.mode == GAME_MODE_STORY && g_settings.difficulty != DIFF_ACE)
+                    ? 1 : (heavy ? 2 : 1);
             g_game.boss_bullets[i].life = 200;
             g_game.boss_bullets[i].enemy = true;
             g_game.boss_bullets[i].heavy = heavy;
@@ -3788,7 +3804,10 @@ void game_draw(void) {
         // Boss hull: the mini-drone sprite, recolored + scaled.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
 #ifdef PLATFORM_HOST
-        gfx_draw_boss_drone(bxi, byi, g_game.boss.mini, flash != 0, s_game_frame);
+        if (g_game.mode == GAME_MODE_STORY)
+            gfx_draw_story_boss(bxi, byi, g_game.boss.story_id, flash != 0, s_game_frame);
+        else
+            gfx_draw_boss_drone(bxi, byi, g_game.boss.mini, flash != 0, s_game_frame);
 #else
         u8 hull = flash ? PAL_TEXT_WHITE : PAL_TEXT_RED;
         u8 trim = flash ? PAL_TEXT_WHITE : PAL_TEXT_GOLD;
