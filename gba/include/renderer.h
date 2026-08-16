@@ -41,6 +41,11 @@ void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style);
 /* Boss hull: the unused mini-drone sprite, recolored + scaled so it
  * cannot be mistaken for a hunter (crimson player ship) or a rock. */
 void gfx_draw_boss_drone(int cx, int cy, bool mini, bool flash, int anim_frame);
+#ifdef PLATFORM_HOST
+/* Seven Android campaign silhouettes; unlike the arcade drone, each story
+ * boss has its own hand-built pixel hull. */
+void gfx_draw_story_boss(int cx, int cy, int boss_id, bool flash, int anim_frame);
+#endif
 #endif
 void gfx_draw_laser(int center_x, int center_y, bool heavy, int laser_idx, int anim_frame, bool downward);
 bool gfx_laser_is_animated(int laser_idx);

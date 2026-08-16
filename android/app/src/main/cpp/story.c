@@ -58,6 +58,14 @@ bool story_is_unlocked(int level) {
     return level >= 1 && level <= g_story.unlocked;
 }
 
+void story_unlock_all_levels(void) {
+    /* Unlocking is deliberately not the same as completing: boss gifts,
+     * rewards, clear stars and the ending still have to be earned. */
+    g_story.unlocked = STORY_LEVEL_COUNT;
+    if (g_story.level < 1 || g_story.level > STORY_LEVEL_COUNT) g_story.level = 1;
+    save_write();
+}
+
 static void story_mark_cleared(int level) {
     if (level < 1 || level > STORY_LEVEL_COUNT) return;
     if (!story_is_cleared(level)) {
@@ -405,6 +413,18 @@ static int stock_paint_for(u32 r) {
     return 2 + (int)(r % 5u);
 }
 
+static int stock_trail_for(int dock, u32 r) {
+    int top = 2 + dock / 3;
+    if (top > NUM_TRAILS - 2) top = NUM_TRAILS - 2;
+    return 1 + (int)(r % (u32)top);
+}
+
+static int stock_ship_for(int dock, u32 r) {
+    int top = 1 + dock / 4;
+    if (top > NUM_SHIP_STYLES - 1) top = NUM_SHIP_STYLES - 1;
+    return 1 + (int)(r % (u32)top);
+}
+
 static int stock_upgrade_for(u32 r) {
     static const u8 pool[5] = { UPG_ENGINE, UPG_FIRE_RATE, UPG_DAMAGE, UPG_SHIELD, UPG_HULL };
     return pool[r % 5u];
@@ -419,6 +439,8 @@ static int stock_price(const StoryStockItem* it, int dock) {
         case SSTOCK_LASER:   return 500 + it->item * 320 + dock * 60;
         case SSTOCK_PAINT:   return 300 + it->item * 90;
         case SSTOCK_UPGRADE: return 380 + dock * 110;
+        case SSTOCK_TRAIL:   return 420 + it->item * 150 + dock * 45;
+        case SSTOCK_SHIP:    return 900 + it->item * 420 + dock * 80;
         default:             return 0;
     }
 }
@@ -427,16 +449,20 @@ static int stock_price(const StoryStockItem* it, int dock) {
 static void stock_roll_slot(StoryStockItem* it, int level, int i, int dock) {
     u32 r = stock_hash((u32)(level * 7919 + i * 104729));
     int kind_roll = (int)(r % 100u);
-    if (kind_roll < 34)      it->kind = SSTOCK_WEAPON;
-    else if (kind_roll < 58) it->kind = SSTOCK_LASER;
-    else if (kind_roll < 78) it->kind = SSTOCK_UPGRADE;
-    else                     it->kind = SSTOCK_PAINT;
+    if (kind_roll < 25)      it->kind = SSTOCK_WEAPON;
+    else if (kind_roll < 43) it->kind = SSTOCK_LASER;
+    else if (kind_roll < 61) it->kind = SSTOCK_UPGRADE;
+    else if (kind_roll < 75) it->kind = SSTOCK_PAINT;
+    else if (kind_roll < 89) it->kind = SSTOCK_TRAIL;
+    else                     it->kind = SSTOCK_SHIP;
 
     u32 r2 = stock_hash(r ^ 0x9e3779b9u);
     switch (it->kind) {
         case SSTOCK_WEAPON:  it->item = (u8)stock_rig_for(dock, r2); break;
         case SSTOCK_LASER:   it->item = (u8)stock_laser_for(dock, r2); break;
         case SSTOCK_PAINT:   it->item = (u8)stock_paint_for(r2); break;
+        case SSTOCK_TRAIL:   it->item = (u8)stock_trail_for(dock, r2); break;
+        case SSTOCK_SHIP:    it->item = (u8)stock_ship_for(dock, r2); break;
         default:             it->item = (u8)stock_upgrade_for(r2); break;
     }
     it->qty = 1;
@@ -450,6 +476,8 @@ static bool stock_is_dead(const StoryStockItem* it) {
         case SSTOCK_LASER:   return (g_settings.owned_lasers & (1u << it->item)) != 0;
         case SSTOCK_PAINT:   return (g_settings.owned_accents & (1u << it->item)) != 0;
         case SSTOCK_UPGRADE: return g_settings.upgrade_levels[it->item] >= UPG_MAX_LEVEL;
+        case SSTOCK_TRAIL:   return (g_settings.owned_trails & (1u << it->item)) != 0;
+        case SSTOCK_SHIP:    return (g_settings.owned_ships & (1u << it->item)) != 0;
         default:             return false;
     }
 }
@@ -479,7 +507,7 @@ void story_shop_open(int level) {
     s_stock[0].price = (u16)stock_price(&s_stock[0], dock);
     s_stock_held[0] = false;
 
-    /* Slots 1..3: gear. Anything you walked past last time is still sitting
+    /* Slots 1..7: gear. Anything you walked past last time is still sitting
      * there — he does not clear the shelf just because you were broke. Only
      * sold, claimed or now-useless slots get restocked. */
     for (int i = 1; i < STORY_SHOP_SLOTS; i++) {
@@ -494,7 +522,7 @@ void story_shop_open(int level) {
 
         /* Roll until the slot is something the player can actually use AND
          * is not already sitting in another slot - two identical rows on a
-         * four-item shelf made the dock look broken. */
+         * eight-item shelf made the dock look broken. */
         int salt = 0;
         for (; salt < 8; salt++) {
             stock_roll_slot(it, level + salt * 13, i, dock);
@@ -604,6 +632,8 @@ const char* story_shop_slot_name(int i) {
         case SSTOCK_LASER:   return gfx_get_laser_name(it->item);
         case SSTOCK_PAINT:   return gfx_get_accent_name(it->item);
         case SSTOCK_UPGRADE: return shop_get_upgrade_name((UpgradeType)it->item);
+        case SSTOCK_TRAIL:   return gfx_get_trail_name(it->item);
+        case SSTOCK_SHIP:    return gfx_get_ship_style_name(it->item);
         default:             return "";
     }
 }
@@ -617,6 +647,8 @@ const char* story_shop_slot_desc(int i) {
         case SSTOCK_LASER:   return gfx_get_laser_desc(it->item);
         case SSTOCK_PAINT:   return gfx_get_accent_desc(it->item);
         case SSTOCK_UPGRADE: return shop_get_upgrade_desc_line1((UpgradeType)it->item);
+        case SSTOCK_TRAIL:   return gfx_get_trail_desc(it->item);
+        case SSTOCK_SHIP:    return gfx_get_ship_style_desc(it->item);
         default:             return "";
     }
 }
@@ -639,6 +671,12 @@ int story_shop_buy(int i) {
             break;
         case SSTOCK_UPGRADE:
             if (g_settings.upgrade_levels[it->item] >= UPG_MAX_LEVEL) return 2;
+            break;
+        case SSTOCK_TRAIL:
+            if (g_settings.owned_trails & (1u << it->item)) return 2;
+            break;
+        case SSTOCK_SHIP:
+            if (g_settings.owned_ships & (1u << it->item)) return 2;
             break;
         case SSTOCK_LIFE:
             if (g_story.lives >= STORY_MAX_LIVES) return 2;
@@ -668,6 +706,14 @@ int story_shop_buy(int i) {
             break;
         case SSTOCK_UPGRADE:
             g_settings.upgrade_levels[it->item]++;
+            break;
+        case SSTOCK_TRAIL:
+            g_settings.owned_trails |= (u16)(1u << it->item);
+            g_settings.trail_index = it->item;
+            break;
+        case SSTOCK_SHIP:
+            g_settings.owned_ships |= (u16)(1u << it->item);
+            g_settings.ship_index = it->item;
             break;
         default: break;
     }

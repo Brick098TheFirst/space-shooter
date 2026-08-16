@@ -14,7 +14,7 @@ void save_format_coins(char* dst, int dst_cap);
 #ifdef PLATFORM_HOST
 /* Cheat codes are an Android-only feature: the entry UI lives in the
  * Android Settings screen and pops a native text dialog.
- * Returns 1 when the code was applied, 0 for an unknown code. */
+ * Returns a nonzero result kind when applied, 0 for an unknown code. */
 int save_apply_cheat(const char* code);
 /* Wipe coins, unlocks, upgrades, high score, and settings back to a
  * fresh install. Writes the new defaults immediately. */

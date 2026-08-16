@@ -198,6 +198,9 @@ void story_set_current_level(int level);
 int  story_highest_unlocked(void);/* furthest level the player may fly */
 bool story_is_cleared(int level);
 bool story_is_unlocked(int level);
+/* Android-only code entry uses this to open the map without marking levels
+ * cleared or paying their rewards. */
+void story_unlock_all_levels(void);
 
 /* ── Dynamic payouts ─────────────────────────────────────────────────────
  * A level's `reward` is a floor, not a flat fee.  What you actually bank
@@ -278,7 +281,10 @@ void story_mark_intro_seen(void);
  * five levels alone.  The shelf itself is not lost - whatever you left on it
  * is still there when he catches up again. */
 
-#define STORY_SHOP_SLOTS 4
+/* A full travelling inventory. The dock UI shows five rows at a time and
+ * scrolls through the rest, so Chubbs can carry a useful mix instead of
+ * arriving with the same tiny four-item shelf. */
+#define STORY_SHOP_SLOTS 8
 
 typedef enum {
     SSTOCK_EMPTY = 0,
@@ -286,7 +292,9 @@ typedef enum {
     SSTOCK_WEAPON,   /* a weapon rig  */
     SSTOCK_LASER,    /* a laser crystal */
     SSTOCK_PAINT,    /* a paint */
-    SSTOCK_UPGRADE   /* one level of a stat upgrade */
+    SSTOCK_UPGRADE,  /* one level of a stat upgrade */
+    SSTOCK_TRAIL,    /* an engine trail */
+    SSTOCK_SHIP      /* a complete hull style */
 } StoryStockKind;
 
 typedef struct {

@@ -391,12 +391,6 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         return RectF(dp(12f), height - h - dp(12f), dp(12f) + w, height - dp(12f))
     }
 
-    private fun onlineRect(): RectF {
-        val w = dp(154f).coerceAtMost(width * 0.42f)
-        val h = dp(38f)
-        return RectF(width - w - dp(12f), dp(12f), width - dp(12f), dp(12f) + h)
-    }
-
     private fun resetStickToHome() {
         stickPointer = -1
         firePointer = -1
@@ -559,14 +553,16 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             input.error = "Enter a code"
             return
         }
-        if (NativeGame.nativeApplyCheatCode(code) == 1) {
+        val result = NativeGame.nativeApplyCheatCode(code)
+        if (result != 0) {
             persistSave() // native already wrote SRAM; make sure it hits disk right away
             pulseHaptic(HapticFeedbackConstants.CONFIRM)
-            Toast.makeText(
-                context,
-                "CHEAT ACTIVATED! You now have \$999,000,000,000,000!",
-                Toast.LENGTH_LONG
-            ).show()
+            val message = if (result == 2) {
+                "CHEAT ACTIVATED! All 70 levels and kingdoms are unlocked!"
+            } else {
+                "CHEAT ACTIVATED! You now have \$999,000,000,000,000!"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             dialog.dismiss()
         } else {
             pulseHaptic(HapticFeedbackConstants.LONG_PRESS)
@@ -596,7 +592,9 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
 
     private fun drawOverlay(canvas: Canvas) {
         when (uiScreen) {
-            NativeGame.SCREEN_MAIN_MENU -> drawOnlineChip(canvas)
+            /* Multiplayer already has a full main-menu tab. Do not duplicate
+             * it with the old floating top-right online chip. */
+            NativeGame.SCREEN_MAIN_MENU -> Unit
             NativeGame.SCREEN_PLAYING -> if (!storyBriefWaiting && !usingController()) drawGameplayPad(canvas)
             NativeGame.SCREEN_HANGAR,
             NativeGame.SCREEN_SETTINGS,
@@ -608,39 +606,6 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             NativeGame.SCREEN_STORY_SHOP,
             NativeGame.SCREEN_STORY_RESULT -> drawBackChip(canvas)
         }
-    }
-
-    private fun drawOnlineChip(canvas: Canvas) {
-        val r = onlineRect()
-        val accent = when (eosStatus) {
-            NativeGame.EOS_READY -> 0xFF52E690.toInt()
-            NativeGame.EOS_MATCHED -> 0xFF23D6FF.toInt()
-            NativeGame.EOS_ERROR -> 0xFFFF665A.toInt()
-            NativeGame.EOS_CONFIG_REQUIRED -> 0xFFFFC84A.toInt()
-            else -> 0xFF9B8CFF.toInt()
-        }
-        val title = when (eosStatus) {
-            NativeGame.EOS_CONFIG_REQUIRED -> "ONLINE SETUP"
-            NativeGame.EOS_INITIALIZING, NativeGame.EOS_SIGNING_IN -> "EPIC CONNECTING..."
-            NativeGame.EOS_READY -> "QUICK MATCH"
-            NativeGame.EOS_MATCHMAKING -> "SEARCHING..."
-            NativeGame.EOS_WAITING_FOR_PLAYER -> "WAITING 1 / 2"
-            NativeGame.EOS_MATCHED -> "CO-OP 2 / 2"
-            NativeGame.EOS_ERROR -> "ONLINE ERROR"
-            else -> "ONLINE CO-OP"
-        }
-        overlay.style = Paint.Style.FILL
-        overlay.color = 0xCC121B2A.toInt()
-        canvas.drawRoundRect(r, dp(18f), dp(18f), overlay)
-        overlay.style = Paint.Style.STROKE
-        overlay.strokeWidth = dp(2f)
-        overlay.color = accent
-        canvas.drawRoundRect(r, dp(18f), dp(18f), overlay)
-        overlay.style = Paint.Style.FILL
-        canvas.drawCircle(r.left + dp(15f), r.centerY(), dp(4f), overlay)
-        labelPaint.textSize = dp(11.5f)
-        labelPaint.color = 0xF2FFFFFF.toInt()
-        canvas.drawText(title, r.centerX() + dp(6f), r.centerY() + dp(4f), labelPaint)
     }
 
     private fun drawGameplayPad(canvas: Canvas) {
@@ -883,11 +848,6 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
     }
 
     private fun performMenuTap(x: Float, y: Float) {
-        if (uiScreen == NativeGame.SCREEN_MAIN_MENU && onlineRect().contains(x, y)) {
-            pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
-            handleOnlineChip()
-            return
-        }
         if (needsBackChip() && backRect().contains(x, y)) {
             pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
             NativeGame.nativeGoBack()
@@ -896,21 +856,6 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
         val mapped = mapToGame(x, y) ?: return
         pulseHaptic(HapticFeedbackConstants.VIRTUAL_KEY)
         NativeGame.nativeQueueTap(mapped.first, mapped.second)
-    }
-
-    /**
-     * The main-menu online chip now routes to the native Multiplayer tab,
-     * which owns all Quick Match controls (find / cancel / launch) plus the
-     * live lobby status. No more dialog popups for ordinary flow.
-     */
-    private fun handleOnlineChip() {
-        try {
-            eosStatus = NativeGame.nativeEosGetStatus()
-            eosStatusText = NativeGame.nativeEosGetStatusText()
-            NativeGame.nativeOpenMultiplayer()
-        } catch (error: Throwable) {
-            Toast.makeText(context, "EOS unavailable: ${error.message}", Toast.LENGTH_LONG).show()
-        }
     }
 
     // ── Smooth scroll animation (run from doFrame) ──────────────────────
