@@ -560,13 +560,13 @@ bool story_shop_is_boss_dock(void) {
 /* Mr Chubbs on the radio. Before a boss he stops haggling and talks Jack up;
  * the rest of the time he runs his Trading Post with a queue behind Jack. */
 static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
-    "JACK. RUSTJAW HITS HARD.",
+    "JACK. IRONMAW BITES HARD.",
     "TWO OF THEM. STAY STEADY, JACK.",
-    "KEEP MOVING OR FROSTWIDOW WINS.",
-    "SCRAP TITAN IS HUGE. FIND A GAP.",
-    "EMBERLASH BURNS HOT. STAY COOL.",
-    "VAULT WARDEN WATCHES. BLIND IT.",
-    "THIS IS IT, JACK. THE REALITY QUEEN."
+    "KEEP WARM OR FROSTBITE WINS.",
+    "JUGGERNAUT IS HUGE. FIND A GAP.",
+    "INFERNO BURNS HOT. STAY COOL.",
+    "AEGIS NEVER BLINKS. BLIND IT.",
+    "THIS IS IT, JACK. THE VOID EMPRESS."
 };
 static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. NO CHARGE. GO.",

@@ -113,6 +113,28 @@ static int  s_story_lost = 0;           /* lives lost this level */
  * but the entire simulation stays frozen until the player taps to continue. */
 static bool s_story_waiting_for_start = false;
 
+/* ── Puzzle level state (OBJ_PUZZLE) ─────────────────────────────────────
+ * Three variants, selected by the level's modifier:
+ *   MOD_PZ_SALVO    - LIMITED AMMO: clear a frozen field on a shot budget.
+ *                     s_puzzle_ammo counts down per volley; running dry with
+ *                     rocks still up fails the level (rocks do not respawn).
+ *   MOD_PZ_SIGNAL   - SIGNAL HUNT: one rock at a time carries the scanner
+ *                     mark. Only the marked rock counts toward the quota,
+ *                     and shooting an UNMARKED rock resets your progress.
+ *   MOD_PZ_GAUNTLET - GUNS OFFLINE: weapons are dead; survive a scripted
+ *                     bullet ballet (rings, walls, scissors) on a clock. */
+static int  s_puzzle_ammo = 0;          /* SALVO: volleys left */
+static int  s_puzzle_mark = -1;         /* SIGNAL: asteroid slot carrying the mark */
+static int  s_puzzle_found = 0;         /* SIGNAL: marked rocks broken so far */
+static int  s_puzzle_wave_t = 0;        /* GAUNTLET: pattern clock */
+static int  s_puzzle_flash = 0;         /* HUD flash on progress reset / dry fire */
+
+/* FROSTBITE (story L30) KEY MECHANIC - ENGINE ICING.  Hovering in place
+ * lets frost build on the engines (0..256); ice throttles your thrust down
+ * to ~45% until you shake it off by MOVING.  The whole fight is about
+ * refusing to sit still, which is exactly what its web wants you to do. */
+static int  s_frost_ice = 0;
+
 static void story_finish(int outcome);
 static void story_begin_level(void);
 static void story_update_objective(void);
@@ -126,6 +148,9 @@ static void story_on_life_lost(void);
 int  game_story_level(void)   { return s_story_level; }
 int  game_story_outcome(void) { return s_story_outcome; }
 int  game_story_earned(void)  { return s_story_earned; }
+/* SIGNAL HUNT: which asteroid slot carries the scanner mark (-1 = none).
+ * Exposed for the HUD/harness; gameplay reads the static directly. */
+int  game_story_puzzle_mark(void) { return s_puzzle_mark; }
 int  game_story_waiting_for_start(void) {
     return g_game.mode == GAME_MODE_STORY && s_story_waiting_for_start;
 }
@@ -630,6 +655,29 @@ static void destroy_asteroid(int idx, bool award) {
     int ax = FROM_FIXED(a->x);
     int ay = FROM_FIXED(a->y);
     trigger_explosion(ax, ay);
+
+    /* Puzzle fields: rocks pop clean (no debris splitting), and the SIGNAL
+     * variant judges WHICH rock you just broke. */
+    if (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE) {
+        story_on_kill_scored(1);
+        if (story_cur()->modifier == MOD_PZ_SIGNAL && award) {
+            if (idx == s_puzzle_mark) {
+                s_puzzle_found++;
+                s_puzzle_mark = -1;
+                award_score(300);
+                audio_play_sfx(SFX_PICKUP);
+            } else {
+                /* Wrong rock: the scanner glitches and drops one locked
+                 * signal.  (A full reset made spread rigs unplayable.) */
+                if (s_puzzle_found > 0) s_puzzle_found--;
+                s_puzzle_flash = 45;
+                platform_queue_haptic(HAPTIC_HIT);
+            }
+        } else if (award) {
+            award_score(120);
+        }
+        return;
+    }
 
     if (award) {
         int combo = g_game.combo; // soft combo cash; jackpot at 15x
@@ -1165,12 +1213,47 @@ static void story_begin_level(void) {
     g_game.intermission_timer = 9999;   /* story never auto-advances waves */
     g_game.spawn_timer = 40;
 
+    s_puzzle_ammo = 0;
+    s_puzzle_mark = -1;
+    s_puzzle_found = 0;
+    s_puzzle_wave_t = 0;
+    s_puzzle_flash = 0;
+    s_frost_ice = 0;
+
     if (L->objective == OBJ_BOSS) {
         s_story_to_spawn = 0;
         s_story_queue_len = s_story_queue_pos = 0;
         s_story_pending_med = 0;
         int boss_id = story_boss_for_level(s_story_level);
         story_spawn_boss(boss_id >= 0 ? boss_id : 0);
+        return;
+    }
+
+    if (L->objective == OBJ_PUZZLE) {
+        s_story_to_spawn = 0;
+        s_story_queue_len = s_story_queue_pos = 0;
+        s_story_pending_med = 0;
+        if (L->modifier == MOD_PZ_GAUNTLET) {
+            /* GUNS OFFLINE: an empty sky and a scripted bullet ballet.
+             * quota = seconds to survive. */
+            s_story_timer = L->quota * 90;
+            return;
+        }
+        /* SALVO / SIGNAL: the whole field is on the board from tick one,
+         * drifting slowly, and every rock is exactly one hit — the puzzle
+         * is which rocks you spend shots on, not how long you grind them. */
+        for (int i = 0; i < L->rocks; i++) {
+            int x = TO_FIXED((rand() % (SCREEN_WIDTH - 40)) + 20);
+            int y = TO_FIXED((rand() % 90) + 8);
+            int vx = ((rand() % 90) - 45);
+            int vy = (rand() % 40) + 20;
+            AsteroidType t = (rand() % 3 == 0) ? AST_LARGE
+                           : ((rand() & 1) ? AST_MED_A : AST_MED_B);
+            spawn_asteroid(t, x, y, vx, vy);
+        }
+        for (int i = 0; i < MAX_ASTEROIDS; i++)
+            if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
+        if (L->modifier == MOD_PZ_SALVO) s_puzzle_ammo = L->quota;
         return;
     }
 
@@ -1239,6 +1322,11 @@ static int story_par_seconds(const StoryLevel* L) {
         case OBJ_BOSS:    return 100;
         case OBJ_HUNT:    return 25 + L->quota * 3;
         case OBJ_BIGGAME: return 25 + L->quota * 8;
+        case OBJ_PUZZLE:
+            /* Gauntlets run a fixed clock (no speed bonus, like SURVIVE);
+             * the shooting puzzles pay for decisive play. */
+            if (L->modifier == MOD_PZ_GAUNTLET) return 0;
+            return 20 + L->rocks * 3;
         default:          return 30 + L->rocks * 3 + L->drones * 5;
     }
 }
@@ -1251,6 +1339,12 @@ static int story_par_kills(const StoryLevel* L) {
         case OBJ_BOSS:    return 1;
         case OBJ_HUNT:    return L->quota + L->rocks;
         case OBJ_BIGGAME: return L->quota * 3;
+        case OBJ_PUZZLE:
+            /* Gauntlets involve no shooting at all, so the combat share of
+             * the payout is simply not on offer (par 0 skips the term). */
+            if (L->modifier == MOD_PZ_GAUNTLET) return 0;
+            if (L->modifier == MOD_PZ_SIGNAL)   return L->quota;
+            return L->rocks;
         default:          return L->rocks * 2 + L->drones;
     }
 }
@@ -1303,6 +1397,99 @@ static void story_update_objective(void) {
     switch (L->objective) {
         case OBJ_BOSS:
             /* Ends via defeat_boss() -> story_finish(1). Nothing to poll. */
+            break;
+
+        case OBJ_PUZZLE:
+            if (s_puzzle_flash > 0) s_puzzle_flash--;
+            if (L->modifier == MOD_PZ_GAUNTLET) {
+                /* GUNS OFFLINE: survive the scripted ballet.  The script is
+                 * deterministic per tick so the maze can be learned. */
+                if (s_story_timer > 0) s_story_timer--;
+                if (s_story_timer <= 0) {
+                    for (int i = 0; i < MAX_BOSS_BULLETS; i++)
+                        g_game.boss_bullets[i].active = false;
+                    s_story_end_delay = 45;
+                    story_finish(1);
+                    break;
+                }
+                s_puzzle_wave_t++;
+                int t = s_puzzle_wave_t;
+                int hard = s_story_level / 20;           /* 0..3 pace tiers */
+                int phase = (t / 360) % 3;               /* 4s per figure */
+                if (phase == 0) {
+                    /* RINGS: expanding rings from alternating corners. */
+                    if ((t % (90 - hard * 12)) == 0) {
+                        int cx = ((t / 90) & 1) ? 30 : SCREEN_WIDTH - 30;
+                        for (int k = 0; k < 10; k++) {
+                            int ang = (k * 65536) / 10 + t * 40;
+                            add_boss_bullet(TO_FIXED(cx), TO_FIXED(20),
+                                            (lu_cos(ang) * (TO_FIXED(2) + hard * 30)) >> 12,
+                                            (lu_sin(ang) * (TO_FIXED(2) + hard * 30)) >> 12,
+                                            false);
+                        }
+                    }
+                } else if (phase == 1) {
+                    /* WEAVE: two offset rains that leave a sliding lane. */
+                    if ((t % (26 - hard * 3)) == 0) {
+                        int lane = (SCREEN_WIDTH / 2)
+                                 + ((lu_sin(t * 160) * (SCREEN_WIDTH / 3)) >> 12);
+                        for (int x = 14; x < SCREEN_WIDTH - 12; x += 22) {
+                            if (x > lane - 26 && x < lane + 26) continue;
+                            add_boss_bullet(TO_FIXED(x), -TO_FIXED(6), 0,
+                                            TO_FIXED(2) + 60 + hard * 25, false);
+                        }
+                    }
+                } else {
+                    /* SCISSORS: crossing diagonals from both top corners. */
+                    if ((t % (17 - hard * 2)) == 0) {
+                        int o = (t * 7) % 40;
+                        add_boss_bullet(TO_FIXED(4), TO_FIXED(10 + o),
+                                        TO_FIXED(2) + 40, TO_FIXED(1) + 90 + hard * 20, false);
+                        add_boss_bullet(TO_FIXED(SCREEN_WIDTH - 4), TO_FIXED(10 + o),
+                                        -TO_FIXED(2) - 40, TO_FIXED(1) + 90 + hard * 20, false);
+                    }
+                }
+                break;
+            }
+
+            /* SALVO / SIGNAL play out on the frozen field. */
+            if (L->modifier == MOD_PZ_SIGNAL) {
+                /* Keep exactly one active rock marked. */
+                if (s_puzzle_mark < 0 || !g_game.asteroids[s_puzzle_mark].active) {
+                    int live[MAX_ASTEROIDS], n = 0;
+                    for (int i = 0; i < MAX_ASTEROIDS; i++)
+                        if (g_game.asteroids[i].active) live[n++] = i;
+                    s_puzzle_mark = n ? live[rand() % n] : -1;
+                }
+                if (s_puzzle_found >= L->quota) {
+                    s_story_end_delay = 45;
+                    story_finish(1);
+                    break;
+                }
+                /* The field must never run out of rocks to mark. */
+                if (rocks < 4 && (--g_game.spawn_timer <= 0)) {
+                    story_spawn_rock();
+                    for (int i = 0; i < MAX_ASTEROIDS; i++)
+                        if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
+                    g_game.spawn_timer = 30;
+                }
+            } else { /* MOD_PZ_SALVO */
+                if (count_medium_equivalents() == 0) {
+                    s_story_end_delay = 45;
+                    story_finish(1);
+                    break;
+                }
+                /* Out of ammo with rocks still up and no shots in flight:
+                 * the salvo failed. */
+                if (s_puzzle_ammo <= 0) {
+                    bool in_flight = false;
+                    for (int i = 0; i < MAX_BULLETS; i++)
+                        if (g_game.bullets[i].active && !g_game.bullets[i].enemy)
+                            in_flight = true;
+                    if (!in_flight && !g_game.beam_active && !g_game.primary_beam_active)
+                        story_finish(2);
+                }
+            }
             break;
 
         case OBJ_CLEAR:
@@ -1479,9 +1666,9 @@ static void story_spawn_boss(int boss_id) {
     b->sweep_dir = 1;
     b->clone_active = false;
 
-    if (boss_id == SBOSS_SCRAPTITAN || boss_id == SBOSS_VAULTWARDEN) {
+    if (boss_id == SBOSS_JUGGERNAUT || boss_id == SBOSS_AEGIS) {
         for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
-        if (boss_id == SBOSS_VAULTWARDEN) b->shield = 1;
+        if (boss_id == SBOSS_AEGIS) b->shield = 1;
     }
 
     g_game.boss_active = true;
@@ -1552,10 +1739,13 @@ static int sb_next_attack(Boss* b, int count) {
     return SB_ATTACK_A + pick;
 }
 
-/* ── BOSS 1 - RUSTJAW (L10) ───────────────────────────────────────────────
- * A scrapyard jaw. Slams down at the player, spits chewed scrap in a wide
- * arc, and gets faster the closer to death it is. Teaches dodging a telegraph. */
-static void sb_rustjaw(Boss* b) {
+/* ── BOSS 1 - IRONMAW (L10) ───────────────────────────────────────────────
+ * A forked-jaw hunter.  KEY MECHANIC - THE BITE: it lines up on your
+ * column, telegraphs, then lunges and SNAPS ITS JAWS SHUT at your altitude.
+ * The snap is lethal, but a missed bite leaves the jaws clamped and the
+ * hull straining for a moment — during that clamp it takes DOUBLE damage.
+ * The whole fight is bait-the-bite, then punish the clamp. */
+static void sb_ironmaw(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     switch (b->phase) {
         case SB_IDLE:
@@ -1572,27 +1762,54 @@ static void sb_rustjaw(Boss* b) {
                 b->charge = 0;
             }
             break;
-        case SB_ATTACK_A: {   /* JAW SLAM: line up, telegraph, dive, recover */
+        case SB_ATTACK_A: {   /* THE BITE: line up, telegraph, lunge, CLAMP */
             if (b->phase_timer > 110) {
+                /* Track the target column and telegraph with falling sparks. */
+                b->charge = 0;
                 int diff = b->aim_x - b->x;
                 int step = TO_FIXED(3);
                 if (diff > step) b->x += step; else if (diff < -step) b->x -= step; else b->x = b->aim_x;
                 if ((b->phase_timer & 3) == 0)
                     spawn_particle(b->x, b->y + TO_FIXED(16), 0, 120, PAL_TEXT_RED, 8);
-            } else if (b->phase_timer > 60) {
+            } else if (b->phase_timer > 70) {
+                /* Lunge.  The jaws spray a closing pincer of teeth. */
                 b->y += TO_FIXED(5);
-                if (FROM_FIXED(b->y) > SCREEN_HEIGHT - 40) b->y = TO_FIXED(SCREEN_HEIGHT - 40);
-                if ((b->phase_timer & 7) == 0) sb_fan(cx, cy + 14, 3, TO_FIXED(4), 5000);
+                if (FROM_FIXED(b->y) > SCREEN_HEIGHT - 44) b->y = TO_FIXED(SCREEN_HEIGHT - 44);
+                if ((b->phase_timer & 7) == 0) {
+                    add_boss_bullet(b->x - TO_FIXED(14), b->y + TO_FIXED(8),
+                                    TO_FIXED(1) + 60, TO_FIXED(2) + 60, false);
+                    add_boss_bullet(b->x + TO_FIXED(14), b->y + TO_FIXED(8),
+                                    -TO_FIXED(1) - 60, TO_FIXED(2) + 60, false);
+                }
+            } else if (b->phase_timer > 30) {
+                /* CLAMPED: the missed bite leaves it straining in place.
+                 * b->charge flags the double-damage window for
+                 * story_boss_absorb(); sparks sell the strain. */
+                b->charge = 1;
+                if ((b->phase_timer & 3) == 0)
+                    spawn_particle(b->x + ((rand() & 31) - 16) * 256, b->y + TO_FIXED(10),
+                                   (rand() & 127) - 64, -((rand() & 63) + 30),
+                                   PAL_TEXT_GOLD, 9);
             } else {
+                b->charge = 0;
                 b->y -= TO_FIXED(3);
                 if (b->y <= TO_FIXED(34)) { b->y = TO_FIXED(34); b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 30; }
             }
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 90; }
+            if (b->phase_timer <= 0) { b->charge = 0; b->phase = SB_IDLE; b->phase_timer = 90; }
             break;
         }
-        case SB_ATTACK_B:     /* SCRAP SPIT: wide arcs of debris */
+        case SB_ATTACK_B:     /* SCRAP SPIT: chews and sprays ragged junk in
+                               * an uneven cone — debris, not a neat fan. */
             sb_drift(b, TO_FIXED(2));
-            if ((b->phase_timer % 26) == 0) sb_fan(cx, cy + 14, sb_hp_pct(b) < 50 ? 7 : 5, TO_FIXED(3), 14000);
+            if ((b->phase_timer % (sb_hp_pct(b) < 50 ? 5 : 8)) == 0) {
+                int ang = 16384 + ((rand() % 20000) - 10000);  /* downish */
+                int spd = TO_FIXED(2) + (rand() % 512);
+                add_boss_bullet(b->x + ((rand() & 31) - 16) * 256,
+                                b->y + TO_FIXED(12),
+                                (lu_cos(ang) * spd) >> 12,
+                                (lu_sin(ang) * spd) >> 12,
+                                (rand() % 5) == 0);
+            }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 30; }
             break;
         default:
@@ -1601,10 +1818,10 @@ static void sb_rustjaw(Boss* b) {
     }
 }
 
-/* ── BOSS 2 - THE TWINS (L20) ─────────────────────────────────────────────
+/* ── BOSS 2 - GEMINI (L20) ─────────────────────────────────────────────
  * One hull until 50%, then it splits: the clone mirrors your position while
  * the original hunts you, and they cross-fire the gap between them. */
-static void sb_twins(Boss* b) {
+static void sb_gemini(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
 
     if (!b->clone_active && sb_hp_pct(b) <= 50) {
@@ -1639,10 +1856,19 @@ static void sb_twins(Boss* b) {
             }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 26; }
             break;
-        case SB_ATTACK_B:     /* SPIN RING */
+        case SB_ATTACK_B:     /* SEAM VENT: the joint between the hulls blows
+                               * angled jets out both sides — horizontal
+                               * pressure no other boss produces. */
             sb_hover(b, 30, TO_FIXED(1));
-            b->spin += 900;
-            if ((b->phase_timer % 22) == 0) sb_ring(cx, cy, 9, TO_FIXED(3), b->spin, 3);
+            if ((b->phase_timer % 12) == 0) {
+                int tilt = ((b->phase_timer / 12) % 3) - 1;   /* -1, 0, +1 */
+                add_boss_bullet(b->x - TO_FIXED(10), b->y,
+                                -TO_FIXED(3), TO_FIXED(1) + tilt * 90, false);
+                add_boss_bullet(b->x + TO_FIXED(10), b->y,
+                                TO_FIXED(3), TO_FIXED(1) + tilt * 90, false);
+                add_boss_bullet(b->x, b->y + TO_FIXED(12),
+                                tilt * 100, TO_FIXED(3), (tilt == 0));
+            }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 26; }
             break;
         case SB_ATTACK_C: {   /* CROSSFIRE: both halves squeeze the middle */
@@ -1671,11 +1897,29 @@ static void sb_twins(Boss* b) {
     }
 }
 
-/* ── BOSS 3 - FROSTWIDOW (L30) ────────────────────────────────────────────
- * Spins a web: static shard "strands" that linger, plus a chilling beam that
- * slows nothing but punishes standing still. Forces constant repositioning. */
-static void sb_frostwidow(Boss* b) {
+/* ── BOSS 3 - FROSTBITE (L30) ────────────────────────────────────────────
+ * An ice interceptor.  KEY MECHANIC - ENGINE ICING: standing still lets
+ * frost build on your engines and throttles your ship to a crawl; moving
+ * shakes it off.  Its web lattice and tracking lance are both designed to
+ * make you WANT to camp a safe pixel — the ice is why you can't. */
+static void sb_frostbite(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+
+    /* Engine icing: build fast while parked, shed faster while flying. */
+    {
+        bool moving = key_is_down(KEY_LEFT) || key_is_down(KEY_RIGHT) ||
+                      key_is_down(KEY_UP)   || key_is_down(KEY_DOWN);
+        if (moving) s_frost_ice -= 6;
+        else        s_frost_ice += 3;
+        if (s_frost_ice < 0)   s_frost_ice = 0;
+        if (s_frost_ice > 256) s_frost_ice = 256;
+        /* Rime crackles off the hull as the ice takes hold. */
+        if (s_frost_ice > 96 && (s_game_frame & 7) == 0)
+            spawn_particle(g_game.player.x + ((rand() & 15) - 8) * 256,
+                           g_game.player.y + ((rand() & 15) - 8) * 256,
+                           (rand() & 63) - 32, -((rand() & 31) + 10),
+                           PAL_TEXT_CYAN, 7);
+    }
     switch (b->phase) {
         case SB_IDLE:
             sb_hover(b, 30, TO_FIXED(1));
@@ -1688,11 +1932,24 @@ static void sb_frostwidow(Boss* b) {
                 b->spin = 0;
             }
             break;
-        case SB_ATTACK_A:     /* WEB: slow drifting shards from eight anchors */
+        case SB_ATTACK_A:     /* WEB: she spins an actual lattice — slow
+                               * shards laid along six spokes at three radii,
+                               * a cage that drifts outward and lingers. */
             sb_hover(b, 26, TO_FIXED(1));
-            if ((b->phase_timer % 30) == 0) {
-                b->spin += 4000;
-                sb_ring(cx, cy, 8, TO_FIXED(1) + 128, b->spin, 2);
+            if ((b->phase_timer % 40) == 0) {
+                b->spin += 5461;                    /* rotate the spokes */
+                for (int s = 0; s < 6; s++) {
+                    int ang = b->spin + (s * 65536) / 6;
+                    for (int r = 1; r <= 3; r++) {
+                        int sx = cx + ((lu_cos(ang) * (14 * r)) >> 12);
+                        int sy = cy + ((lu_sin(ang) * (10 * r)) >> 12);
+                        /* Outward drift: slower at the hub, faster at the rim. */
+                        add_boss_bullet(TO_FIXED(sx), TO_FIXED(sy),
+                                        (lu_cos(ang) * (40 + r * 30)) >> 12,
+                                        (lu_sin(ang) * (40 + r * 30)) >> 12,
+                                        false);
+                    }
+                }
             }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 28; }
             break;
@@ -1731,10 +1988,10 @@ static void sb_frostwidow(Boss* b) {
     }
 }
 
-/* ── BOSS 4 - SCRAP TITAN (L40) ───────────────────────────────────────────
+/* ── BOSS 4 - JUGGERNAUT (L40) ───────────────────────────────────────────
  * Four armour plates soak damage until broken; it drags you toward it with a
  * magnet field and hurls whole asteroids. Slow, heavy, unavoidable pressure. */
-static void sb_scraptitan(Boss* b) {
+static void sb_juggernaut(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int plates = 0;
     for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) plates++;
@@ -1783,10 +2040,10 @@ static void sb_scraptitan(Boss* b) {
     }
 }
 
-/* ── BOSS 5 - EMBERLASH (L50) ─────────────────────────────────────────────
+/* ── BOSS 5 - INFERNO (L50) ─────────────────────────────────────────────
  * Two counter-rotating whips of fire. The safe gaps rotate continuously, so
  * you must keep orbiting rather than camping a corner. */
-static void sb_emberlash(Boss* b) {
+static void sb_inferno(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     b->spin += (sb_hp_pct(b) < 45) ? 1500 : 1000;
 
@@ -1832,10 +2089,10 @@ static void sb_emberlash(Boss* b) {
     }
 }
 
-/* ── BOSS 6 - VAULT WARDEN (L60) ──────────────────────────────────────────
+/* ── BOSS 6 - AEGIS (L60) ──────────────────────────────────────────
  * Invulnerable behind a shield until all four turret nodes are destroyed;
  * the nodes rotate around the hull and fire independently. */
-static void sb_vaultwarden(Boss* b) {
+static void sb_aegis(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int alive = 0;
     for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) alive++;
@@ -1865,14 +2122,39 @@ static void sb_vaultwarden(Boss* b) {
                 b->phase_timer = 160;
             }
             break;
-        case SB_ATTACK_A:     /* LOCKDOWN: sweeping searchlight volleys */
-            sb_drift(b, TO_FIXED(3));
-            if ((b->phase_timer % 16) == 0) sb_fan(cx, cy + 14, 4, TO_FIXED(3) + 80, 9000);
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 28; }
+        case SB_ATTACK_A: {   /* LOCKDOWN: a searchlight column marches across
+                               * the vault floor — shots fall in a strict
+                               * left-to-right (or right-to-left) scan. */
+            sb_hover(b, 34, TO_FIXED(1));
+            if ((b->phase_timer % 5) == 0) {
+                int span = SCREEN_WIDTH - 24;
+                int t = 160 - b->phase_timer;             /* 0..160 */
+                int col = 12 + ((b->sweep_dir > 0)
+                                 ? (t * span) / 160
+                                 : span - (t * span) / 160);
+                add_boss_bullet(TO_FIXED(col), TO_FIXED(cy + 14),
+                                0, TO_FIXED(3) + 40, false);
+                add_boss_bullet(TO_FIXED(col), TO_FIXED(cy + 14),
+                                0, TO_FIXED(2) + 60, false);
+            }
+            if (b->phase_timer <= 0) {
+                b->sweep_dir = -b->sweep_dir;
+                b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 28;
+            }
             break;
-        case SB_ATTACK_B:     /* BREACH RAGE: unshielded, everything at once */
+        }
+        case SB_ATTACK_B:     /* BREACH RAGE: unshielded, the vault core vents
+                               * a two-armed spiral — walk between the arms. */
             sb_hover(b, 30, TO_FIXED(1));
-            if ((b->phase_timer % 18) == 0) sb_ring(cx, cy, 12, TO_FIXED(3) + 60, b->spin, 3);
+            if ((b->phase_timer % 6) == 0) {
+                b->spin += 3600;
+                add_boss_bullet(b->x, b->y,
+                                (lu_cos(b->spin) * (TO_FIXED(2) + 120)) >> 12,
+                                (lu_sin(b->spin) * (TO_FIXED(2) + 120)) >> 12, false);
+                add_boss_bullet(b->x, b->y,
+                                (lu_cos(b->spin + 32768) * (TO_FIXED(2) + 120)) >> 12,
+                                (lu_sin(b->spin + 32768) * (TO_FIXED(2) + 120)) >> 12, false);
+            }
             if ((b->phase_timer % 30) == 0) sb_shoot_at_player(cx, cy + 14, TO_FIXED(6), 1);
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24; }
             break;
@@ -1880,11 +2162,14 @@ static void sb_vaultwarden(Boss* b) {
     }
 }
 
-/* ── BOSS 7 - THE REALITY QUEEN (L70) ─────────────────────────────────────
- * The finale. Jack flies as the Reality King against the Queen's ship, in
+/* ── BOSS 7 - THE VOID EMPRESS (L70) ─────────────────────────────────────
+ * The finale. Jack flies as the Reality King against the Void Empress, in
  * three cinematic stages: her honour guard, the unmaking (reality tears that
- * rewrite the field), and a last desperate all-out barrage. */
-static void sb_realityqueen(Boss* b) {
+ * rewrite the field), and a last desperate all-out barrage.
+ * KEY MECHANIC - THE UNMAKING: twin mirrored reality tears claim whole
+ * columns of space, and each stage she reaches unmakes MORE of the sky
+ * (stage 2 doubles the tear), so the arena itself shrinks as she weakens. */
+static void sb_empress(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int pct = sb_hp_pct(b);
 
@@ -1981,13 +2266,18 @@ static void sb_realityqueen(Boss* b) {
 }
 
 /* Damage gating for bosses with destructible parts.
- * Scrap Titan: four armour plates soak most damage until broken.
- * Vault Warden: fully immune while any turret node lives — you must shoot
+ * Juggernaut: four armour plates soak most damage until broken.
+ * Aegis: fully immune while any turret node lives — you must shoot
  * the rotating nodes off first (hits near a node damage that node). */
 static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
     if (g_game.mode != GAME_MODE_STORY) return dmg;
 
-    if (b->story_id == SBOSS_VAULTWARDEN) {
+    /* Ironmaw's clamp window: a missed bite leaves the jaws straining and
+     * the hull takes DOUBLE damage until it recovers (see sb_ironmaw). */
+    if (b->story_id == SBOSS_IRONMAW && b->charge)
+        return dmg * 2;
+
+    if (b->story_id == SBOSS_AEGIS) {
         int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
         int best = -1, best_d = 0;
         for (int i = 0; i < 4; i++) {
@@ -2012,7 +2302,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
         return dmg;                     /* all nodes down: hull is open */
     }
 
-    if (b->story_id == SBOSS_SCRAPTITAN) {
+    if (b->story_id == SBOSS_JUGGERNAUT) {
         for (int i = 0; i < 4; i++) {
             if (b->node_hp[i] > 0) {
                 b->node_hp[i] -= dmg;
@@ -2027,7 +2317,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
         return dmg;
     }
 
-    if (b->story_id == SBOSS_TWINS && b->clone_active) {
+    if (b->story_id == SBOSS_GEMINI && b->clone_active) {
         /* Shots landing nearer the clone chew the clone down instead. */
         int dx = hit_x - FROM_FIXED(b->clone_x);
         int dy = hit_y - FROM_FIXED(b->clone_y);
@@ -2061,13 +2351,13 @@ static void story_boss_ai(Boss* b) {
     }
     b->phase_timer--;
     switch (b->story_id) {
-        case SBOSS_RUSTJAW:      sb_rustjaw(b); break;
-        case SBOSS_TWINS:        sb_twins(b); break;
-        case SBOSS_FROSTWIDOW:   sb_frostwidow(b); break;
-        case SBOSS_SCRAPTITAN:   sb_scraptitan(b); break;
-        case SBOSS_EMBERLASH:    sb_emberlash(b); break;
-        case SBOSS_VAULTWARDEN:  sb_vaultwarden(b); break;
-        default:                 sb_realityqueen(b); break;
+        case SBOSS_IRONMAW:      sb_ironmaw(b); break;
+        case SBOSS_GEMINI:        sb_gemini(b); break;
+        case SBOSS_FROSTBITE:   sb_frostbite(b); break;
+        case SBOSS_JUGGERNAUT:   sb_juggernaut(b); break;
+        case SBOSS_INFERNO:    sb_inferno(b); break;
+        case SBOSS_AEGIS:  sb_aegis(b); break;
+        default:                 sb_empress(b); break;
     }
 }
 
@@ -2166,6 +2456,8 @@ static void spawn_boss(void) {
     g_game.boss.cooldown = g_game.boss.mini ? 80 : 60;
     g_game.boss.fire_state = 0;
     g_game.boss.sweep_dir = 1;
+    g_game.boss.last_move = -1;
+    g_game.boss.aim_x = g_game.boss.x;   // Corsair's first dart anchor
     g_game.boss_active = true;
     g_game.boss_hit_flash = 0;
     audio_begin_boss_music();
@@ -2173,8 +2465,24 @@ static void spawn_boss(void) {
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
 }
 
+/* The Razorwing (mini) is a 24x20 hull at 1x; the Goliath is the same
+ * template language at 2x (48x40 on screen).  Story bosses render at 2x. */
+/* GOLIATH KEY MECHANIC - SEALED DECKS.  While the battleship cruises with
+ * its decks buttoned up (IDLE), armour eats most of every hit; the moment
+ * it opens its gun decks to attack, the hull is exposed and takes full
+ * damage.  Punish its attacks instead of poking the armour. */
+static int arcade_boss_scale_damage(const Boss* b, int dmg) {
+    if (b->mini) return dmg;                     /* Razorwing has no decks */
+    if (b->phase == BOSS_IDLE || b->phase == BOSS_REPOSITION) {
+        int chip = dmg / 3;
+        return chip > 0 ? chip : 1;
+    }
+    return dmg;
+}
+
 static int boss_hit_radius(const Boss* b) {
-    return b->mini ? 12 : 16;
+    if (g_game.mode == GAME_MODE_STORY) return 20;
+    return b->mini ? 11 : 20;
 }
 
 static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
@@ -2185,10 +2493,10 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     if (g_game.mode == GAME_MODE_STORY) {
         /* Story bosses get a bigger send-off, then hand control to the
          * result card (the campaign banks the reward, not arcade coins). */
-        int blasts = (b->story_id == SBOSS_REALITYQUEEN) ? 14 : 8;
+        int blasts = (b->story_id == SBOSS_EMPRESS) ? 14 : 8;
         for (int k = 0; k < blasts; k++)
             trigger_explosion(boss_cx + (rand() % 40) - 20, boss_cy + (rand() % 30) - 15);
-        g_game.shake_timer = (b->story_id == SBOSS_REALITYQUEEN) ? 60 : 34;
+        g_game.shake_timer = (b->story_id == SBOSS_EMPRESS) ? 60 : 34;
         award_score(2000 * (b->story_id + 1));
         story_on_kill_scored(1);
         platform_queue_haptic(HAPTIC_BEAM);
@@ -2289,6 +2597,57 @@ static void boss_fire_spread_at_player(int speed_fixed) {
 #endif
 }
 
+/* One aimed shot from an arbitrary muzzle position (screen pixels). */
+static void boss_fire_aimed_from(int mx, int my, int speed_fixed, int heavy) {
+    const Player* aim = ai_target_ship();
+    int dx = FROM_FIXED(aim->x) - mx;
+    int dy = FROM_FIXED(aim->y) - my;
+    double mag = hypot((double)dx, (double)dy);
+    if (mag < 1.0) mag = 1.0;
+    double sp = (double)speed_fixed / 256.0;
+    add_boss_bullet(TO_FIXED(mx), TO_FIXED(my),
+                    (int)(dx / mag * sp * 256.0), (int)(dy / mag * sp * 256.0), heavy);
+}
+
+/* Aimed fan of n shots spread across +/-spread_88 (8.8 sideways units). */
+static void boss_fire_fan_at_player(int mx, int my, int n, int speed_fixed,
+                                    int spread_88) {
+    const Player* aim = ai_target_ship();
+    int dx = FROM_FIXED(aim->x) - mx;
+    int dy = FROM_FIXED(aim->y) - my;
+    double mag = hypot((double)dx, (double)dy);
+    if (mag < 1.0) mag = 1.0;
+    double ndx = (double)dx / mag, ndy = (double)dy / mag;
+    double sp = (double)speed_fixed / 256.0;
+    for (int i = 0; i < n; i++) {
+        int centered = i * 2 - (n - 1);              /* -n+1 .. n-1 */
+        double vxd = ndx + ((double)centered * spread_88 / 256.0) / (n > 1 ? (n - 1) : 1);
+        double vyd = ndy;
+        double vmag = hypot(vxd, vyd);
+        if (vmag < 0.01) vmag = 0.01;
+        add_boss_bullet(TO_FIXED(mx), TO_FIXED(my),
+                        (int)(vxd / vmag * sp * 256.0),
+                        (int)(vyd / vmag * sp * 256.0), i == n / 2);
+    }
+}
+
+/* A downward curtain of shots with a guaranteed gap centered on gap_x. */
+static void boss_fire_wall(int from_y, int gap_x, int gap_half, int speed_fixed) {
+    for (int x = 12; x < SCREEN_WIDTH - 10; x += 24) {
+        if (x > gap_x - gap_half && x < gap_x + gap_half) continue;
+        add_boss_bullet(TO_FIXED(x), TO_FIXED(from_y), 0, speed_fixed, false);
+    }
+}
+
+/* Pick the next attack (0..count-1) without repeating the previous one. */
+static int boss_pick_move(Boss* b, int count) {
+    int roll = rand() % count;
+    if (count > 1 && roll == b->last_move)
+        roll = (roll + 1 + rand() % (count - 1)) % count;
+    b->last_move = roll;
+    return roll;
+}
+
 /* ── Weapon system ──────────────────────────────────────────────────── */
 static int get_weapon_base_cooldown(WeaponRig rig) {
     (void)rig;
@@ -2349,7 +2708,44 @@ static void fire_weapon_for(Player* p, const CoopLoadout* lo, int owner) {
                  FROM_FIXED(p->x), FROM_FIXED(p->y) - 8);
 }
 
+/* Puzzle-level trigger discipline.  GAUNTLET kills the guns entirely;
+ * SALVO swaps whatever rig is equipped for a single precise bolt per pull
+ * so the shot budget means the same thing on every loadout. */
+static bool story_puzzle_guns_offline(void) {
+    if (g_game.mode != GAME_MODE_STORY) return false;
+    const StoryLevel* L = story_cur();
+    if (L->objective != OBJ_PUZZLE) return false;
+    if (L->modifier == MOD_PZ_GAUNTLET) return true;
+    if (L->modifier == MOD_PZ_SALVO && s_puzzle_ammo <= 0) return true;
+    return false;
+}
+
 static void fire_player_weapon(void) {
+    if (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE) {
+        const StoryLevel* L = story_cur();
+        if (L->modifier == MOD_PZ_GAUNTLET) return;
+        if (L->modifier == MOD_PZ_SALVO) {
+            if (s_puzzle_ammo <= 0) { s_puzzle_flash = 20; return; }
+            s_puzzle_ammo--;
+            story_on_shot_fired(1);
+            add_player_bullet(g_game.player.x, g_game.player.y - TO_FIXED(7),
+                              0, -TO_FIXED(7), 1, true, 0);
+            g_game.player.fire_cooldown = 22;
+            audio_play_sfx(SFX_LASER);
+            return;
+        }
+        /* SIGNAL levels fire normally — the discipline is target choice.
+         * The Infinity Beam's continuous path is disabled on puzzles, so
+         * give its owner a plain bolt instead of a dead trigger. */
+        if (L->modifier == MOD_PZ_SIGNAL && g_settings.weapon_rig == WEAPON_INFINITY) {
+            story_on_shot_fired(1);
+            add_player_bullet(g_game.player.x, g_game.player.y - TO_FIXED(7),
+                              0, -TO_FIXED(7), 3, true, 0);
+            g_game.player.fire_cooldown = 16;
+            audio_play_sfx(SFX_LASER);
+            return;
+        }
+    }
     CoopLoadout lo;
     loadout_from_settings(&lo);
     fire_weapon_for(&g_game.player, &lo, 0);
@@ -2425,7 +2821,11 @@ void game_start(void) {
         if (g_game.mode == GAME_MODE_OVERDRIVE) spawn_random_drone();
     }
 
-    audio_play_bgm(BGM_GAME);
+    /* Boss levels stage the boss.wav cue during story_begin_level(); starting
+     * BGM_GAME here would cancel that request and the boss would fight over
+     * the normal gameplay track. */
+    if (!(g_game.mode == GAME_MODE_STORY && g_game.boss_active))
+        audio_play_bgm(BGM_GAME);
 }
 
 #ifndef GAME_SPEED_MULTIPLIER
@@ -2778,6 +3178,13 @@ static void game_update_tick(void) {
     base_spd = (base_spd * eng_mult) >> 8;
     int spd = base_spd;
 
+    /* FROSTBITE's engine icing: fully iced engines run at ~45% thrust.
+     * The meter climbs while parked and sheds while flying (sb_frostbite). */
+    if (g_game.mode == GAME_MODE_STORY && g_game.boss_active &&
+        g_game.boss.story_id == SBOSS_FROSTBITE && s_frost_ice > 0) {
+        spd = spd - ((spd * s_frost_ice * 140 / 256) >> 8);
+    }
+
     if (mx != 0 && my != 0) {
         g_game.player.x += (mx * spd * 181) / 256;
         g_game.player.y += (my * spd * 181) / 256;
@@ -2799,6 +3206,12 @@ static void game_update_tick(void) {
     //    fires for 3s (Undertale yellow-soul style). ──────────────────
     bool beam_held = !p1_spectating &&
         (key_is_down(KEY_B) || key_is_down(KEY_R) || key_is_down(KEY_L));
+    /* Puzzle levels with dead or rationed guns also ground the big laser —
+     * a free 3-second screen wipe would trivialise the whole exercise. */
+    if (story_puzzle_guns_offline() ||
+        (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE &&
+         story_cur()->modifier != MOD_PZ_SIGNAL))
+        beam_held = false;
     if (!g_game.beam_active) {
         if (beam_held) {
             if (g_game.beam_charge < BEAM_CHARGE_TICKS) {
@@ -2825,7 +3238,8 @@ static void game_update_tick(void) {
     }
 
     bool primary_held = !p1_spectating && key_is_down(KEY_A);
-    if (g_settings.weapon_rig == WEAPON_INFINITY) {
+    if (g_settings.weapon_rig == WEAPON_INFINITY &&
+        !(g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE)) {
         bool was_active = g_game.primary_beam_active;
         g_game.primary_beam_active = primary_held;
         if (primary_held) {
@@ -2988,117 +3402,272 @@ static void game_update_tick(void) {
             if (b->y > target_y) b->y = target_y;
         } else {
             b->phase_timer--;
-            int boss_spd = TO_FIXED(2); // faster than drones, ~2 pixels/tick
 
-            switch (b->phase) {
-                case BOSS_IDLE: {
-                    int left_lim = TO_FIXED(20), right_lim = TO_FIXED(SCREEN_WIDTH - 20);
-                    b->x += b->vx;
-                    if (b->x < left_lim) { b->x = left_lim; b->vx = -b->vx; }
-                    if (b->x > right_lim) { b->x = right_lim; b->vx = -b->vx; }
-                    b->cooldown--;
-                    if (b->cooldown <= 0) {
-                        boss_fire_spread_at_player(TO_FIXED(4));
-                        b->cooldown = 28 - (g_game.wave / 5);
-                        if (b->mini) b->cooldown += 14;
-                        if (b->cooldown < 10) b->cooldown = 10;
-                    }
-                    if (b->phase_timer <= 0) {
-                        const Player* aim = ai_target_ship();
-                        /* Mini-boss skips the dive lunge — same kit, less mean. */
-                        int roll = rand() % (b->mini ? 3 : 4);
-                        if (roll == 0) { b->phase = BOSS_BURST; b->phase_timer = 90; b->fire_state = 0; }
-                        else if (roll == 1) { b->phase = BOSS_BEAM_WIND; b->phase_timer = 60; b->beam_x = aim->x; }
-                        else if (roll == 2) { b->phase = BOSS_SWEEP; b->phase_timer = 120; b->sweep_dir = (aim->x < b->x) ? -1 : 1; }
-                        else { b->phase = BOSS_DIVE; b->phase_timer = 140; b->aim_x = aim->x; }
-                    }
-                    break;
-                }
-                case BOSS_SWEEP: {
-                    b->x += b->sweep_dir * boss_spd * 2; // fast strafe
-                    if (b->x < TO_FIXED(20)) { b->x = TO_FIXED(20); b->sweep_dir = 1; }
-                    if (b->x > TO_FIXED(SCREEN_WIDTH - 20)) { b->x = TO_FIXED(SCREEN_WIDTH - 20); b->sweep_dir = -1; }
-                    if ((b->phase_timer & 3) == 0) {
-                        int cx = FROM_FIXED(b->x);
-                        int cy = FROM_FIXED(b->y) + 14;
-                        add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy), 0, TO_FIXED(4), false);
-                    }
-                    if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 80; b->cooldown = 30; }
-                    break;
-                }
-                case BOSS_BURST: {
-                    b->x += b->vx / 2;
-                    int left_lim = TO_FIXED(20), right_lim = TO_FIXED(SCREEN_WIDTH - 20);
-                    if (b->x < left_lim) { b->x = left_lim; b->vx = -b->vx; }
-                    if (b->x > right_lim) { b->x = right_lim; b->vx = -b->vx; }
-                    if ((b->phase_timer % 20) == 0) {
-                        boss_fire_burst(8, TO_FIXED(3));
-                        b->fire_state++;
-                    }
-                    if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 70; b->cooldown = 30; }
-                    break;
-                }
-                case BOSS_BEAM_WIND: {
-                    b->beam_x = ai_target_ship()->x;
-                    if ((b->phase_timer & 3) == 0) {
-                        int wx = FROM_FIXED(b->beam_x);
-                        spawn_particle(TO_FIXED(wx + (rand()&7)-4), TO_FIXED(40+rand()%90), 0, 80,
-                                       PAL_TEXT_RED + (rand()&2), 8);
-                    }
-                    if (b->phase_timer <= 0) {
-                        b->phase = BOSS_BEAM_FIRE;
-                        b->phase_timer = 120;
-                        b->beam_width = TO_FIXED(12);
-                        b->beam_timer = 120;
-                    }
-                    break;
-                }
-                case BOSS_BEAM_FIRE: {
-                    int pxi = ai_target_ship()->x;
-                    int diff = pxi - b->beam_x;
-                    int step = TO_FIXED(1) / 8; // slow tracking, ~0.12 pix/tick
-                    if (diff > step) b->beam_x += step;
-                    else if (diff < -step) b->beam_x -= step;
-                    else b->beam_x = pxi;
-                    b->beam_timer--;
-                    int beam_px = FROM_FIXED(b->beam_x);
-                    int half_w = 7 + (120 - b->beam_timer) / 20;
-                    if (half_w > 14) half_w = 14;
-                    if (g_game.player.invulnerable_timer == 0 && py > 12) {
-                        if (px >= beam_px - half_w && px <= beam_px + half_w) {
-                            damage_player();
+            /* Enrage tiers: fights speed up at 50% and 25% HP. */
+            int rage = 0;
+            if (b->hp * 2 < b->hp_max) rage = 1;
+            if (b->hp * 4 < b->hp_max) rage = 2;
+
+            if (b->mini) {
+                /* ── RAZORWING (waves 5/15/25...) ─────────────────────
+                 * A nimble strike fighter: darts between anchor points,
+                 * strafes the screen with angled bursts, and feints a dive
+                 * through your column.  Fast and personal — the opposite
+                 * of the Goliath's artillery. */
+                switch (b->phase) {
+                    case BOSS_IDLE: {
+                        /* Climb back to patrol height after a dive, then
+                         * dart between anchors snapping aimed shots. */
+                        if (b->y > target_y) {
+                            b->y -= TO_FIXED(2);
+                            if (b->y < target_y) b->y = target_y;
                         }
-                    }
-                    if ((b->phase_timer & 1) == 0) {
-                        int sx = beam_px + (rand()&31)-15;
-                        spawn_particle(TO_FIXED(sx), TO_FIXED(30+rand()%110),
-                                       (rand()&63)-32, -((rand()&31)+40),
-                                       PAL_TEXT_GOLD + (rand()&3), 10);
-                    }
-                    if (b->beam_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 100; b->cooldown = 40; }
-                    break;
-                }
-                case BOSS_DIVE: {
-                    if (b->phase_timer > 80) {
                         int diff = b->aim_x - b->x;
-                        if (diff > boss_spd) b->x += boss_spd;
-                        else if (diff < -boss_spd) b->x -= boss_spd;
-                        else b->x = b->aim_x;
-                    } else if (b->phase_timer > 20) {
-                        b->y += TO_FIXED(4);
-                        if ((b->phase_timer & 2) == 0) {
-                            boss_fire_burst(6, TO_FIXED(3));
+                        int dash = TO_FIXED(2) + rage * 60;
+                        if (diff > dash) b->x += dash;
+                        else if (diff < -dash) b->x -= dash;
+                        else {
+                            b->x = b->aim_x;
+                            b->aim_x = TO_FIXED(24 + rand() % (SCREEN_WIDTH - 48));
                         }
-                    } else {
-                        b->y -= TO_FIXED(2);
-                        if (b->y <= target_y) { b->y = target_y; b->phase = BOSS_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+                        if (--b->cooldown <= 0) {
+                            boss_fire_aimed_from(FROM_FIXED(b->x), FROM_FIXED(b->y) + 10,
+                                                 TO_FIXED(4), 0);
+                            b->cooldown = 34 - rage * 6 - g_game.wave / 10;
+                            if (b->cooldown < 14) b->cooldown = 14;
+                        }
+                        if (b->phase_timer <= 0) {
+                            int roll = boss_pick_move(b, 3);
+                            if (roll == 0) {          /* STRAFING RUN */
+                                b->phase = BOSS_SWEEP;
+                                b->phase_timer = 110;
+                                b->sweep_dir = (b->x > TO_FIXED(SCREEN_WIDTH / 2)) ? -1 : 1;
+                            } else if (roll == 1) {   /* SNAP FANS */
+                                b->phase = BOSS_BURST;
+                                b->phase_timer = 96;
+                                b->fire_state = 0;
+                            } else {                  /* FEINT DIVE */
+                                b->phase = BOSS_DIVE;
+                                b->phase_timer = 130;
+                                b->aim_x = ai_target_ship()->x;
+                            }
+                        }
+                        break;
                     }
-                    break;
+                    case BOSS_SWEEP: {
+                        /* KEY MECHANIC - BURNING WAKE: the strafing run
+                         * leaves a trail of near-stationary afterburner
+                         * embers that hang in the air, walling off the sky
+                         * it just crossed.  Chase it and you fly into the
+                         * wake; the counter-play is to cut BELOW the run. */
+                        b->x += b->sweep_dir * (TO_FIXED(3) + rage * 70);
+                        if (b->x < TO_FIXED(16)) { b->x = TO_FIXED(16); b->sweep_dir = 1; }
+                        if (b->x > TO_FIXED(SCREEN_WIDTH - 16)) { b->x = TO_FIXED(SCREEN_WIDTH - 16); b->sweep_dir = -1; }
+                        if ((b->phase_timer % (6 - rage)) == 0) {
+                            /* Wake ember: barely drifts, burns out on its own. */
+                            add_boss_bullet(b->x, b->y + TO_FIXED(8),
+                                            0, 40 + (rand() & 31), false);
+                        }
+                        if ((b->phase_timer % 24) == 0)
+                            boss_fire_aimed_from(FROM_FIXED(b->x), FROM_FIXED(b->y) + 10,
+                                                 TO_FIXED(4), 0);
+                        if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 90; b->cooldown = 26; }
+                        break;
+                    }
+                    case BOSS_BURST: {
+                        /* Hold position, then three quick aimed fans that
+                         * widen each snap: dodge sideways, not backwards. */
+                        if ((b->phase_timer % 30) == 15) {
+                            int n = 3 + b->fire_state + rage;
+                            boss_fire_fan_at_player(FROM_FIXED(b->x), FROM_FIXED(b->y) + 10,
+                                                    n, TO_FIXED(4) + 40,
+                                                    70 + b->fire_state * 40);
+                            b->fire_state++;
+                        }
+                        if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+                        break;
+                    }
+                    case BOSS_DIVE: {
+                        /* Feint dive: line up on your column, plunge through
+                         * it spraying sideways, then climb back. */
+                        if (b->phase_timer > 90) {
+                            int diff = b->aim_x - b->x;
+                            int step = TO_FIXED(3);
+                            if (diff > step) b->x += step;
+                            else if (diff < -step) b->x -= step;
+                            else b->x = b->aim_x;
+                            if ((b->phase_timer & 3) == 0)
+                                spawn_particle(b->x, b->y + TO_FIXED(12), 0, 120, PAL_TEXT_RED, 8);
+                        } else if (b->phase_timer > 34) {
+                            b->y += TO_FIXED(4) + rage * 40;
+                            if (FROM_FIXED(b->y) > SCREEN_HEIGHT - 34) b->y = TO_FIXED(SCREEN_HEIGHT - 34);
+                            if ((b->phase_timer % 6) == 0) {
+                                int mx = FROM_FIXED(b->x), my = FROM_FIXED(b->y);
+                                add_boss_bullet(TO_FIXED(mx - 8), TO_FIXED(my), -TO_FIXED(2) - 60, 90, false);
+                                add_boss_bullet(TO_FIXED(mx + 8), TO_FIXED(my),  TO_FIXED(2) + 60, 90, false);
+                            }
+                        } else {
+                            b->y -= TO_FIXED(3);
+                            if (b->y <= target_y) {
+                                b->y = target_y;
+                                b->phase = BOSS_IDLE; b->phase_timer = 90; b->cooldown = 26;
+                            }
+                        }
+                        if (b->phase_timer <= 0 && b->phase == BOSS_DIVE) {
+                            b->phase = BOSS_IDLE; b->phase_timer = 90; b->cooldown = 26;
+                        }
+                        break;
+                    }
+                    default:
+                        b->phase = BOSS_IDLE;
+                        b->phase_timer = 60;
+                        break;
                 }
-                default:
-                    b->phase = BOSS_IDLE;
-                    b->phase_timer = 60;
-                    break;
+            } else {
+                /* ── GOLIATH (waves 10/20/30...) ────────────────
+                 * A ponderous artillery battleship: rotating ring barrages,
+                 * a constant-speed siege beam you dodge behind, walking
+                 * curtain walls, and crossing wingtip broadsides. */
+                switch (b->phase) {
+                    case BOSS_IDLE: {
+                        int left_lim = TO_FIXED(30), right_lim = TO_FIXED(SCREEN_WIDTH - 30);
+                        b->x += b->vx;
+                        if (b->x < left_lim) { b->x = left_lim; b->vx = -b->vx; }
+                        if (b->x > right_lim) { b->x = right_lim; b->vx = -b->vx; }
+                        if (--b->cooldown <= 0) {
+                            boss_fire_spread_at_player(TO_FIXED(4));
+                            b->cooldown = 30 - rage * 5 - g_game.wave / 10;
+                            if (b->cooldown < 12) b->cooldown = 12;
+                        }
+                        if (b->phase_timer <= 0) {
+                            const Player* aim = ai_target_ship();
+                            int roll = boss_pick_move(b, 4);
+                            if (roll == 0) {          /* RING BARRAGE */
+                                b->phase = BOSS_BURST;
+                                b->phase_timer = 120;
+                                b->fire_state = 0;
+                            } else if (roll == 1) {   /* SIEGE BEAM */
+                                b->phase = BOSS_BEAM_WIND;
+                                b->phase_timer = 60;
+                                b->beam_x = aim->x;
+                                b->sweep_dir = (aim->x < TO_FIXED(SCREEN_WIDTH / 2)) ? 1 : -1;
+                            } else if (roll == 2) {   /* CURTAIN WALL */
+                                b->phase = BOSS_WALL;
+                                b->phase_timer = 130;
+                                b->aim_x = aim->x;
+                                b->sweep_dir = (rand() & 1) ? 1 : -1;
+                            } else {                  /* CROSS BROADSIDE */
+                                b->phase = BOSS_SCISSOR;
+                                b->phase_timer = 120;
+                            }
+                        }
+                        break;
+                    }
+                    case BOSS_BURST: {
+                        /* Rotating rings, seeded with the occasional aimed
+                         * heavy shell so camping a lane never works. */
+                        b->x += b->vx / 2;
+                        int left_lim = TO_FIXED(30), right_lim = TO_FIXED(SCREEN_WIDTH - 30);
+                        if (b->x < left_lim) { b->x = left_lim; b->vx = -b->vx; }
+                        if (b->x > right_lim) { b->x = right_lim; b->vx = -b->vx; }
+                        if ((b->phase_timer % (24 - rage * 4)) == 0) {
+                            boss_fire_burst(8 + rage * 2, TO_FIXED(3));
+                            b->fire_state++;
+                        }
+                        if ((b->phase_timer % 40) == 20)
+                            boss_fire_aimed_from(FROM_FIXED(b->x), FROM_FIXED(b->y) + 16,
+                                                 TO_FIXED(5), 1);
+                        if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+                        break;
+                    }
+                    case BOSS_BEAM_WIND: {
+                        /* The warning column locks in place; the beam then
+                         * sweeps at CONSTANT speed, so the read is "get on
+                         * the safe side", not "outrun the tracking". */
+                        if ((b->phase_timer & 3) == 0) {
+                            int wx = FROM_FIXED(b->beam_x);
+                            spawn_particle(TO_FIXED(wx + (rand()&7)-4), TO_FIXED(40+rand()%90), 0, 80,
+                                           PAL_TEXT_RED + (rand()&2), 8);
+                        }
+                        if (b->phase_timer <= 0) {
+                            b->phase = BOSS_BEAM_FIRE;
+                            b->phase_timer = 130;
+                            b->beam_width = TO_FIXED(12);
+                            b->beam_timer = 130;
+                        }
+                        break;
+                    }
+                    case BOSS_BEAM_FIRE: {
+                        b->beam_x += b->sweep_dir * (100 + rage * 30);
+                        if (b->beam_x < TO_FIXED(10)) { b->beam_x = TO_FIXED(10); b->sweep_dir = 1; }
+                        if (b->beam_x > TO_FIXED(SCREEN_WIDTH - 10)) { b->beam_x = TO_FIXED(SCREEN_WIDTH - 10); b->sweep_dir = -1; }
+                        b->beam_timer--;
+                        int beam_px = FROM_FIXED(b->beam_x);
+                        int half_w = 7 + (130 - b->beam_timer) / 24;
+                        if (half_w > 13) half_w = 13;
+                        if (g_game.player.invulnerable_timer == 0 && py > 12) {
+                            if (px >= beam_px - half_w && px <= beam_px + half_w) {
+                                damage_player();
+                            }
+                        }
+                        /* Co-op: the beam burns player 2 as well. */
+                        if (s_coop_guest_active && !g_game.player2.dead &&
+                            g_game.player2.invulnerable_timer == 0) {
+                            int p2x = FROM_FIXED(g_game.player2.x);
+                            if (p2x >= beam_px - half_w && p2x <= beam_px + half_w)
+                                damage_player2();
+                        }
+                        if ((b->phase_timer & 1) == 0) {
+                            int sx = beam_px + (rand()&31)-15;
+                            spawn_particle(TO_FIXED(sx), TO_FIXED(30+rand()%110),
+                                           (rand()&63)-32, -((rand()&31)+40),
+                                           PAL_TEXT_GOLD + (rand()&3), 10);
+                        }
+                        if (b->beam_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 100; b->cooldown = 40; }
+                        break;
+                    }
+                    case BOSS_WALL: {
+                        /* Walking curtain: each wall leaves one gap and the
+                         * gap slides sideways wall after wall — you have to
+                         * keep moving WITH it, not just find it once. */
+                        if ((b->phase_timer % (34 - rage * 5)) == 0) {
+                            int gap = FROM_FIXED(b->aim_x);
+                            if (gap < 26) gap = 26;
+                            if (gap > SCREEN_WIDTH - 26) gap = SCREEN_WIDTH - 26;
+                            boss_fire_wall(FROM_FIXED(b->y) + 16, gap, 26, TO_FIXED(2) + 100);
+                            b->aim_x += b->sweep_dir * TO_FIXED(24);
+                            if (b->aim_x < TO_FIXED(30)) { b->aim_x = TO_FIXED(30); b->sweep_dir = 1; }
+                            if (b->aim_x > TO_FIXED(SCREEN_WIDTH - 30)) { b->aim_x = TO_FIXED(SCREEN_WIDTH - 30); b->sweep_dir = -1; }
+                        }
+                        if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 90; b->cooldown = 34; }
+                        break;
+                    }
+                    case BOSS_SCISSOR: {
+                        /* Crossing broadsides from both wingtips: the shots
+                         * scissor in the middle, so the safe spot slides
+                         * out toward the edges and back. */
+                        b->x += b->vx / 2;
+                        int left_lim = TO_FIXED(34), right_lim = TO_FIXED(SCREEN_WIDTH - 34);
+                        if (b->x < left_lim) { b->x = left_lim; b->vx = -b->vx; }
+                        if (b->x > right_lim) { b->x = right_lim; b->vx = -b->vx; }
+                        if ((b->phase_timer % (11 - rage * 2)) == 0) {
+                            int mx = FROM_FIXED(b->x), my = FROM_FIXED(b->y) + 12;
+                            add_boss_bullet(TO_FIXED(mx - 22), TO_FIXED(my),
+                                            TO_FIXED(1) + 60, TO_FIXED(2) + 120, false);
+                            add_boss_bullet(TO_FIXED(mx + 22), TO_FIXED(my),
+                                            -TO_FIXED(1) - 60, TO_FIXED(2) + 120, false);
+                        }
+                        if ((b->phase_timer % 45) == 22)
+                            boss_fire_aimed_from(FROM_FIXED(b->x), FROM_FIXED(b->y) + 16,
+                                                 TO_FIXED(4) + 60, 1);
+                        if (b->phase_timer <= 0) { b->phase = BOSS_IDLE; b->phase_timer = 80; b->cooldown = 28; }
+                        break;
+                    }
+                    default:
+                        b->phase = BOSS_IDLE;
+                        b->phase_timer = 60;
+                        break;
+                }
             }
         }
 
@@ -3122,7 +3691,10 @@ static void game_update_tick(void) {
                 int dist_sq = (bxp - boss_cx)*(bxp - boss_cx) + (byp - boss_cy)*(byp - boss_cy);
                 if (dist_sq <= (br + boss_r)*(br + boss_r)) {
                     int dmg = g_game.bullets[bu].damage;
-                    dmg = story_boss_absorb(b, dmg, bxp, byp);
+                    if (g_game.mode == GAME_MODE_STORY)
+                        dmg = story_boss_absorb(b, dmg, bxp, byp);
+                    else
+                        dmg = arcade_boss_scale_damage(b, dmg);
                     b->hp -= dmg;
                     b->flash_timer = 6;
                     if (g_settings.screen_shake) {
@@ -3500,6 +4072,21 @@ void game_draw(void) {
                 gfx_draw_sprite_rainbow(ax - radius, ay - radius, size, size, sprite, s_game_frame);
             else
                 gfx_draw_sprite(ax - radius, ay - radius, size, size, sprite);
+
+            /* SIGNAL HUNT: the scanner mark — a pulsing diamond reticle
+             * around the one rock that actually counts. */
+            if (g_game.mode == GAME_MODE_STORY && i == s_puzzle_mark &&
+                story_cur()->objective == OBJ_PUZZLE &&
+                story_cur()->modifier == MOD_PZ_SIGNAL) {
+                int r = radius + 5 + (((s_game_frame >> 3) & 1) ? 1 : 0);
+                u8 mc = ((s_game_frame >> 3) & 1) ? PAL_TEXT_GOLD : PAL_TEXT_GREEN;
+                for (int d = 0; d <= r; d++) {
+                    gfx_draw_pixel(ax - r + d, ay - d, mc);
+                    gfx_draw_pixel(ax - r + d, ay + d, mc);
+                    gfx_draw_pixel(ax + r - d, ay - d, mc);
+                    gfx_draw_pixel(ax + r - d, ay + d, mc);
+                }
+            }
         }
     }
 
@@ -3640,6 +4227,16 @@ void game_draw(void) {
             case OBJ_BOSS:
                 siprintf(obuf, "%s", story_boss_name(story_boss_for_level(s_story_level)));
                 break;
+            case OBJ_PUZZLE:
+                if (L->modifier == MOD_PZ_SALVO) {
+                    siprintf(obuf, "AMMO %d  ROCKS %d", s_puzzle_ammo,
+                             count_medium_equivalents());
+                } else if (L->modifier == MOD_PZ_SIGNAL) {
+                    siprintf(obuf, "SIGNALS %d/%d", s_puzzle_found, (int)L->quota);
+                } else {
+                    siprintf(obuf, "GUNS OFFLINE  %ds", (s_story_timer + 89) / 90);
+                }
+                break;
             default: {
                 /* Counted in MEDIUM rocks: a big rock is the two mediums it
                  * will break into, and the small/tiny debris those shed is
@@ -3652,7 +4249,10 @@ void game_draw(void) {
                 break;
             }
         }
-        gfx_draw_text_centered((SCREEN_WIDTH - 120) / 2, 12, 120, obuf, PAL_TEXT_GOLD);
+        /* Puzzle mishaps (dry trigger, wrong rock) flash the readout red. */
+        u8 obj_col = (L->objective == OBJ_PUZZLE && s_puzzle_flash > 0 &&
+                      ((s_game_frame >> 2) & 1)) ? PAL_TEXT_RED : PAL_TEXT_GOLD;
+        gfx_draw_text_centered((SCREEN_WIDTH - 120) / 2, 12, 120, obuf, obj_col);
     }
 
     if (g_game.combo > 1) {
@@ -3742,6 +4342,13 @@ void game_draw(void) {
                     case OBJ_SURVIVE: objn = "SURVIVE THE FIELD"; break;
                     case OBJ_BIGGAME: objn = "CRACK THE BIG ONES"; break;
                     case OBJ_TIMED:   objn = "CLEAR IT BEFORE THE CLOCK"; break;
+                    case OBJ_PUZZLE:
+                        objn = (L->modifier == MOD_PZ_SALVO)
+                                 ? "CLEAR IT ON A SHOT BUDGET"
+                             : (L->modifier == MOD_PZ_SIGNAL)
+                                 ? "BREAK ONLY THE MARKED ROCK"
+                                 : "GUNS DEAD - DODGE IT ALL";
+                        break;
                     default:          objn = "CLEAR EVERYTHING"; break;
                 }
                 const char* modn = story_modifier_name(L->modifier);
@@ -3765,13 +4372,13 @@ void game_draw(void) {
             gfx_draw_text_centered(bx, by + 4, banner_w, "OVERDRIVE", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "90 SECONDS", PAL_TEXT_CYAN);
         } else if (first_boss) {
-            gfx_draw_text_centered(bx, by + 4, banner_w, "MINI BOSS", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, by + 4, banner_w, "RAZORWING", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "THINK YOU CAN HANDLE THIS", PAL_TEXT_CYAN);
         } else if (is_mini_boss_wave(g_game.wave)) {
-            gfx_draw_text_centered(bx, by + 4, banner_w, "MINI BOSS", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(bx, by + 4, banner_w, "RAZORWING", PAL_TEXT_GOLD);
             gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_CYAN);
         } else if (is_full_boss_wave(g_game.wave)) {
-            gfx_draw_text_centered(bx, by + 4, banner_w, "!! BOSS !!", PAL_TEXT_RED);
+            gfx_draw_text_centered(bx, by + 4, banner_w, "GOLIATH", PAL_TEXT_RED);
             gfx_draw_text_centered(bx, by + 13, banner_w, "INCOMING!", PAL_TEXT_GOLD);
         } else {
             siprintf(buf, "WAVE %02d", g_game.wave);
@@ -3801,58 +4408,37 @@ void game_draw(void) {
             gfx_fill_rect(wpx - 1, 0, 2, SCREEN_HEIGHT, PAL_TEXT_WHITE);
         }
 
-        // Boss hull: the mini-drone sprite, recolored + scaled.
+        // Boss hull: a real pixel-art ship in the fleet's own art style.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
-#ifdef PLATFORM_HOST
-        if (g_game.mode == GAME_MODE_STORY)
-            gfx_draw_story_boss(bxi, byi, g_game.boss.story_id, flash != 0, s_game_frame);
-        else
-            gfx_draw_boss_drone(bxi, byi, g_game.boss.mini, flash != 0, s_game_frame);
-#else
-        u8 hull = flash ? PAL_TEXT_WHITE : PAL_TEXT_RED;
-        u8 trim = flash ? PAL_TEXT_WHITE : PAL_TEXT_GOLD;
-        u8 glow = PAL_TEXT_VIOLET;
-        if (g_game.boss.mini) {
-            gfx_fill_rect(bxi - 13, byi - 8, 26, 14, hull);
-            gfx_fill_rect(bxi - 10, byi - 11, 20, 5, hull);
-            gfx_fill_rect(bxi - 16, byi - 3, 6, 8, hull);
-            gfx_fill_rect(bxi + 10, byi - 3, 6, 8, hull);
-            gfx_fill_rect(bxi - 3, byi + 6, 6, 6, hull);
-            gfx_fill_rect(bxi - 11, byi - 7, 22, 1, trim);
-            gfx_fill_rect(bxi - 13, byi + 4, 26, 2, trim);
-            gfx_fill_rect(bxi - 2, byi - 10, 4, 2, trim);
-            gfx_fill_rect(bxi - 3, byi - 4, 6, 4, glow);
-            gfx_fill_rect(bxi - 1, byi - 3, 2, 2, PAL_TEXT_WHITE);
+        if (g_game.mode == GAME_MODE_STORY) {
+            int spr = BOSS_SPR_IRONMAW + g_game.boss.story_id;
+            if (spr < BOSS_SPR_IRONMAW || spr >= NUM_BOSS_SPRITES) spr = BOSS_SPR_IRONMAW;
+            gfx_draw_boss_ship(bxi, byi, spr, 2, flash != 0, s_game_frame);
         } else {
-            gfx_fill_rect(bxi - 18, byi - 10, 36, 18, hull);
-            gfx_fill_rect(bxi - 14, byi - 14, 28, 6, hull);
-            gfx_fill_rect(bxi - 22, byi - 4, 8, 10, hull);
-            gfx_fill_rect(bxi + 14, byi - 4, 8, 10, hull);
-            gfx_fill_rect(bxi - 4, byi + 8, 8, 8, hull);
-            gfx_fill_rect(bxi - 16, byi - 9, 32, 1, trim);
-            gfx_fill_rect(bxi - 18, byi + 6, 36, 2, trim);
-            gfx_fill_rect(bxi - 3, byi - 13, 6, 3, trim);
-            gfx_fill_rect(bxi - 4, byi - 5, 8, 5, glow);
-            gfx_fill_rect(bxi - 2, byi - 4, 4, 3, PAL_TEXT_WHITE);
+            gfx_draw_boss_ship(bxi, byi,
+                               g_game.boss.mini ? BOSS_SPR_RAZORWING : BOSS_SPR_GOLIATH,
+                               g_game.boss.mini ? 1 : 2, flash != 0, s_game_frame);
         }
-#endif
 
-        /* Story boss extras: the Twins' second hull and the Warden/Titan
+        /* Story boss extras: Gemini's second hull and the Aegis/Juggernaut
          * nodes are real, shootable parts, so they must be drawn. */
         if (g_game.mode == GAME_MODE_STORY) {
             const Boss* sb = &g_game.boss;
-            if (sb->story_id == SBOSS_TWINS && sb->clone_active) {
+            if (sb->story_id == SBOSS_GEMINI && sb->clone_active) {
+                /* The severed twin: same hull, 1x, so the pair still reads
+                 * as two halves of one catamaran. */
                 int qx = FROM_FIXED(sb->clone_x) + ox;
                 int qy = FROM_FIXED(sb->clone_y) + oy;
-                gfx_draw_boss_drone(qx, qy, true, sb->flash_timer > 0, s_game_frame);
+                gfx_draw_boss_ship(qx, qy, BOSS_SPR_GEMINI, 1,
+                                   sb->flash_timer > 0, s_game_frame);
             }
-            if (sb->story_id == SBOSS_VAULTWARDEN || sb->story_id == SBOSS_SCRAPTITAN) {
+            if (sb->story_id == SBOSS_AEGIS || sb->story_id == SBOSS_JUGGERNAUT) {
                 for (int i = 0; i < 4; i++) {
                     if (sb->node_hp[i] <= 0) continue;
                     int ang = sb->spin + i * 16384;
                     int nx = bxi + ((lu_cos(ang) * 30) >> 12);
                     int ny = byi + ((lu_sin(ang) * 22) >> 12);
-                    u8 col = (sb->story_id == SBOSS_VAULTWARDEN) ? PAL_TEXT_CYAN : PAL_TEXT_GOLD;
+                    u8 col = (sb->story_id == SBOSS_AEGIS) ? PAL_TEXT_CYAN : PAL_TEXT_GOLD;
                     gfx_fill_rect(nx - 4, ny - 4, 8, 8, col);
                     gfx_fill_rect(nx - 2, ny - 2, 4, 4, PAL_TEXT_WHITE);
                 }
@@ -3880,9 +4466,9 @@ void game_draw(void) {
         if (g_game.mode == GAME_MODE_STORY) {
             int sid = g_game.boss.story_id;
             gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH, story_boss_name(sid), PAL_TEXT_RED);
-            /* Vault Warden: show how many turret nodes are still sealing the
+            /* Aegis: show how many turret nodes are still sealing the
              * hull, so the player understands why damage is bouncing off. */
-            if (sid == SBOSS_VAULTWARDEN) {
+            if (sid == SBOSS_AEGIS) {
                 int alive = 0;
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) alive++;
                 if (alive > 0) {
@@ -3890,7 +4476,7 @@ void game_draw(void) {
                     siprintf(nbuf, "SHIELDED - %d NODES", alive);
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
                 }
-            } else if (sid == SBOSS_SCRAPTITAN) {
+            } else if (sid == SBOSS_JUGGERNAUT) {
                 int plates = 0;
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) plates++;
                 if (plates > 0) {
@@ -3898,11 +4484,32 @@ void game_draw(void) {
                     siprintf(nbuf, "ARMOUR %d/4", plates);
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
                 }
+            } else if (sid == SBOSS_IRONMAW && g_game.boss.charge) {
+                /* The clamp window: shout the punish. */
+                if ((s_game_frame >> 2) & 1)
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "JAWS CLAMPED - HIT IT NOW", PAL_TEXT_GOLD);
+            } else if (sid == SBOSS_FROSTBITE && s_frost_ice > 64) {
+                /* Engine icing meter: the player must see WHY they slowed. */
+                char nbuf[28];
+                siprintf(nbuf, "ENGINES ICING %d%%", (s_frost_ice * 100) / 256);
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf,
+                                       s_frost_ice > 192 ? PAL_TEXT_RED : PAL_TEXT_CYAN);
             }
         } else {
             gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,
-                                  g_game.boss.mini ? "MINI BOSS" : "BOSS",
+                                  g_game.boss.mini ? "RAZORWING" : "GOLIATH",
                                   g_game.boss.mini ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+            /* Goliath's sealed decks: tell the player when armour is eating
+             * their shots and when the hull is exposed. */
+            if (!g_game.boss.mini) {
+                bool open_decks = g_game.boss.phase != BOSS_IDLE &&
+                                  g_game.boss.phase != BOSS_REPOSITION;
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                       open_decks ? "DECKS OPEN - FULL DAMAGE"
+                                                  : "DECKS SEALED",
+                                       open_decks ? PAL_TEXT_GREEN : PAL_TEXT_CYAN);
+            }
         }
     }
 

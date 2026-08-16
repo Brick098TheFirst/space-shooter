@@ -31,7 +31,11 @@ The GBA edition is written in native C (ARMv4T / libtonc) and compiles directly 
   Coins, high score, unlocked items, equipped loadout, and tech upgrade levels persist to cartridge backup memory (`0x0E000000`) and automatically sync to browser `localStorage` in the web player. On Android the same blob is written to the app-private `files/saves/save.sav` folder (`Context.getFilesDir()`), which is always readable/writable without any permission prompt or startup setup.
 - **Hunter Enemy Fighters:** Hunters track your horizontal position, spawn with random hull styles and random accent colors, then fire random 2–4 shot bursts straight downward using the same equipped laser appearance and laser sound as the player.
 - **Balanced Arcade Gameplay:** Asteroid splitting, hunter enemy fighters, rare powerup drops (Shield, Rapid Fire, Repair), and a timed combo multiplier system (up to ×20).
-- **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is a mini-boss and every **10th** wave is the full battleship. Both use `boss.wav`: gameplay music fades out, the entrance gets one second of silence, the boss cue fades in, and the normal track resumes at its paused position after victory. Boss HP now scales with wave/difficulty rather than the equipped gun, so every weapon purchase produces a real time-to-kill improvement.
+- **Boss Fights (Waves mode):** Wave **5 / 15 / 25...** is the **Razorwing** and every **10th** wave is the **Goliath** — two real pixel-art hulls authored nose-up in the exact same template language and lighting conventions as the player ships (hull ramp, canopy D-glass, accent leading edges), then flipped to fly nose-down. Each has a **key mechanic** on top of its own kit:
+  - **Razorwing** *(BURNING WAKE)*: a nimble swept-delta interceptor whose strafing runs leave a hanging trail of afterburner embers that wall off the sky it just crossed — chase it and you fly into the wake. Also darts between anchors with aimed snap shots, fires widening snap fans, and feints a dive that sprays sideways.
+  - **Goliath** *(SEALED DECKS)*: an armored battleship that only takes **full damage while its gun decks are open** — i.e. while it is attacking. Cruising with decks sealed, armour eats two-thirds of every hit, so you punish its ring barrages, constant-speed siege beam, walking curtain walls, and crossing broadsides instead of plinking at the armour. The HUD calls the window (`DECKS OPEN — FULL DAMAGE`).
+
+  Both enrage at 50% and 25% HP, never repeat the same attack twice in a row, and use `boss.wav`: gameplay music fades out, the entrance gets one second of silence, the boss cue fades in, and the normal track resumes at its paused position after victory. Boss HP scales with wave/difficulty rather than the equipped gun, so every weapon purchase produces a real time-to-kill improvement.
 - **Three Game Modes:** Play opens a mode select on both platforms — **Waves** (with bosses), **Endless**, and **Overdrive** (90-second score rush).
 - **Big Laser Mechanic (replaces Dash):** Hold **B/R/L** for **2 seconds** to charge a full-screen piercing beam that fires for 3 seconds and reaches the top of the screen. The beam cuts through every rock and hunter in its column, dealing exactly `current laser damage ÷ 10` per frame (fractional damage accumulates, so even a 1-damage starter laser chews through rocks).
 - **Settings Screen:** Difficulty (**Easy / Medium / Hard**), Music & SFX volume, and Screen Shake — plus an **Android-only Haptics** (vibration feedback) toggle. Persisted in the save file. Gyro / tilt steering has been removed.
@@ -116,12 +120,25 @@ before the rest of the game unlocks.
   The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, and The Reality
   kingdom — and no two of them play the same. Every level is built from two
   axes:
-  - **Five objectives:** **clear the field**, **hunt the fighters**,
-    **survive the timer**, **crack the big ones** (break N large rocks), and
-    **clear it on the clock**.
+  - **Six objectives:** **clear the field**, **hunt the fighters**,
+    **survive the timer**, **crack the big ones** (break N large rocks),
+    **clear it on the clock**, and **puzzle levels**.
   - **Eight field modifiers:** *Boulder Field*, *Shard Storm*, *Hunter Swarm*,
     *Fast Space*, *Armoured Rock*, *Slow Drip*, *Constant Storm*, and
     *Sharpshooters*.
+- **Ten puzzle levels** are scattered through the campaign as a change of
+  pace, in three variants:
+  - **Limited Ammo** (levels 6, 44, 63): a frozen one-hit field and a strict
+    shot budget — every pull of the trigger fires exactly one precise bolt,
+    and running dry with rocks still up fails the level. The big laser is
+    grounded, so no free screen wipes.
+  - **Signal Hunt** (levels 15, 26, 56): the scanner marks ONE rock at a time
+    with a pulsing reticle. Only marked rocks count toward the quota, and
+    breaking an unmarked rock glitches the scanner and drops a locked signal.
+  - **Guns Offline** (levels 18, 33, 47, 66): weapons dead, an empty sky, and
+    a scripted bullet ballet — expanding corner rings, a weaving rain with a
+    sliding safe lane, and crossing scissor diagonals — to survive on a
+    clock. The figures are deterministic, so the maze can be learned.
 
   Each sector runs its own sequence of the two, so no objective+modifier pair
   ever repeats back to back. The level banner and the map card both name the
@@ -130,10 +147,41 @@ before the rest of the game unlocks.
   backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
   Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
   the near-black Cold Vault, and The Reality kingdom's folded violet space.
-- **A boss every 10 levels, each with its own attacks:** **Rustjaw**, **The
-  Twins**, **Frostwidow**, **Scrap Titan**, **Emberlash**, **Vault Warden**, and
-  **The Reality Queen** — a three-stage cinematic finale where Jack RK gets his
-  chance at revenge.
+- **A boss every 10 levels, each a hand-pixelled ship in the fleet's own art
+  style** (authored nose-up with the same hull lighting ramp, canopy glass and
+  paint accents as the player ship templates, then flipped to fly nose-down),
+  and each built around a **key mechanic** no other boss uses:
+  - **Ironmaw** *(THE BITE)* — a forked-jaw hunter that telegraphs, lunges and
+    snaps its jaws shut at your altitude. A missed bite leaves the jaws
+    **clamped and straining — double damage** until it recovers; the fight is
+    bait-the-bite, punish-the-clamp. Between bites it chews ragged, uneven
+    cones of scrap (real debris spray, not a neat fan).
+  - **Gemini** *(THE SPLIT)* — a twin-boom raider whose seam vents angled jets
+    out both sides; at 50% it **splits into two mirrored hulls sharing one
+    health pool**, the clone shadowing your column while the prime hunts you.
+  - **Frostbite** *(ENGINE ICING)* — an ice interceptor whose cold **freezes
+    your engines while you sit still**: an icing meter climbs when parked and
+    throttles your thrust to ~45%, shedding only while you move. Its web
+    lattice and tracking lance are built to make you want to camp — the ice is
+    why you can't.
+  - **Juggernaut** *(CRUSH)* — four armour plates that soak damage until
+    broken, a magnet that drags you up into its rings, thrown live asteroids,
+    and a floor-slam whose shock columns rise from below.
+  - **Inferno** *(THE BURN)* — two counter-rotating fire whips that **never
+    stop spinning** for the entire fight, plus aimed flare bolts and a
+    solar-wind curtain that always leaves one way through.
+  - **Aegis** *(THE SEAL)* — **completely invulnerable** behind four rotating
+    turret nodes that must be shot off first; its lockdown searchlight marches
+    shots across the floor in a strict scan, and once breached it vents a
+    two-armed spiral you walk between.
+  - **The Void Empress** *(THE UNMAKING)* — the three-stage finale: honour
+    guard spirals, then **reality tears that claim whole columns of the arena
+    (mirrored to two columns as she weakens)**, then a last-stand curtain
+    barrage. Jack RK gets his chance at revenge.
+
+  Every story boss opens with the same staging as the arcade ones: the music
+  fades to a second of silence while the hull descends, then the dedicated
+  `boss.wav` cue fades in until the kill.
 - **Level map.** Fly a ship between the nodes of a sector; bosses are bigger
   nodes, cleared levels are ticked, and locked ones are greyed out.
 - **Mr Chubbs' Trading Post — one dock, one visit.** Mr Chubbs, a popular Chubb

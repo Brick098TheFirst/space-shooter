@@ -84,12 +84,14 @@ typedef struct {
 /* Boss ship (wave 10/20/30...) and mini-boss (wave 5/15/25...). */
 typedef enum {
     BOSS_IDLE,
-    BOSS_SWEEP,        // side-to-side sweep firing straight down
-    BOSS_BURST,        // radial 8-way burst
-    BOSS_BEAM_WIND,    // warning flash before laser
-    BOSS_BEAM_FIRE,    // huge sweeping beam
-    BOSS_DIVE,         // fast chase lunge
-    BOSS_REPOSITION    // recover high
+    BOSS_SWEEP,        // Corsair: strafing bomb run across the screen
+    BOSS_BURST,        // Corsair: snap fans / Dreadnought: ring barrage
+    BOSS_BEAM_WIND,    // Dreadnought: siege beam warning column
+    BOSS_BEAM_FIRE,    // Dreadnought: constant-speed sweeping siege beam
+    BOSS_DIVE,         // Corsair: feint dive at the player
+    BOSS_REPOSITION,   // recover high
+    BOSS_WALL,         // Dreadnought: walking curtain walls with a gap
+    BOSS_SCISSOR       // Dreadnought: crossing broadsides from both wings
 } BossPhase;
 
 typedef struct {
@@ -110,6 +112,7 @@ typedef struct {
     int cooldown;
     int fire_state;
     int sweep_dir;
+    int last_move;       // previous attack roll, so moves never repeat twice
 } Boss;
 
 typedef enum {

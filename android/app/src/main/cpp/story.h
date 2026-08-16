@@ -28,7 +28,12 @@ typedef enum {
     OBJ_BIGGAME = 4,
     /* Clear the field against a countdown. The only objective with a real
      * fail state that is not "you died", so it plays quite differently. */
-    OBJ_TIMED   = 5
+    OBJ_TIMED   = 5,
+    /* Puzzle levels: ten of them are scattered through the campaign as a
+     * change of pace.  The puzzle variant lives in the level's `modifier`
+     * (MOD_PZ_*) and `quota` carries the variant's number (ammo budget,
+     * signal count, or gauntlet seconds).  See story_update_objective(). */
+    OBJ_PUZZLE  = 6
 } StoryObjective;
 
 /* ── Level modifiers ──────────────────────────────────────────────────────
@@ -45,7 +50,11 @@ typedef enum {
     MOD_TRICKLE  = 6,  /* the field arrives slowly, a few at a time       */
     MOD_STORM    = 7,  /* heavy continuous reinforcement                  */
     MOD_SNIPERS  = 8,  /* fewer hunters, but they fire much more often    */
-    MOD_COUNT    = 9
+    /* ── Puzzle variants (only valid with OBJ_PUZZLE) ────────────────── */
+    MOD_PZ_SALVO    = 9,   /* LIMITED AMMO: clear the field on a shot budget */
+    MOD_PZ_SIGNAL   = 10,  /* SIGNAL HUNT: only the marked rock counts       */
+    MOD_PZ_GAUNTLET = 11,  /* GUNS OFFLINE: weave a scripted bullet maze     */
+    MOD_COUNT    = 12
 } StoryModifier;
 
 /* Short label for the HUD banner and the map card, e.g. "BOULDER FIELD". */
@@ -69,15 +78,15 @@ typedef struct {
 
 /* ── The seven bosses ─────────────────────────────────────────────────────
  * Levels 10/20/30/40/50/60/70.  Each has its own attack script, movement
- * and gimmick — see story_boss_ai() in story.c. */
+ * and a KEY MECHANIC no other boss uses — see story_boss_ai() in game.c. */
 typedef enum {
-    SBOSS_RUSTJAW = 0,    /* L10 - jaw slam + scrap spit */
-    SBOSS_TWINS,          /* L20 - splits into two halves at 50% */
-    SBOSS_FROSTWIDOW,     /* L30 - ice web, freezing shards */
-    SBOSS_SCRAPTITAN,     /* L40 - magnet pull + armour plates */
-    SBOSS_EMBERLASH,      /* L50 - rotating flame whips */
-    SBOSS_VAULTWARDEN,    /* L60 - shielded, four turret nodes */
-    SBOSS_REALITYQUEEN    /* L70 - three cinematic phases */
+    SBOSS_IRONMAW = 0,   /* L10 - BITE: jaws lunge and clamp a no-fly zone */
+    SBOSS_GEMINI,        /* L20 - SPLIT: two mirrored hulls, shared pool */
+    SBOSS_FROSTBITE,     /* L30 - FREEZE: engine icing slows your ship */
+    SBOSS_JUGGERNAUT,    /* L40 - CRUSH: armour plates + magnet drag */
+    SBOSS_INFERNO,       /* L50 - BURN: ever-rotating fire whips */
+    SBOSS_AEGIS,         /* L60 - SEAL: invulnerable until nodes fall */
+    SBOSS_EMPRESS        /* L70 - UNMAKE: reality tears, 3 stage finale */
 } StoryBossId;
 
 extern const StoryLevel g_story_levels[STORY_LEVEL_COUNT];
@@ -123,7 +132,7 @@ static inline int story_checkpoint_for(int level) {
  *
  * A dock opens on the clear of levels 4, 9, 14, 19, ... - i.e. it sits in
  * the FIFTH slot of every group of five, which also puts one immediately
- * before each boss (9 -> Rustjaw, 19 -> the Twins, and so on) so the
+ * before each boss (9 -> Ironmaw, 19 -> Gemini, and so on) so the
  * pre-boss pep talk and its free life still happen. */
 #define STORY_SHOP_INTERVAL 5
 

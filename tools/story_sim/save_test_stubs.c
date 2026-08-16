@@ -25,3 +25,7 @@ const char* gfx_get_laser_name(int i){(void)i;return "LASER";}
 const char* gfx_get_laser_desc(int i){(void)i;return "laser desc";}
 const char* gfx_get_accent_name(int i){(void)i;return "PAINT";}
 const char* gfx_get_accent_desc(int i){(void)i;return "paint desc";}
+const char* gfx_get_trail_name(int i){(void)i;return "TRAIL";}
+const char* gfx_get_trail_desc(int i){(void)i;return "trail desc";}
+const char* gfx_get_ship_style_name(int i){(void)i;return "HULL";}
+const char* gfx_get_ship_style_desc(int i){(void)i;return "hull desc";}

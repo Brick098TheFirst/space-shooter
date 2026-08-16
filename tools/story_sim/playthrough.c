@@ -9,12 +9,40 @@
 
 extern void platform_set_keys(u16 k);
 
-/* Simple dodge AI: slide away from the nearest incoming threat, keep firing. */
+/* Simple dodge AI: slide away from the nearest incoming threat, keep firing.
+ * On puzzle levels the trigger is disciplined instead of held: ammo-limited
+ * salvos only fire when lined up under a rock, and signal hunts only fire
+ * when lined up under the MARKED rock. */
 static u16 pilot_input(void) {
     u16 k = KEY_A;                 /* hold fire */
     int px = g_game.player.x >> 8;
     int py = g_game.player.y >> 8;
     int best_d = 1<<30, threat_x = -1, threat_y = -1;
+
+    const StoryLevel* PL = (game_get_mode() == GAME_MODE_STORY)
+        ? &g_story_levels[game_story_level() - 1] : 0;
+    int puzzle_aim_x = -1;
+    if (PL && PL->objective == OBJ_PUZZLE) {
+        k = 0;                     /* trigger discipline */
+        if (PL->modifier != MOD_PZ_GAUNTLET) {
+            int td = 1<<30;
+            for (int i = 0; i < MAX_ASTEROIDS; i++) {
+                if (!g_game.asteroids[i].active) continue;
+                if (PL->modifier == MOD_PZ_SIGNAL &&
+                    i != game_story_puzzle_mark()) continue;
+                int ax = g_game.asteroids[i].x >> 8;
+                int ay = g_game.asteroids[i].y >> 8;
+                if (ay > py - 6) continue;      /* only shoot what's above */
+                int d = abs(ax - px);
+                if (d < td) { td = d; puzzle_aim_x = ax; }
+            }
+            if (puzzle_aim_x >= 0) {
+                if (puzzle_aim_x > px + 3) k |= KEY_RIGHT;
+                else if (puzzle_aim_x < px - 3) k |= KEY_LEFT;
+                else k |= KEY_A;                 /* lined up: take the shot */
+            }
+        }
+    }
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (!g_game.asteroids[i].active) continue;
@@ -136,7 +164,8 @@ int main(int argc, char** argv) {
         const char* on = L->objective==OBJ_BOSS?"BOSS":L->objective==OBJ_HUNT?"HUNT":
                          L->objective==OBJ_SURVIVE?"SURVIVE":
                          L->objective==OBJ_BIGGAME?"BIGGAME":
-                         L->objective==OBJ_TIMED?"TIMED":"CLEAR";
+                         L->objective==OBJ_TIMED?"TIMED":
+                         L->objective==OBJ_PUZZLE?"PUZZLE":"CLEAR";
         int max_ticks = 90 * 400;   /* 400 seconds of patience */
         int ticks = play_level(lv, max_ticks);
         if (ticks >= 0) {
