@@ -111,7 +111,8 @@ before the rest of the game unlocks.
   could not let the invasion go. He wanted revenge, so he built the starter
   ship, set it ready for flight, and headed for the stars.
 - **The opening speech.** First launch types out Jack RK's story page by page
-  over the starfield. Tap to advance, or tap SKIP to jump it. It only plays
+  over the starfield. A tap fills the current page; a second tap turns it.
+  Pages never advance on their own. Tap SKIP to jump it. It only plays
   once. It runs under **Story Mode's own soundtrack**
   (`Assets/Audio/story_mode.mp3`), which keeps playing across the level map,
   Mr Chubbs' dock, and the result cards, so the campaign never sounds like the
@@ -174,10 +175,11 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **The Void Empress** *(THE UNMAKING)* — the three-stage finale: honour
-    guard spirals, then **reality tears that claim whole columns of the arena
-    (mirrored to two columns as she weakens)**, then a last-stand curtain
-    barrage. Jack RK gets his chance at revenge.
+  - **The Cube Queen** *(THE FOLD)* — the three-stage finale: only the
+    **glowing cube face** takes full damage, then **four pylons** must be
+    shot off (no hull bar), then a last-stand core that **folds you across
+    the screen**. Axis-aligned cube shot, not another ring barrage. Jack
+    RK gets his chance at revenge.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated
@@ -204,8 +206,9 @@ before the rest of the game unlocks.
 - **The opening cinematic.** The first time you enter the campaign, Jack RK's
   origin story types itself out over the starfield — 14 pages, two lines each,
   one white and one blue, scored by `story_mode.mp3`. A tap fills the current
-  page, **SKIP** drops straight into the level map, and `g_story.intro_seen`
-  makes sure it only ever plays once.
+  page, a second tap turns it (pages never auto-advance), **SKIP** drops
+  straight into the level map, and `g_story.intro_seen` makes sure it only
+  ever plays once.
 - **Enemy variation stays intact.** Hunter ships spawn with random hull styles
   and random accent colors, keeping repeated fights visually varied.
 - **Lives, wrecks & the repair yard.** You get 3 story lives. Die and you retry
