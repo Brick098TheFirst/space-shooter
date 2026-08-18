@@ -14,7 +14,11 @@ int main(void){
     CHK(story_lives()==3,"start 3 lives");
     CHK(!story_content_unlocked(),"content locked at start");
 
-    /* every level must be flyable: sane fields, non-zero reward */
+    /* every level must be flyable: sane fields, non-zero reward. The
+     * campaign variety contract is checked here too, so a future table edit
+     * cannot quietly drift back to ten puzzles or repeat one rule endlessly. */
+    int puzzle_count = 0;
+    int puzzle_variants[MOD_COUNT] = {0};
     for(int i=0;i<STORY_LEVEL_COUNT;i++){
         const StoryLevel* L=&g_story_levels[i];
         int lv=i+1;
@@ -30,7 +34,23 @@ int main(void){
             if(L->objective==OBJ_HUNT) CHK(L->quota>0 && L->quota<=90,"hunt quota sane");
             if(L->objective==OBJ_SURVIVE) CHK(L->quota>=15 && L->quota<=90,"survive secs sane");
         }
+        if(L->objective==OBJ_PUZZLE){
+            puzzle_count++;
+            CHK(L->modifier >= MOD_PZ_SALVO && L->modifier < MOD_COUNT,
+                "puzzle has a named variant");
+            puzzle_variants[L->modifier]++;
+            CHK(story_modifier_name(L->modifier)[0], "puzzle variant has a label");
+        }
     }
+    CHK(puzzle_count >= (STORY_LEVEL_COUNT + 1) / 2, "at least half the campaign is puzzles");
+    for(int i=MOD_PZ_SALVO;i<MOD_COUNT;i++)
+        CHK(puzzle_variants[i] <= 2, "no puzzle rule repeats more than twice");
+    CHK(!strcmp(story_boss_name(0), "Alien"), "first boss is named Alien");
+    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Reality Queen"),
+        "final boss is named Reality Queen");
+    CHK(!strcmp(g_story_levels[9].name, "ALIEN"), "level 10 uses the Alien name");
+    CHK(!strcmp(g_story_levels[69].name, "REALITY QUEEN"),
+        "level 70 uses the Reality Queen name");
     /* monotonic difficulty */
     for(int i=1;i<STORY_LEVEL_COUNT;i++){
         CHK(g_story_levels[i].speed_pct>=g_story_levels[i-1].speed_pct,"speed never drops");
@@ -218,7 +238,7 @@ int main(void){
     story_shop_open(4);                        /* level 5 next: not a boss */
     CHK(!story_shop_is_boss_dock(),"level 5 is not a boss dock");
     CHK(story_shop_take_gift()==0,"no gift off a boss dock");
-    story_shop_open(9);                        /* level 10 next: Ironmaw */
+    story_shop_open(9);                        /* level 10 next: Alien */
     CHK(story_shop_is_boss_dock(),"dock before level 10 is a boss dock");
     CHK(story_shop_take_gift()==1,"boss dock gifts a life");
     CHK(story_lives()==4,"the free life landed");

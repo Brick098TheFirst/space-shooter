@@ -257,8 +257,10 @@ int  game_story_waiting_for_start(void);
 void game_story_continue(void);
 /* 0 = still flying, 1 = level cleared, 2 = failed. */
 int  game_story_outcome(void);
-/* SIGNAL HUNT puzzles: asteroid slot carrying the scanner mark (-1 none). */
+/* Target puzzles: asteroid slot carrying the scanner mark (-1 none).
+ * TWIN LOCK exposes its second lit slot separately. */
 int  game_story_puzzle_mark(void);
+int  game_story_puzzle_twin_mark(void);
 /* Chubbcoin banked by the level that just ended. */
 int  game_story_earned(void);
 

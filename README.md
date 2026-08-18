@@ -119,31 +119,37 @@ before the rest of the game unlocks.
   arcade front end.
 - **70 levels across 7 themed sectors** — The Chubb System, The Rust Yards,
   The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, and The Reality
-  kingdom — and no two of them play the same. Every level is built from two
-  axes:
-  - **Six objectives:** **clear the field**, **hunt the fighters**,
-    **survive the timer**, **crack the big ones** (break N large rocks),
-    **clear it on the clock**, and **puzzle levels**.
-  - **Eight field modifiers:** *Boulder Field*, *Shard Storm*, *Hunter Swarm*,
-    *Fast Space*, *Armoured Rock*, *Slow Drip*, *Constant Storm*, and
-    *Sharpshooters*.
-- **Ten puzzle levels** are scattered through the campaign as a change of
-  pace, in three variants:
-  - **Limited Ammo** (levels 6, 44, 63): a frozen one-hit field and a strict
-    shot budget — every pull of the trigger fires exactly one precise bolt,
-    and running dry with rocks still up fails the level. The big laser is
-    grounded, so no free screen wipes.
-  - **Signal Hunt** (levels 15, 26, 56): the scanner marks ONE rock at a time
-    with a pulsing reticle. Only marked rocks count toward the quota, and
-    breaking an unmarked rock glitches the scanner and drops a locked signal.
-  - **Guns Offline** (levels 18, 33, 47, 66): weapons dead, an empty sky, and
-    a scripted bullet ballet — expanding corner rings, a weaving rain with a
-    sliding safe lane, and crossing scissor diagonals — to survive on a
-    clock. The figures are deterministic, so the maze can be learned.
+  kingdom. **35 of the 70 levels are puzzles**, with five puzzle nodes in
+  every sector, so the campaign changes rhythm constantly rather than saving
+  all its experiments for the finale.
+- **Thirty-one puzzle rules with no more than two appearances each** make the
+  puzzle half a real variety pack: *Limited Ammo*, *Signal Hunt*, *Guns
+  Offline*, *Target Order*, *Color Code*, *Ricochet Run*, *Clean Combo*, *Big
+  or Small*, *Safe Lane*, *Orbital Lock*, *Chain Link*, *Fragile Cargo*,
+  *Mirror Aim*, *Twin Lock*, *Drone Code*, *Anchor Break*, *Ghost Signal*,
+  *Clockwork*, *Sieve*, *Bomb Defusal*, *Ring Maze*, *Wall Walk*, *Scissor
+  Cross*, *Spiral Step*, *Zigzag Rain*, *Pacifist*, *Sweep Code*, *Armour
+  Key*, *Lockstep*, *Beacon Run*, and *Last Shot*.
+  - **Shot puzzles** change what counts: exact ammo budgets, reticle order,
+    one coded asteroid type, paired targets, drone-only targets, size locks,
+    and rows that must be swept in sequence. Wrong choices flash the scanner,
+    rewind the sequence, cost a life, or spend the limited shot budget rather
+    than silently awarding progress.
+  - **Movement puzzles** shut the guns down and run deterministic rings,
+    walls, diagonals, spirals, zigzags, and pacifist patterns. The big laser
+    is grounded on every puzzle, so no free screen wipes.
+  - **Field-rule puzzles** add bouncing/mirrored shots, moving safe beacons,
+    a fragile cargo hold, combo chains, and timed defusal. Their live rule is
+    named on the level card before launch and shown again in the HUD.
+- **Six objectives:** **clear the field**, **hunt the fighters**,
+  **survive the timer**, **crack the big ones** (break N large rocks),
+  **clear it on the clock**, and **puzzle levels**. Eight arcade field
+  modifiers still provide extra variety outside the puzzle nodes.
 
-  Each sector runs its own sequence of the two, so no objective+modifier pair
-  ever repeats back to back. The level banner and the map card both name the
-  twist before you launch.
+  The puzzle rotation is hand-authored so a player sees the same rule at most
+  twice, usually once, while difficulty and target quotas rise through the
+  sectors. The level banner, map card, scanner reticles, moving-lane beacon,
+  and HUD all explain the active twist before it becomes dangerous.
 - **A different sky over every sector.** All seven sectors retain a distinct
   backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
   Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
@@ -152,7 +158,7 @@ before the rest of the game unlocks.
   style** (authored nose-up with the same hull lighting ramp, canopy glass and
   paint accents as the player ship templates, then flipped to fly nose-down),
   and each built around a **key mechanic** no other boss uses:
-  - **Ironmaw** *(THE BITE)* — a forked-jaw hunter that telegraphs, lunges and
+  - **Alien** *(THE BITE)* — a forked-jaw alien that telegraphs, lunges and
     snaps its jaws shut at your altitude. A missed bite leaves the jaws
     **clamped and straining — double damage** until it recovers; the fight is
     bait-the-bite, punish-the-clamp. Between bites it chews ragged, uneven
@@ -175,7 +181,7 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **The Cube Queen** *(THE FOLD)* — the three-stage finale: only the
+  - **Reality Queen** *(THE FOLD)* — the three-stage finale: only the
     **glowing cube face** takes full damage, then **four pylons** must be
     shot off (no hull bar), then a last-stand core that **folds you across
     the screen**. Axis-aligned cube shot, not another ring barrage. Jack

@@ -119,8 +119,8 @@ typedef enum {
     GAME_MODE_WAVES = 0,
     GAME_MODE_ENDLESS = 1,
     GAME_MODE_OVERDRIVE = 2,
-    /* Android Story Mode: 70 hand-tuned levels driven by g_story_levels[]
-     * instead of the endless wave escalator. */
+    /* Android Story Mode: 70 hand-tuned levels (35 puzzle rules) driven by
+     * g_story_levels[] instead of the endless wave escalator. */
     GAME_MODE_STORY = 3
 } GameMode;
 
