@@ -2147,7 +2147,7 @@ static void render_story_result(void) {
     gfx_draw_glass_card(20, 24, card_w, 72, s_result_win ? PAL_TEXT_GOLD : PAL_TEXT_RED, 15);
 
     if (s_result_finale) {
-        gfx_draw_text_centered(20, 30, card_w, "THE CUBE QUEEN FALLS", PAL_TEXT_GOLD);
+        gfx_draw_text_centered(20, 30, card_w, "REALITY QUEEN FALLS", PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 42, card_w, "Revenge, finally.", PAL_TEXT_WHITE);
         gfx_draw_text_centered(20, 54, card_w, "Everything is unlocked.", PAL_TEXT_CYAN);
         siprintf(buf, "+%d CHUBBCOIN", s_result_earned);

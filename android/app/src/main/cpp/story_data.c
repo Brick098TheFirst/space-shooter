@@ -47,9 +47,9 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "The route closes behind Jack.",
       "No guns. Learn the three safe figures.",
       OBJ_PUZZLE, 0, 0, 32, 118, 136, 160, MOD_PZ_GAUNTLET },
-    { "IRONMAW",
-      "Ironmaw guards the way out.",
-      "Jack, break those iron jaws.",
+    { "ALIEN",
+      "An alien blocks the way out.",
+      "Jack, break through its defenses.",
       OBJ_BOSS, 0, 0, 0, 120, 140, 500, MOD_NONE },
     { "YARD GATES",
       "The Rust Yards start with a wall.",
@@ -268,7 +268,7 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "Sweep the marks from left to right.",
       OBJ_PUZZLE, 20, 0, 12, 190, 356, 1950, MOD_PZ_SWEEP },
     { "ROYAL GUARD",
-      "The Cube Queen sends her best.",
+      "The Reality Queen sends her best.",
       "The Chubbs call Jack onward.",
       OBJ_SURVIVE, 38, 8, 65, 190, 360, 2000, MOD_SHARDS },
     { "BROKEN SKY",
@@ -287,9 +287,9 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "The throne room waits beyond.",
       "Jack, settle the old score.",
       OBJ_SURVIVE, 38, 8, 75, 190, 376, 2200, MOD_STORM },
-    { "THE CUBE QUEEN",
-      "Jack. Your revenge ends here.",
-      "Victory or oblivion.",
+    { "REALITY QUEEN",
+      "The Reality Queen waits beyond the fold.",
+      "Jack. End the old invasion.",
       OBJ_BOSS, 0, 0, 0, 190, 380, 2500, MOD_NONE },
 };
 
@@ -355,25 +355,25 @@ static const char* const s_sector_names[STORY_SECTOR_COUNT] = {
 };
 
 static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
-    "Ironmaw",
+    "Alien",
     "Gemini",
     "Frostbite",
     "Juggernaut",
     "Inferno",
     "Aegis",
-    "The Cube Queen"
+    "Reality Queen"
 };
 
 /* Nobody's face is ever shown - the radio voices guide you,
  * and the bosses only ever get one line of text each. */
 static const char* const s_boss_taunts[STORY_SECTOR_COUNT] = {
-    "MY JAWS HAVE CRUSHED BETTER SHIPS.",
+    "I AM AN ALIEN. I WILL NOT FALL.",
     "WE SEE YOU, JACK. BOTH OF US.",
     "YOUR ENGINES FREEZE WITH YOU.",
     "JACK WILL BE PRESSED INTO PLATE.",
     "YOUR LITTLE SHIP WILL BURN.",
     "THE SHIELD DOES NOT BREAK.",
-    "JACK ARKEY. FOLD, OR BE FOLDED."
+    "JACK ARKEY. THIS IS THE REALITY QUEEN."
 };
 
 const char* story_sector_name(int sector) {

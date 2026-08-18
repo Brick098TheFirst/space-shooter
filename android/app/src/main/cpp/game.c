@@ -2076,7 +2076,7 @@ static void story_spawn_boss(int boss_id) {
         for (int i = 0; i < 3; i++) b->node_hp[i] = b->hp_max / 8;
         b->node_hp[3] = 0;
     }
-    if (boss_id == SBOSS_EMPRESS) {
+    if (boss_id == SBOSS_REALITY_QUEEN) {
         for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
         b->charge = 1;
     }
@@ -2149,12 +2149,12 @@ static int sb_next_attack(Boss* b, int count) {
     return SB_ATTACK_A + pick;
 }
 
-/* ── BOSS 1 - IRONMAW (L10) ───────────────────────────────────────────────
+/* ── BOSS 1 - ALIEN (L10) ─────────────────────────────────────────────────
  * KEY MECHANIC - THE BITE. This is not a shooting gallery: the hull is
  * plated (1/3 damage) until a missed lunge leaves the jaws CLAMPED.
  * During the clamp the plates gap and it takes double. Bait the dive,
  * then empty the guns into the strain. */
-static void sb_ironmaw(Boss* b) {
+static void sb_alien(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     switch (b->phase) {
         case SB_IDLE:
@@ -2584,13 +2584,13 @@ static void sb_aegis(Boss* b) {
     }
 }
 
-/* ── BOSS 7 - THE CUBE QUEEN (L70) ───────────────────────────────────────
+/* ── BOSS 7 - REALITY QUEEN (L70) ────────────────────────────────────────
  * KEY MECHANIC - THE FOLD. Three stages that are not the same fight:
  *   0  OPEN FACE     only the glowing face takes full damage
  *   1  PYLONS        four cube corners must be shot off (no hull HP)
  *   2  CORE          last-stand core that folds you across the screen
  * Axis-aligned cube shot is her handwriting. */
-static void sb_empress(Boss* b) {
+static void sb_reality_queen(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int pct = sb_hp_pct(b);
     int pylons = 0;
@@ -2704,7 +2704,7 @@ static void sb_empress(Boss* b) {
 static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
     if (g_game.mode != GAME_MODE_STORY) return dmg;
 
-    if (b->story_id == SBOSS_IRONMAW) {
+    if (b->story_id == SBOSS_ALIEN) {
         if (b->charge) return dmg * 2;
         int chip = dmg / 3;
         return chip > 0 ? chip : 1;
@@ -2734,7 +2734,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
         return dmg;
     }
 
-    if (b->story_id == SBOSS_EMPRESS) {
+    if (b->story_id == SBOSS_REALITY_QUEEN) {
         if (b->stage == 0) {
             int face = (b->charge & 3);
             int hit_face = ((hit_x - FROM_FIXED(b->x)) > 0) ? 1 : 0;
@@ -2835,13 +2835,13 @@ static void story_boss_ai(Boss* b) {
     }
     b->phase_timer--;
     switch (b->story_id) {
-        case SBOSS_IRONMAW:      sb_ironmaw(b); break;
+        case SBOSS_ALIEN:      sb_alien(b); break;
         case SBOSS_GEMINI:        sb_gemini(b); break;
         case SBOSS_FROSTBITE:   sb_frostbite(b); break;
         case SBOSS_JUGGERNAUT:   sb_juggernaut(b); break;
         case SBOSS_INFERNO:    sb_inferno(b); break;
         case SBOSS_AEGIS:  sb_aegis(b); break;
-        default:                 sb_empress(b); break;
+        default:                 sb_reality_queen(b); break;
     }
 }
 
@@ -2977,10 +2977,10 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     if (g_game.mode == GAME_MODE_STORY) {
         /* Story bosses get a bigger send-off, then hand control to the
          * result card (the campaign banks the reward, not arcade coins). */
-        int blasts = (b->story_id == SBOSS_EMPRESS) ? 14 : 8;
+        int blasts = (b->story_id == SBOSS_REALITY_QUEEN) ? 14 : 8;
         for (int k = 0; k < blasts; k++)
             trigger_explosion(boss_cx + (rand() % 40) - 20, boss_cy + (rand() % 30) - 15);
-        g_game.shake_timer = (b->story_id == SBOSS_EMPRESS) ? 60 : 34;
+        g_game.shake_timer = (b->story_id == SBOSS_REALITY_QUEEN) ? 60 : 34;
         award_score(2000 * (b->story_id + 1));
         story_on_kill_scored(1);
         platform_queue_haptic(HAPTIC_BEAM);
@@ -5003,10 +5003,10 @@ void game_draw(void) {
                                    sb->flash_timer > 0, s_game_frame);
             }
             if (sb->story_id == SBOSS_AEGIS || sb->story_id == SBOSS_JUGGERNAUT ||
-                sb->story_id == SBOSS_INFERNO || sb->story_id == SBOSS_EMPRESS) {
+                sb->story_id == SBOSS_INFERNO || sb->story_id == SBOSS_REALITY_QUEEN) {
                 int n = (sb->story_id == SBOSS_INFERNO) ? 3 : 4;
                 for (int i = 0; i < n; i++) {
-                    if (sb->story_id == SBOSS_EMPRESS && sb->stage != 1) continue;
+                    if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage != 1) continue;
                     if (sb->node_hp[i] <= 0) continue;
                     int ang = sb->spin + i * (65536 / n);
                     int rad = (sb->story_id == SBOSS_INFERNO) ? 26 : 30;
@@ -5014,12 +5014,12 @@ void game_draw(void) {
                     int ny = byi + ((lu_sin(ang) * 22) >> 12);
                     u8 col = (sb->story_id == SBOSS_AEGIS) ? PAL_TEXT_CYAN :
                              (sb->story_id == SBOSS_INFERNO) ? PAL_TEXT_RED :
-                             (sb->story_id == SBOSS_EMPRESS) ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD;
+                             (sb->story_id == SBOSS_REALITY_QUEEN) ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD;
                     gfx_fill_rect(nx - 4, ny - 4, 8, 8, col);
                     gfx_fill_rect(nx - 2, ny - 2, 4, 4, PAL_TEXT_WHITE);
                 }
             }
-            if (sb->story_id == SBOSS_EMPRESS && sb->stage == 0) {
+            if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage == 0) {
                 int face = sb->charge & 3;
                 int ox = (face & 1) ? 10 : -10;
                 int oy = (face & 2) ? 8 : -6;
@@ -5050,7 +5050,7 @@ void game_draw(void) {
             int sid0 = g_game.boss.story_id;
             int parts = 0;
             if (sid0 == SBOSS_AEGIS || sid0 == SBOSS_JUGGERNAUT ||
-                (sid0 == SBOSS_EMPRESS && g_game.boss.stage == 1)) {
+                (sid0 == SBOSS_REALITY_QUEEN && g_game.boss.stage == 1)) {
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) parts++;
                 if (parts > 0) hp_w = 0;
             } else if (sid0 == SBOSS_INFERNO) {
@@ -5080,7 +5080,7 @@ void game_draw(void) {
                     siprintf(nbuf, "ARMOUR %d/4", plates);
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
                 }
-            } else if (sid == SBOSS_IRONMAW && g_game.boss.charge) {
+            } else if (sid == SBOSS_ALIEN && g_game.boss.charge) {
                 /* The clamp window: shout the punish. */
                 if ((s_game_frame >> 2) & 1)
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
@@ -5105,7 +5105,7 @@ void game_draw(void) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "FURNACE OPEN", PAL_TEXT_GOLD);
                 }
-            } else if (sid == SBOSS_EMPRESS) {
+            } else if (sid == SBOSS_REALITY_QUEEN) {
                 if (g_game.boss.stage == 0) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "SHOOT THE OPEN FACE", PAL_TEXT_VIOLET);

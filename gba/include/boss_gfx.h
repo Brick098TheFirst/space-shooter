@@ -17,7 +17,7 @@
 typedef enum {
     BOSS_SPR_RAZORWING = 0,    /* arcade mini-boss (waves 5/15/25...) */
     BOSS_SPR_GOLIATH,          /* arcade battleship (waves 10/20/30...) */
-    BOSS_SPR_IRONMAW,          /* story L10 */
+    BOSS_SPR_IRONMAW,          /* story L10 Alien art */
     BOSS_SPR_GEMINI,           /* story L20 */
     BOSS_SPR_FROSTBITE,        /* story L30 */
     BOSS_SPR_JUGGERNAUT,       /* story L40 */

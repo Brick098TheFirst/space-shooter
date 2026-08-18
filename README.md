@@ -158,7 +158,7 @@ before the rest of the game unlocks.
   style** (authored nose-up with the same hull lighting ramp, canopy glass and
   paint accents as the player ship templates, then flipped to fly nose-down),
   and each built around a **key mechanic** no other boss uses:
-  - **Ironmaw** *(THE BITE)* — a forked-jaw hunter that telegraphs, lunges and
+  - **Alien** *(THE BITE)* — a forked-jaw alien that telegraphs, lunges and
     snaps its jaws shut at your altitude. A missed bite leaves the jaws
     **clamped and straining — double damage** until it recovers; the fight is
     bait-the-bite, punish-the-clamp. Between bites it chews ragged, uneven
@@ -181,7 +181,7 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **The Cube Queen** *(THE FOLD)* — the three-stage finale: only the
+  - **Reality Queen** *(THE FOLD)* — the three-stage finale: only the
     **glowing cube face** takes full damage, then **four pylons** must be
     shot off (no hull bar), then a last-stand core that **folds you across
     the screen**. Axis-aligned cube shot, not another ring barrage. Jack
