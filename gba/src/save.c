@@ -352,7 +352,7 @@ typedef struct {
 
 /* V12 (Android) extends the campaign from 70 to 80 levels. The one extra
  * clear-mask byte is the only semantic layout change; old V11 saves migrate
- * losslessly and enter the new Null Horizon sector after clearing level 70. */
+ * losslessly and enter the Shattered Kingdom after clearing level 70. */
 typedef struct {
     u32 magic;
     u8  difficulty;

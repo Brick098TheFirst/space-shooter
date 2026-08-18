@@ -1,9 +1,10 @@
 #include "story.h"
 
 /* ── The 80 levels ────────────────────────────────────────────────────────
- * Difficulty rises monotonically and every tenth level is a boss. Five nodes
- * in every sector are puzzles, so 40 of the 80 levels are puzzle levels - and
- * they run on 33 DIFFERENT rules, not a handful of rules wearing 33 names.
+ * Difficulty rises monotonically and every tenth level is a boss. The first
+ * seven kingdoms each contain five puzzles; the eighth is a rock-free elite
+ * drone gauntlet. Those 35 puzzle levels run on 33 DIFFERENT rules, not a
+ * handful of rules wearing 33 names.
  *
  * The rule of the campaign: a rule is used once wherever possible and never
  * more than twice, and the "the radar lit a rock, go shoot it" family is
@@ -297,51 +298,51 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "Jack. End the old invasion.",
       OBJ_BOSS, 0, 0, 0, 190, 380, 2500, MOD_NONE },
 
-    /* ── NULL HORIZON: Director's Cut epilogue sector ──────────────────
-     * Destroying the Queen did not close the fold. It exposed the machine
-     * that had been rewriting her kingdom from outside ordinary time. Five
-     * puzzle nodes return familiar rules in harder combinations; each rule
-     * still appears no more than twice across the complete campaign. */
-    { "AFTER THE CROWN",
-      "The Queen falls. The stars do not return.",
-      "Something behind reality is still running.",
-      OBJ_CLEAR, 40, 8, 0, 190, 388, 2350, MOD_STORM },
-    { "DEAD AIR",
-      "A black scanner erases whatever it sees.",
-      "No guns. Stay between its silent sweeps.",
-      OBJ_PUZZLE, 0, 0, 55, 190, 396, 2400, MOD_PZ_STEALTH },
-    { "ECHO WRECKAGE",
-      "Wrecks arrive before their impact is heard.",
-      "Clear the doubled field before it repeats.",
-      OBJ_TIMED, 44, 8, 110, 190, 404, 2450, MOD_TOUGH },
-    { "HORIZON PACK",
-      "Hunters with no shadows pour from the seam.",
-      "Break their formation before it doubles.",
-      OBJ_HUNT, 34, 8, 82, 190, 412, 2500, MOD_SNIPERS },
-    { "BORROWED COLOUR",
-      "The horizon fires yesterday's red and blue.",
-      "No guns. Match the bolt that has not fired yet.",
-      OBJ_PUZZLE, 0, 0, 55, 190, 420, 2550, MOD_PZ_POLARITY },
-    { "TIME DEBT",
-      "Every second Jack stole is coming due.",
-      "Outfly the longest storm in the campaign.",
-      OBJ_SURVIVE, 40, 8, 85, 190, 428, 2600, MOD_SWIFT },
-    { "THE LAST SIGNAL",
-      "One Chubb probe crossed the end of time.",
-      "No guns. Hold its echo in the lens.",
-      OBJ_PUZZLE, 8, 0, 15, 190, 436, 2700, MOD_PZ_SCAN },
-    { "RETURN VECTOR",
-      "The seam sends every laser home backwards.",
-      "Clear the field through the mirrored path.",
-      OBJ_PUZZLE, 20, 0, 14, 190, 444, 2800, MOD_PZ_MIRROR },
-    { "ZERO HOUR",
-      "The engine notices Jack at last.",
-      "One hit resets the final approach.",
-      OBJ_PUZZLE, 10, 0, 0, 190, 452, 3000, MOD_PZ_PERFECT },
-    { "PARADOX ENGINE",
-      "The machine behind the invasion wakes.",
-      "Keep moving. It remembers where you were.",
-      OBJ_BOSS, 0, 0, 0, 190, 460, 4000, MOD_NONE },
+    /* ── THE SHATTERED KINGDOM: the Queen escaped ────────────────────
+     * The level-70 victory was a decoy. The Reality Queen abandons her
+     * damaged throne ship and fills the eighth kingdom with nine enlarged
+     * hunter-class mini-bosses. There are deliberately no rocks here: every
+     * silhouette is armed, fast, durable, and must be beaten. */
+    { "THE QUEEN ESCAPES",
+      "Her throne breaks. The Queen tears open one last gate.",
+      "Jack follows. This is not over.",
+      OBJ_HUNT, 0, 1, 1, 196, 390, 2350, MOD_SWIFT },
+    { "IRON TALON",
+      "A hunter swells to three times its old size.",
+      "No rocks. No cover. One elite target.",
+      OBJ_HUNT, 0, 1, 1, 202, 400, 2400, MOD_TOUGH },
+    { "SCARLET LANCER",
+      "The next drone has stolen a royal cannon.",
+      "It is faster than Jack's targeting screen.",
+      OBJ_HUNT, 0, 1, 1, 208, 410, 2450, MOD_SNIPERS },
+    { "TWIN FANGS",
+      "Two giant hunters lock their flight paths together.",
+      "Break both halves of the formation.",
+      OBJ_HUNT, 0, 2, 2, 214, 420, 2500, MOD_SWARM },
+    { "VOID RAM",
+      "This one traded guns for an armoured charge.",
+      "Move before its shadow reaches Jack.",
+      OBJ_HUNT, 0, 1, 1, 220, 430, 2550, MOD_TOUGH },
+    { "CROWN GUARD",
+      "The Queen's oldest guard blocks the horizon.",
+      "Its burst fire leaves nowhere to camp.",
+      OBJ_HUNT, 0, 1, 1, 226, 440, 2600, MOD_SNIPERS },
+    { "TRIPLE ECLIPSE",
+      "Three elite drones descend without formation lights.",
+      "Every one of them is a mini-boss.",
+      OBJ_HUNT, 0, 3, 3, 232, 450, 2700, MOD_SWARM },
+    { "THE LAST KNIGHT",
+      "The final hunter carries a piece of the throne.",
+      "Bring it down. Find where the Queen landed.",
+      OBJ_HUNT, 0, 1, 1, 238, 460, 2800, MOD_TOUGH },
+    { "PLANETFALL",
+      "One colossal drone guards the planet below.",
+      "Past it waits the Queen's surviving ship.",
+      OBJ_HUNT, 0, 1, 1, 244, 470, 3000, MOD_SNIPERS },
+    { "REALITY QUEEN: LAST STAND",
+      "The Queen waits above a world she already bent.",
+      "Destroy her ship. If Jack falls, begin again.",
+      OBJ_BOSS, 0, 0, 0, 250, 480, 4000, MOD_NONE },
 };
 
 /* Modifier labels for the level banner and the map card. Kept short so they
@@ -405,7 +406,7 @@ static const char* const s_sector_names[STORY_SECTOR_COUNT] = {
     "Ember Reach",
     "The Cold Vault",
     "The Reality kingdom",
-    "Null Horizon"
+    "The Shattered Kingdom"
 };
 
 static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
@@ -416,7 +417,7 @@ static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
     "Wildfire",
     "Bulwark",
     "Reality Queen",
-    "Paradox Engine"
+    "Reality Queen: Last Stand"
 };
 
 /* Nobody's face is ever shown - the radio voices guide you,
@@ -428,8 +429,8 @@ static const char* const s_boss_taunts[STORY_SECTOR_COUNT] = {
     "PLATE BY PLATE, JACK. GOOD LUCK.",
     "I BURN. THEN I VENT. TRY TO COUNT.",
     "THE SEAL DOES NOT BREAK. THE NODES MIGHT.",
-    "JACK ARKEY. THIS IS THE REALITY QUEEN.",
-    "I REMEMBER EVERYWHERE YOU HAVE EVER BEEN."
+    "YOU BROKE A THRONE, JACK. NOT ITS QUEEN.",
+    "I WILL BEND REALITY UNTIL YOU DISAPPEAR."
 };
 
 const char* story_sector_name(int sector) {

@@ -38,6 +38,8 @@ void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
  * animated rainbow - works on every hull. */
 void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style);
 void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style);
+/* Enlarged hunter silhouette used by the eighth-kingdom mini-boss gauntlet. */
+void gfx_draw_enemy_ship_scaled(int x, int y, int accent_idx, int style, int scale);
 /* Boss hull: a real pixel-art ship from spr_boss (boss_gfx.c), authored in
  * the same template language as the player hulls (shared lighting ramp +
  * accent mask), drawn nose-down at an integer scale.  sprite_id is a
