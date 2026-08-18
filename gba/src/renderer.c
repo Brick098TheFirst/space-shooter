@@ -309,30 +309,40 @@ IWRAM_CODE void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_fram
 }
 
 /* Enemy fighters use any hull style and paint, rotated 180 degrees so their
- * cannons and flight direction face down-screen. */
-IWRAM_CODE void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style) {
+ * cannons and flight direction face down-screen. The scale path deliberately
+ * nearest-neighbours the same pixels: the kingdom-eight elites must read as
+ * the familiar drones made unnaturally larger, not as unrelated boss art. */
+IWRAM_CODE void gfx_draw_enemy_ship_scaled(int x, int y, int accent_idx, int style, int scale) {
     if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 5;
     if (style < 0 || style >= NUM_SHIP_STYLES) style = 0;
+    if (scale < 1) scale = 1;
+    if (scale > 3) scale = 3;
 
     const u8* src = (style == 0) ? spr_ship[accent_idx] : spr_ship_styles[style];
     bool is_styled = (style > 0);
 
     for (int sy = 0; sy < 16; sy++) {
-        int py = y + sy;
-        if ((unsigned)py >= SCREEN_HEIGHT) continue;
-        for (int sx = 0; sx < 20; sx++) {
-            int px = x + sx;
-            if ((unsigned)px >= SCREEN_WIDTH) continue;
-            u8 pix = src[(15 - sy) * 20 + (19 - sx)];
-            if (pix == 0) continue;
-            if (is_styled && pix >= 241 && pix <= 243) {
-                int shade = pix - 240;
-                s_rt[py * SCREEN_WIDTH + px] = (u8)(48 + accent_idx * 4 + shade);
-            } else {
-                s_rt[py * SCREEN_WIDTH + px] = pix;
+        for (int yy = 0; yy < scale; yy++) {
+            int py = y + sy * scale + yy;
+            if ((unsigned)py >= SCREEN_HEIGHT) continue;
+            for (int sx = 0; sx < 20; sx++) {
+                u8 pix = src[(15 - sy) * 20 + (19 - sx)];
+                if (pix == 0) continue;
+                if (is_styled && pix >= 241 && pix <= 243) {
+                    int shade = pix - 240;
+                    pix = (u8)(48 + accent_idx * 4 + shade);
+                }
+                for (int xx = 0; xx < scale; xx++) {
+                    int px = x + sx * scale + xx;
+                    if ((unsigned)px < SCREEN_WIDTH) s_rt[py * SCREEN_WIDTH + px] = pix;
+                }
             }
         }
     }
+}
+
+IWRAM_CODE void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style) {
+    gfx_draw_enemy_ship_scaled(x, y, accent_idx, style, 1);
 }
 
 /* ── Boss hulls ──────────────────────────────────────────────────────────

@@ -42,7 +42,9 @@ int main(void){
             CHK(story_modifier_name(L->modifier)[0], "puzzle variant has a label");
         }
     }
-    CHK(puzzle_count >= (STORY_LEVEL_COUNT + 1) / 2, "at least half the campaign is puzzles");
+    /* Kingdom eight is intentionally a combat-only mini-boss gauntlet. The
+     * first seven kingdoms retain all 33 puzzle rules and 35 puzzle nodes. */
+    CHK(puzzle_count == STORY_PUZZLE_COUNT, "authored puzzle count matches campaign contract");
     /* The variety contract.  These are the numbers the campaign promises the
      * player: lots of rules, none of them worn out, and the "radar lit a
      * rock" family kept to a strict minimum. */
@@ -61,8 +63,8 @@ int main(void){
     for(int i=MOD_PZ_FIRST;i<=MOD_PZ_LAST;i++)
         CHK(story_modifier_name(i)[0], "every puzzle rule has a label");
     CHK(!strcmp(story_boss_name(0), "Alien"), "first boss is named Alien");
-    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Paradox Engine"),
-        "final boss is named Paradox Engine");
+    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Reality Queen: Last Stand"),
+        "final boss is the escaped Reality Queen");
     /* All eight bosses must be different names - no reskins. */
     for(int i=0;i<STORY_SECTOR_COUNT;i++)
       for(int j=i+1;j<STORY_SECTOR_COUNT;j++)
@@ -70,8 +72,13 @@ int main(void){
     CHK(!strcmp(g_story_levels[9].name, "ALIEN"), "level 10 uses the Alien name");
     CHK(!strcmp(g_story_levels[69].name, "REALITY QUEEN"),
         "level 70 uses the Reality Queen name");
-    CHK(!strcmp(g_story_levels[79].name, "PARADOX ENGINE"),
-        "level 80 uses the Paradox Engine name");
+    CHK(!strcmp(g_story_levels[79].name, "REALITY QUEEN: LAST STAND"),
+        "level 80 names the Queen's last stand");
+    for(int i=70;i<79;i++){
+        CHK(g_story_levels[i].objective==OBJ_HUNT, "kingdom eight approach is all elite hunters");
+        CHK(g_story_levels[i].rocks==0, "kingdom eight has no rocks");
+        CHK(g_story_levels[i].drones>0, "kingdom eight fields mini-boss drones");
+    }
     /* monotonic difficulty */
     for(int i=1;i<STORY_LEVEL_COUNT;i++){
         CHK(g_story_levels[i].speed_pct>=g_story_levels[i-1].speed_pct,"speed never drops");

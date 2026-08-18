@@ -2154,9 +2154,15 @@ static void render_story_result(void) {
         gfx_draw_text_centered(20, 68, card_w, buf, PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 82, card_w, "SHOP, MULTIPLAYER, ALL MODES", 17);
     } else if (s_result_win) {
-        siprintf(buf, "LEVEL %d CLEARED", s_result_level);
-        gfx_draw_text_centered(20, 32, card_w, buf, PAL_TEXT_GOLD);
-        gfx_draw_text_centered(20, 46, card_w, g_story_levels[s_result_level - 1].name, PAL_TEXT_WHITE);
+        if (s_result_level == 70) {
+            gfx_draw_text_centered(20, 32, card_w, "THE THRONE SHIP BREAKS", PAL_TEXT_GOLD);
+            gfx_draw_text_centered(20, 46, card_w, "THE REALITY QUEEN ESCAPES", PAL_TEXT_RED);
+        } else {
+            siprintf(buf, "LEVEL %d CLEARED", s_result_level);
+            gfx_draw_text_centered(20, 32, card_w, buf, PAL_TEXT_GOLD);
+            gfx_draw_text_centered(20, 46, card_w,
+                                   g_story_levels[s_result_level - 1].name, PAL_TEXT_WHITE);
+        }
         siprintf(buf, "+%d CHUBBCOIN", s_result_earned);
         gfx_draw_text_centered(20, 58, card_w, buf, PAL_TEXT_GOLD);
         /* Where the money came from: the payout is earned, so show the work.

@@ -113,6 +113,24 @@ static int  s_story_lost = 0;           /* lives lost this level */
  * but the entire simulation stays frozen until the player taps to continue. */
 static bool s_story_waiting_for_start = false;
 
+/* Level 80 is a two-checkpoint finale rather than a conventional one-life
+ * shooter level. 0 = Queen ship, 1 = ship-fall cutscene, 2 = Jack on the
+ * planet, 3 = black death/reality-rewind card. `checkpoint` is never reduced,
+ * which is what makes every death restart the last phase instead of spending
+ * a campaign life or replaying the whole level. */
+static int s_finale_state = 0;
+static int s_finale_checkpoint = 0;
+static int s_finale_timer = 0;
+static int s_finale_quote = 0;
+static int s_jack_aim_x = 120;
+
+static bool story_is_elite_gauntlet(void) {
+    return g_game.mode == GAME_MODE_STORY && s_story_level >= 71 && s_story_level <= 79;
+}
+static bool story_is_finale(void) {
+    return g_game.mode == GAME_MODE_STORY && s_story_level == STORY_LEVEL_COUNT;
+}
+
 /* ── Puzzle level state (OBJ_PUZZLE) ─────────────────────────────────────
  * Story puzzles are RULES, and thirty-three of them are genuinely different
  * goals: collect, gate-fly, push, scan, escort, weigh, alternate, chain,
@@ -165,6 +183,7 @@ static void story_on_shot_fired(int n);
 static void story_on_shot_hit(void);
 static void story_on_life_lost(void);
 static void story_puzzle_wrong_choice(void);
+static void story_restart_finale_checkpoint(void);
 
 int  game_story_level(void)   { return s_story_level; }
 int  game_story_outcome(void) { return s_story_outcome; }
@@ -722,6 +741,22 @@ static void damage_player(void) {
     int px = FROM_FIXED(g_game.player.x);
     int py = FROM_FIXED(g_game.player.y);
     platform_queue_haptic(HAPTIC_HIT);
+
+    /* The Queen promised to repeat this forever. Level 80 therefore has
+     * infinite attempts and checkpoint rewinds, not campaign-life damage. */
+    if (story_is_finale() && (s_finale_state == 0 || s_finale_state == 2)) {
+        trigger_explosion(px, py);
+        g_game.player.dead = true;
+        g_game.player.lives = 1;
+        g_game.player.invulnerable_timer = 999;
+        s_finale_state = 3;
+        s_finale_timer = 170;
+        s_finale_quote = (s_finale_quote + 1) % 3;
+        for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
+        for (int i = 0; i < MAX_BOSS_BULLETS; i++) g_game.boss_bullets[i].active = false;
+        audio_play_sfx(SFX_EXPLOSION);
+        return;
+    }
 
     if (g_game.player.shield_charges > 0) {
         g_game.player.shield_charges--;
@@ -1359,6 +1394,9 @@ static int story_large_chance(void) {
 /* How many hunters the level wants on screen at once. */
 static int story_drone_target(void) {
     const StoryLevel* L = story_cur();
+    /* In the final kingdom the authored count is exact: every hunter is a
+     * mini-boss, so SWARM means a multi-elite encounter, not extra fodder. */
+    if (story_is_elite_gauntlet()) return L->drones;
     int d = L->drones;
     if (story_mod() == MOD_SWARM)   d += 3;
     if (story_mod() == MOD_SNIPERS && d > 2) d -= 1;
@@ -1454,8 +1492,20 @@ static bool story_spawn_hunter(void) {
         g_game.drones[i].burst_shots = 0;
         g_game.drones[i].phase = rand() % 256;
         int hp = (3 * story_hp_scale()) / 100;
-        if (hp < 2) hp = 2;
-        if (hp > 14) hp = 14;
+        if (story_is_elite_gauntlet()) {
+            /* These are the ordinary hunter hulls enlarged into mini-bosses:
+             * roughly 3x the silhouette, much faster, and durable enough to
+             * have an attack cycle instead of evaporating in one volley. */
+            int tier = s_story_level - 70;
+            hp = 650 + tier * 135;
+            if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
+            else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
+            g_game.drones[i].vy = (g_game.drones[i].vy * 5) / 4;
+            g_game.drones[i].shoot_timer = 12 + rand() % 16;
+        } else {
+            if (hp < 2) hp = 2;
+            if (hp > 14) hp = 14;
+        }
         g_game.drones[i].hp = hp;
         g_game.drones[i].hp_frac = 0;
         g_game.drones[i].accent = (u8)(rand() % NUM_ACCENTS);
@@ -2548,9 +2598,10 @@ static void story_spawn_boss(int boss_id) {
     }
     if (boss_id == SBOSS_REALITY_QUEEN) b->charge = 1;
     if (boss_id == SBOSS_PARADOX_ENGINE) {
-        /* Its mirrored afterimage is an attack source, not a second health
-         * pool. It continuously replays the engine's last position. */
-        b->clone_active = true;
+        /* Legacy saves still encode boss slot seven with this enum value.
+         * The revised story uses that slot for the Queen's surviving royal
+         * craft, so only non-finale debug encounters keep the old echo. */
+        b->clone_active = !story_is_finale();
         b->clone_x = TO_FIXED(SCREEN_WIDTH / 2);
         b->clone_y = -TO_FIXED(60);
         b->charge = 0;
@@ -2561,6 +2612,39 @@ static void story_spawn_boss(int boss_id) {
     audio_begin_boss_music();
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
     for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
+}
+
+static void story_restart_finale_checkpoint(void) {
+    for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
+    for (int i = 0; i < MAX_BOSS_BULLETS; i++) g_game.boss_bullets[i].active = false;
+    for (int i = 0; i < MAX_EXPLOSIONS; i++) g_game.explosions[i].active = false;
+    g_game.is_game_over = false;
+    g_game.player.dead = false;
+    g_game.player.lives = 1;
+    g_game.player.shield_charges = 0;
+    g_game.player.invulnerable_timer = 100;
+    g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
+    g_game.player.y = TO_FIXED(SCREEN_HEIGHT - (s_finale_checkpoint ? 24 : 18));
+    g_game.beam_active = false;
+    g_game.primary_beam_active = false;
+    s_finale_state = s_finale_checkpoint ? 2 : 0;
+    s_finale_timer = 0;
+    s_jack_aim_x = SCREEN_WIDTH / 2;
+
+    story_spawn_boss(SBOSS_PARADOX_ENGINE);
+    if (s_finale_checkpoint) {
+        /* Ground checkpoint: Jack's hand weapon is weaker than his ship, so
+         * the landed royal craft uses a shorter, purpose-built health pool. */
+        g_game.boss.hp_max = 9000;
+        if (g_settings.difficulty == DIFF_CADET) g_game.boss.hp_max = 7000;
+        else if (g_settings.difficulty == DIFF_ACE) g_game.boss.hp_max = 11500;
+        g_game.boss.hp = g_game.boss.hp_max;
+        g_game.boss.stage = 2;
+        g_game.boss.clone_active = false;
+        g_game.boss.y = TO_FIXED(35);
+        g_game.boss.phase = SB_IDLE;
+        g_game.boss.phase_timer = 70;
+    }
 }
 
 /* Aimed shot helper in story space. */
@@ -3457,7 +3541,10 @@ static void story_boss_ai(Boss* b) {
         case SBOSS_WILDFIRE:       sb_wildfire(b); break;
         case SBOSS_BULWARK:        sb_bulwark(b); break;
         case SBOSS_REALITY_QUEEN:  sb_reality_queen(b); break;
-        case SBOSS_PARADOX_ENGINE: sb_paradox_engine(b); break;
+        case SBOSS_PARADOX_ENGINE:
+            if (story_is_finale()) sb_reality_queen(b);
+            else sb_paradox_engine(b);
+            break;
         default:                    sb_alien(b); break;
     }
 }
@@ -3592,6 +3679,26 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     audio_end_boss_music();
 
     if (g_game.mode == GAME_MODE_STORY) {
+        /* The last fight has two checkpoints. Beating the orbital phase does
+         * not clear the level: the Queen tears Jack's ship apart, and the
+         * wreck falls to the planet for the on-foot phase. */
+        if (story_is_finale() && b->story_id == SBOSS_PARADOX_ENGINE &&
+            s_finale_state == 0) {
+            for (int k = 0; k < 18; k++)
+                trigger_explosion(boss_cx + (rand() % 48) - 24,
+                                  boss_cy + (rand() % 34) - 17);
+            for (int k = 0; k < 8; k++)
+                trigger_explosion(FROM_FIXED(g_game.player.x) + (rand() % 24) - 12,
+                                  FROM_FIXED(g_game.player.y) + (rand() % 18) - 9);
+            g_game.shake_timer = 80;
+            s_finale_checkpoint = 1;
+            s_finale_state = 1;
+            s_finale_timer = 260;
+            g_game.player.invulnerable_timer = 999;
+            for (int i = 0; i < MAX_BOSS_BULLETS; i++) g_game.boss_bullets[i].active = false;
+            return;
+        }
+
         /* Story bosses get a bigger send-off, then hand control to the
          * result card (the campaign banks the reward, not arcade coins). */
         bool finale = (b->story_id == SBOSS_PARADOX_ENGINE);
@@ -3917,6 +4024,16 @@ void game_start(void) {
         /* Each kingdom flies over its own sky. Prepare the opening field, but
          * freeze it behind the story card until the player acknowledges it. */
         starfield_set_theme(story_theme_for_level(s_story_level));
+        if (s_story_level == STORY_LEVEL_COUNT) {
+            s_finale_state = 0;
+            s_finale_checkpoint = 0;
+            s_finale_timer = 0;
+            s_finale_quote = 0;
+            s_jack_aim_x = SCREEN_WIDTH / 2;
+            /* Level 80 does not consume the campaign life pool. */
+            g_game.player.lives = 1;
+            g_game.player.shield_charges = 0;
+        }
         story_begin_level();
         s_story_waiting_for_start = true;
     } else if (g_game.mode == GAME_MODE_WAVES) {
@@ -4190,7 +4307,8 @@ static void coop_update_player2(void) {
                 int dx = FROM_FIXED(g_game.drones[d].x);
                 int dy = FROM_FIXED(g_game.drones[d].y);
                 int dsq = (p2x - dx)*(p2x - dx) + (p2y - dy)*(p2y - dy);
-                if (dsq <= (5 + 8)*(5 + 8)) {
+                int dr = story_is_elite_gauntlet() ? 20 : 8;
+                if (dsq <= (5 + dr)*(5 + dr)) {
                     destroy_drone(d, false);
                     damage_player2();
                     break;
@@ -4260,6 +4378,19 @@ static void game_update_tick(void) {
         }
     }
 
+    /* Finale transitions own the frame while the ship falls or reality
+     * rewinds. Nothing can deal damage behind either full-screen card. */
+    if (story_is_finale() && s_finale_state == 1) {
+        if (s_finale_timer > 0) s_finale_timer--;
+        if (s_finale_timer <= 0) story_restart_finale_checkpoint();
+        return;
+    }
+    if (story_is_finale() && s_finale_state == 3) {
+        if (s_finale_timer > 0) s_finale_timer--;
+        if (s_finale_timer <= 0) story_restart_finale_checkpoint();
+        return;
+    }
+
     if (g_game.is_game_over) return;
 
     if (g_game.combo_timer > 0) {
@@ -4292,6 +4423,17 @@ static void game_update_tick(void) {
             mx = -mx;
             my = -my;
         }
+    }
+
+    /* On foot, hold the beam/shoulder button to plant Jack's feet and aim the
+     * reticle; release it to use the same D-pad for movement. */
+    bool jack_aiming = story_is_finale() && s_finale_state == 2 &&
+                       (key_is_down(KEY_B) || key_is_down(KEY_L) || key_is_down(KEY_R));
+    if (jack_aiming) {
+        s_jack_aim_x += mx * 3;
+        if (s_jack_aim_x < 10) s_jack_aim_x = 10;
+        if (s_jack_aim_x > SCREEN_WIDTH - 10) s_jack_aim_x = SCREEN_WIDTH - 10;
+        mx = my = 0;
     }
 
     // ── Engine speed with 2x cap logic ───────────────────────────────
@@ -4331,7 +4473,8 @@ static void game_update_tick(void) {
     /* Every puzzle grounds the free full-screen beam. Target lessons must
      * stay target-selective, and dodge lessons must stay movement-only. */
     if (story_puzzle_guns_offline() ||
-        (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE))
+        (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE) ||
+        (story_is_finale() && s_finale_state == 2))
         beam_held = false;
     if (!g_game.beam_active) {
         if (beam_held) {
@@ -4359,7 +4502,8 @@ static void game_update_tick(void) {
     }
 
     bool primary_held = !p1_spectating && key_is_down(KEY_A);
-    if (g_settings.weapon_rig == WEAPON_INFINITY &&
+    bool jack_ground = story_is_finale() && s_finale_state == 2;
+    if (g_settings.weapon_rig == WEAPON_INFINITY && !jack_ground &&
         !(g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE)) {
         bool was_active = g_game.primary_beam_active;
         g_game.primary_beam_active = primary_held;
@@ -4373,7 +4517,30 @@ static void game_update_tick(void) {
     } else {
         g_game.primary_beam_active = false;
         g_game.primary_beam_ramp = 0;
-        if (primary_held && g_game.player.fire_cooldown == 0) fire_player_weapon();
+        if (primary_held && g_game.player.fire_cooldown == 0) {
+            if (jack_ground && g_game.boss_active) {
+                /* Jack aims the hand cannon at the Queen's craft from his
+                 * current position. Moving changes the firing angle, so the
+                 * same controls both line up shots and dodge her return fire. */
+                int px0 = FROM_FIXED(g_game.player.x);
+                int py0 = FROM_FIXED(g_game.player.y) - 7;
+                int dx0 = s_jack_aim_x - px0;
+                int dy0 = FROM_FIXED(g_game.boss.y) - py0;
+                double mag = hypot((double)dx0, (double)dy0);
+                if (mag < 1.0) mag = 1.0;
+                int speed = TO_FIXED(6);
+                int damage = get_beam_damage() * 4;
+                if (damage < 20) damage = 20;
+                add_player_bullet(TO_FIXED(px0), TO_FIXED(py0),
+                                  (int)(dx0 / mag * speed),
+                                  (int)(dy0 / mag * speed), damage, true, 0);
+                g_game.player.fire_cooldown = 9;
+                story_on_shot_fired(1);
+                audio_play_sfx(SFX_LASER);
+            } else {
+                fire_player_weapon();
+            }
+        }
     }
 
     for (int i = 0; i < MAX_BULLETS; i++) {
@@ -5017,7 +5184,8 @@ static void game_update_tick(void) {
             int dx = FROM_FIXED(g_game.drones[d].x);
             int dy = FROM_FIXED(g_game.drones[d].y);
             int dist_sq = (bx - dx)*(bx - dx) + (by - dy)*(by - dy);
-            if (dist_sq <= (br + 8)*(br + 8)) {
+            int dr = story_is_elite_gauntlet() ? 20 : 8;
+            if (dist_sq <= (br + dr)*(br + dr)) {
                 if (g_game.bullets[b].owner == 0) story_on_shot_hit();
                 g_game.drones[d].hp -= g_game.bullets[b].damage;
                 g_game.bullets[b].active = false;
@@ -5098,7 +5266,8 @@ static void game_update_tick(void) {
             int dx = FROM_FIXED(g_game.drones[d].x);
             int dy = FROM_FIXED(g_game.drones[d].y);
             int dist_sq = (px - dx)*(px - dx) + (py - dy)*(py - dy);
-            if (dist_sq <= (5 + 8)*(5 + 8)) {
+            int dr = story_is_elite_gauntlet() ? 20 : 8;
+            if (dist_sq <= (5 + dr)*(5 + dr)) {
                 destroy_drone(d, false);
                 damage_player();
                 break;
@@ -5354,6 +5523,41 @@ void game_draw(void) {
 
     starfield_draw_stars(ox, oy);
 
+    /* Planetfall uses a deliberately simple pseudo-3D floor: converging pixel
+     * lanes and shorter horizon marks create depth without a 3D renderer. */
+    if (story_is_finale() && (s_finale_state == 1 || s_finale_state == 2)) {
+        int horizon = 62;
+        gfx_fill_rect(0, horizon, SCREEN_WIDTH, SCREEN_HEIGHT - horizon, 17);
+        for (int y = horizon; y < SCREEN_HEIGHT; y += 12) {
+            int inset = (SCREEN_HEIGHT - y) / 2;
+            gfx_fill_rect(inset, y, SCREEN_WIDTH - inset * 2, 1,
+                          ((y / 12) & 1) ? PAL_TEXT_VIOLET : 20);
+        }
+        for (int x = 0; x <= 8; x++) {
+            int hx = SCREEN_WIDTH / 2 + (x - 4) * 7;
+            int bx = (x * SCREEN_WIDTH) / 8;
+            for (int y = horizon; y < SCREEN_HEIGHT; y += 3) {
+                int pxl = hx + ((bx - hx) * (y - horizon)) / (SCREEN_HEIGHT - horizon);
+                gfx_draw_pixel(pxl, y, 20);
+            }
+        }
+        gfx_fill_rect(0, horizon - 2, SCREEN_WIDTH, 2, PAL_TEXT_VIOLET);
+        if (s_finale_state == 1) {
+            int fallen = (260 - s_finale_timer);
+            int fx = SCREEN_WIDTH / 2 + ((fallen / 5) % 20) - 10;
+            int fy = 24 + (fallen * fallen) / 900;
+            if (fy > SCREEN_HEIGHT - 20) fy = SCREEN_HEIGHT - 20;
+            gfx_draw_ship_styled(fx - 10, fy - 8, g_game.p1_loadout.accent_index,
+                                 s_game_frame, g_game.p1_loadout.ship_index);
+            if ((s_game_frame & 5) == 0)
+                gfx_fill_rect(fx - 2 + (rand() % 7), fy - 10, 4, 4, PAL_TEXT_RED);
+            gfx_draw_text_centered(0, 28, SCREEN_WIDTH,
+                                   "THE QUEEN TEARS THE SHIP APART", PAL_TEXT_RED);
+            gfx_draw_text_centered(0, 39, SCREEN_WIDTH,
+                                   "JACK FALLS WITH IT", PAL_TEXT_WHITE);
+        }
+    }
+
     /* Every puzzle rule that owns something in the world - a lane, a gate, a
      * dock, a probe, a well, a scanner beam, a transport - draws it here. */
     if (g_game.mode == GAME_MODE_STORY && !g_game.is_game_over &&
@@ -5491,9 +5695,22 @@ void game_draw(void) {
 
     for (int i = 0; i < MAX_DRONES; i++) {
         if (g_game.drones[i].active) {
-            int dx = FROM_FIXED(g_game.drones[i].x) - 10 + ox;
-            int dy = FROM_FIXED(g_game.drones[i].y) - 8 + oy;
-            gfx_draw_enemy_ship(dx, dy, g_game.drones[i].accent, g_game.drones[i].style);
+            bool elite = story_is_elite_gauntlet();
+            int scale = elite ? 2 : 1;
+            int dx = FROM_FIXED(g_game.drones[i].x) - 10 * scale + ox;
+            int dy = FROM_FIXED(g_game.drones[i].y) - 8 * scale + oy;
+            gfx_draw_enemy_ship_scaled(dx, dy, g_game.drones[i].accent,
+                                       g_game.drones[i].style, scale);
+            if (elite) {
+                /* Every target gets its own compact mini-boss life bar. */
+                int max_hp = 650 + (s_story_level - 70) * 135;
+                if (g_settings.difficulty == DIFF_CADET) max_hp = (max_hp * 3) / 4;
+                else if (g_settings.difficulty == DIFF_ACE) max_hp = (max_hp * 13) / 10;
+                int w = (36 * g_game.drones[i].hp) / (max_hp > 0 ? max_hp : 1);
+                if (w < 0) w = 0; if (w > 36) w = 36;
+                gfx_fill_rect(dx + 2, dy - 5, 36, 3, PAL_BTN_BG);
+                gfx_fill_rect(dx + 2, dy - 5, w, 3, PAL_TEXT_RED);
+            }
         }
     }
 
@@ -5502,14 +5719,37 @@ void game_draw(void) {
         if (g_game.player.invulnerable_timer > 0) {
             visible = (g_game.player.invulnerable_timer & 2) != 0;
         }
-        if (visible) {
+        if (visible && !(story_is_finale() && s_finale_state == 1)) {
             int px = FROM_FIXED(g_game.player.x) - 10 + ox;
             int py = FROM_FIXED(g_game.player.y) - 8 + oy;
-            int accent = g_game.p1_loadout.accent_index;
-            if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
-            gfx_draw_ship_styled(px, py, accent, s_game_frame, g_game.p1_loadout.ship_index);
-            if (g_game.player.shield_charges > 0) {
-                gfx_draw_sprite(px - 2, py - 4, 24, 24, spr_shield_bubble);
+            if (story_is_finale() && s_finale_state == 2) {
+                /* Jack: a tiny third-person pixel figure, seen from behind.
+                 * His bright gun arm points toward the Queen's ship. */
+                int cx = px + 10, cy = py + 8;
+                gfx_fill_rect(cx - 3, cy - 8, 6, 6, PAL_TEXT_GOLD); /* head */
+                gfx_fill_rect(cx - 5, cy - 2, 10, 9, 33);          /* coat */
+                gfx_fill_rect(cx - 5, cy + 7, 3, 7, 20);          /* legs */
+                gfx_fill_rect(cx + 2, cy + 7, 3, 7, 20);
+                int tx = s_jack_aim_x, ty = FROM_FIXED(g_game.boss.y);
+                int dx = tx - cx, dy = ty - cy;
+                int len = abs(dx) + abs(dy); if (len < 1) len = 1;
+                for (int k = 3; k <= 12; k += 2)
+                    gfx_fill_rect(cx + (dx * k) / len, cy + (dy * k) / len,
+                                  2, 2, PAL_TEXT_WHITE);
+                gfx_fill_rect(cx - 1, cy - 2, 3, 5, PAL_TEXT_CYAN);
+                /* Reticle at the selected horizon lane. A shot only lands if
+                 * this is lined up with the moving royal craft. */
+                int ry = FROM_FIXED(g_game.boss.y);
+                gfx_draw_rect(s_jack_aim_x - 5, ry - 5, 10, 10,
+                              ((s_game_frame >> 3) & 1) ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
+                gfx_draw_pixel(s_jack_aim_x, ry, PAL_TEXT_RED);
+            } else {
+                int accent = g_game.p1_loadout.accent_index;
+                if (accent < 0 || accent >= NUM_ACCENTS) accent = 1;
+                gfx_draw_ship_styled(px, py, accent, s_game_frame, g_game.p1_loadout.ship_index);
+                if (g_game.player.shield_charges > 0) {
+                    gfx_draw_sprite(px - 2, py - 4, 24, 24, spr_shield_bubble);
+                }
             }
         }
     }
@@ -6009,15 +6249,15 @@ void game_draw(void) {
                                            "CORE EXPOSED - FINISH HER", PAL_TEXT_RED);
                 }
             } else if (sid == SBOSS_PARADOX_ENGINE) {
-                if (g_game.boss.phase == SB_ATTACK_A) {
+                if (story_is_finale() && s_finale_state == 2) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "ECHO LOCK - LEAVE YOUR OLD LANE", PAL_TEXT_CYAN);
-                } else if (g_game.boss.phase == SB_ATTACK_C) {
+                                           "MOVE  HOLD B+AIM  A FIRE", PAL_TEXT_GOLD);
+                } else if (story_is_finale()) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "REWIND ARMED - WATCH THE RETICLE", PAL_TEXT_GOLD);
+                                           "THE QUEEN SURVIVED - BREAK HER SHIP", PAL_TEXT_VIOLET);
                 } else {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "THE ECHO REPLAYS YOUR PAST", PAL_TEXT_VIOLET);
+                                           "LEAVE YOUR OLD LANE", PAL_TEXT_CYAN);
                 }
             }
         } else {
@@ -6057,6 +6297,31 @@ void game_draw(void) {
             int c = (s_game_frame + i) % NUM_LASERS;
             gfx_draw_laser(bx, by, heavy, c, s_game_frame, true);
         }
+    }
+
+    if (story_is_finale() && s_finale_state == 3) {
+        /* Same stark black-space language as the campaign introduction. */
+        gfx_fill_rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0);
+        if (s_finale_quote == 0) {
+            gfx_draw_text_centered(0, 68, SCREEN_WIDTH,
+                                   "I WILL DO THIS OVER AND OVER AGAIN.", PAL_TEXT_WHITE);
+            gfx_draw_text_centered(0, 82, SCREEN_WIDTH,
+                                   "UNTIL YOU DISAPPEAR.", PAL_TEXT_VIOLET);
+        } else if (s_finale_quote == 1) {
+            gfx_draw_text_centered(0, 68, SCREEN_WIDTH,
+                                   "REALITY CAN ALWAYS BEGIN AGAIN.", PAL_TEXT_WHITE);
+            gfx_draw_text_centered(0, 82, SCREEN_WIDTH,
+                                   "CAN YOU, JACK?", PAL_TEXT_VIOLET);
+        } else {
+            gfx_draw_text_centered(0, 68, SCREEN_WIDTH,
+                                   "I WILL KEEP BENDING REALITY", PAL_TEXT_WHITE);
+            gfx_draw_text_centered(0, 82, SCREEN_WIDTH,
+                                   "UNTIL NOTHING OF YOU REMAINS.", PAL_TEXT_VIOLET);
+        }
+        gfx_draw_text_centered(0, 116, SCREEN_WIDTH,
+                               s_finale_checkpoint ? "REWINDING: PLANETFALL"
+                                                   : "REWINDING: QUEEN'S SHIP",
+                               PAL_TEXT_CYAN);
     }
 }
 

@@ -2,11 +2,13 @@
 #define SPACE_UNLIMITED_STORY_H
 
 /* ── STORY MODE (Android only) ────────────────────────────────────────────
- * An 80-level campaign with 8 themed sectors, a unique boss every 10 levels,
+ * An 80-level campaign with 8 themed kingdoms, a boss every 10 levels,
  * a fly-the-ship level map, and Mr Chubbs' shop docked before each boss.
+ * The eighth kingdom is a rock-free elite-drone gauntlet ending in the
+ * escaped Reality Queen's two-checkpoint ship/planetside last stand.
  *
- * Forty of the eighty levels are puzzles, and they run on THIRTY-THREE
- * different rules - not three shooting galleries wearing thirty-three names.
+ * Thirty-five levels in the first seven kingdoms are puzzles, and they run on
+ * THIRTY-THREE different rules - not three shooting galleries wearing names.
  * A rule is a different GOAL: scoop drifting salvage, thread numbered gates,
  * shove a cargo pod into its dock, hold a scan on a fleeing probe, load an
  * exact tonnage, alternate port and starboard, chain detonations, shoot a
@@ -25,7 +27,7 @@
 #include "types.h"
 
 #define STORY_LEVEL_COUNT   80
-#define STORY_PUZZLE_COUNT  40
+#define STORY_PUZZLE_COUNT  35
 #define STORY_SECTOR_COUNT  8
 #define STORY_SECTOR_LEVELS 10
 #define STORY_START_LIVES   3
@@ -163,10 +165,10 @@ typedef enum {
     SBOSS_WILDFIRE,      /* L50 - OVERHEAT: armoured while it burns, wide open
                           *       for a few seconds every time it vents */
     SBOSS_BULWARK,       /* L60 - SEAL: sealed hull, shoot the turret nodes off */
-    SBOSS_REALITY_QUEEN, /* L70 - FOLD: teleports, mirrors your controls and
-                          *       only her open face takes real damage */
-    SBOSS_PARADOX_ENGINE /* L80 - ECHO: records your position, then replays
-                          *       attacks from mirrored moments in time */
+    SBOSS_REALITY_QUEEN, /* L70 - FOLD: the throne ship breaks; Queen escapes */
+    /* Kept at the legacy enum value for save/network compatibility. L80 now
+     * uses it for REALITY QUEEN: LAST STAND and its planetside checkpoint. */
+    SBOSS_PARADOX_ENGINE
 } StoryBossId;
 
 extern const StoryLevel g_story_levels[STORY_LEVEL_COUNT];
