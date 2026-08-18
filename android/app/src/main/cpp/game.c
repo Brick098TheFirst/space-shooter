@@ -90,7 +90,7 @@ void game_set_mode(GameMode mode) {
 /* ── Story Mode runtime ───────────────────────────────────────────────────
  * The level being flown, its objective progress, and the outcome the menu
  * layer reads once the level ends. */
-static int  s_story_level = 1;          /* 1..70 */
+static int  s_story_level = 1;          /* 1..80 */
 static int  s_story_kills = 0;          /* hunters downed (OBJ_HUNT) */
 static int  s_story_bigs  = 0;          /* large rocks cracked (OBJ_BIGGAME) */
 static int  s_story_timer = 0;          /* ticks left  (OBJ_SURVIVE) */
@@ -2488,7 +2488,7 @@ static void story_update_objective(void) {
     }
 }
 
-/* ── Story Mode: the seven bosses ─────────────────────────────────────────
+/* ── Story Mode: the eight bosses ─────────────────────────────────────────
  * Each boss owns a distinct movement pattern, attack set and gimmick. They
  * all share the Boss struct; the story extension fields carry per-boss
  * state. HP is tuned so a fair loadout kills them in 45-90 seconds. */
@@ -2504,7 +2504,7 @@ static int story_boss_hp(int boss_id) {
          * The Alien is deliberately the softest thing in the campaign - it
          * is a tutorial, and a tutorial that lasts ninety seconds is a wall.
          * Wildfire carries more, because its vents hand out double damage. */
-        140, 650, 1800, 2500, 8200, 4600, 22000
+        140, 650, 1800, 2500, 8200, 4600, 22000, 30000
     };
     int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
     int hp = base[id];
@@ -2547,6 +2547,14 @@ static void story_spawn_boss(int boss_id) {
         b->shield = 0;
     }
     if (boss_id == SBOSS_REALITY_QUEEN) b->charge = 1;
+    if (boss_id == SBOSS_PARADOX_ENGINE) {
+        /* Its mirrored afterimage is an attack source, not a second health
+         * pool. It continuously replays the engine's last position. */
+        b->clone_active = true;
+        b->clone_x = TO_FIXED(SCREEN_WIDTH / 2);
+        b->clone_y = -TO_FIXED(60);
+        b->charge = 0;
+    }
 
     g_game.boss_active = true;
     g_game.boss_hit_flash = 0;
@@ -3187,6 +3195,153 @@ static void sb_reality_queen(Boss* b) {
     }
 }
 
+/* ── BOSS 8 - PARADOX ENGINE (L80) ──────────────────────────────────────
+ * KEY MECHANIC - THE ECHO. The engine records where the pilot was when an
+ * attack began, telegraphs that old lane, then attacks it from both its live
+ * hull and a mirrored afterimage. Camping is punished; deliberate movement
+ * leaves the replay shooting empty space. At 66% and 33% the record/replay
+ * gap shrinks, but every echo remains visible before it becomes dangerous. */
+static void sb_paradox_engine(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    int pct = sb_hp_pct(b);
+
+    if (b->stage == 0 && pct <= 66) {
+        b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 90;
+        g_game.shake_timer = 28;
+    } else if (b->stage == 1 && pct <= 33) {
+        b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 90;
+        g_game.shake_timer = 36;
+    }
+
+    /* The echo follows the opposite side of the previous frame. Its small
+     * vertical lag makes the two silhouettes readable instead of overlapping. */
+    b->clone_active = true;
+    b->clone_x += ((TO_FIXED(SCREEN_WIDTH) - b->x) - b->clone_x) / 5;
+    b->clone_y += ((b->y + TO_FIXED(12)) - b->clone_y) / 6;
+    b->spin += 850 + b->stage * 260;
+
+    switch (b->phase) {
+        case SB_STAGGER:
+            sb_hover(b, 30, TO_FIXED(1));
+            if ((b->phase_timer & 3) == 0) {
+                int ex = FROM_FIXED(b->clone_x), ey = FROM_FIXED(b->clone_y);
+                spawn_particle(TO_FIXED(cx), TO_FIXED(cy), (rand() & 255) - 128,
+                               (rand() & 255) - 128, PAL_TEXT_CYAN, 10);
+                spawn_particle(TO_FIXED(ex), TO_FIXED(ey), (rand() & 255) - 128,
+                               (rand() & 255) - 128, PAL_TEXT_VIOLET, 10);
+            }
+            if (b->phase_timer <= 0) {
+                sb_ring(cx, cy, 10 + b->stage * 2, TO_FIXED(3), b->spin, 3);
+                b->phase = SB_IDLE; b->phase_timer = 65; b->cooldown = 20;
+            }
+            break;
+
+        case SB_IDLE:
+            sb_hover(b, 30, TO_FIXED(1) + 50);
+            sb_drift(b, TO_FIXED(1) + 100 + b->stage * 35);
+            if (--b->cooldown <= 0) {
+                /* Harmless-looking paired ticks teach that the echo is a
+                 * real firing origin before the larger replays begin. */
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(4), 0);
+                sb_shoot_at_player(FROM_FIXED(b->clone_x), FROM_FIXED(b->clone_y) + 10,
+                                   TO_FIXED(3) + 100, 0);
+                b->cooldown = 42 - b->stage * 6;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = sb_next_attack(b, b->stage >= 1 ? 3 : 2);
+                b->phase_timer = 180 - b->stage * 15;
+                /* Record the pilot NOW. Attack A replays this old column;
+                 * Attack C rewinds to it after a long warning. */
+                const Player* p = ai_target_ship();
+                b->beam_x = p->x;
+                b->aim_x = p->y;
+                b->charge = 0;
+            }
+            break;
+
+        case SB_ATTACK_A: {  /* RECORDED LANES */
+            int mark = FROM_FIXED(b->beam_x);
+            int mirror = SCREEN_WIDTH - mark;
+            int replay_at = 95 - b->stage * 8;
+            if (b->phase_timer > replay_at) {
+                /* Cyan dashed columns are yesterday's position, not damage. */
+                if ((b->phase_timer & 3) == 0) {
+                    spawn_particle(TO_FIXED(mark), TO_FIXED(38 + rand() % 70),
+                                   0, 25, PAL_TEXT_CYAN, 8);
+                    spawn_particle(TO_FIXED(mirror), TO_FIXED(38 + rand() % 70),
+                                   0, 25, PAL_TEXT_VIOLET, 8);
+                }
+            } else if ((b->phase_timer % (13 - b->stage * 2)) == 0) {
+                add_boss_bullet(TO_FIXED(mark), TO_FIXED(cy + 10), 0,
+                                TO_FIXED(4) + b->stage * 60, true);
+                if (abs(mirror - mark) > 18)
+                    add_boss_bullet(TO_FIXED(mirror), TO_FIXED(cy + 10), 0,
+                                    TO_FIXED(4) + b->stage * 60, false);
+            }
+            sb_drift(b, TO_FIXED(1));
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 64; b->cooldown = 20;
+            }
+            break;
+        }
+
+        case SB_ATTACK_B: {  /* COUNTER-ROTATING ECHO CLOCK */
+            int ex = FROM_FIXED(b->clone_x), ey = FROM_FIXED(b->clone_y);
+            sb_hover(b, 27, TO_FIXED(1));
+            if ((b->phase_timer % (20 - b->stage * 3)) == 0) {
+                sb_ring(cx, cy, 8, TO_FIXED(2) + 150, b->spin, 4);
+                sb_ring(ex, ey, 8, TO_FIXED(2) + 100, -b->spin, 0);
+            }
+            if ((b->phase_timer % 45) == 0)
+                sb_shoot_at_player(ex, ey, TO_FIXED(5), 1);
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 68; b->cooldown = 18;
+            }
+            break;
+        }
+
+        case SB_ATTACK_C: {  /* REWIND — unlocked after the first break */
+            int old_x = FROM_FIXED(b->beam_x);
+            int old_y = FROM_FIXED(b->aim_x);
+            if (b->phase_timer > 80) {
+                /* A boxed reticle makes the destination explicit for more
+                 * than half a second before the rewind happens. */
+                if ((b->phase_timer & 2) == 0) {
+                    spawn_particle(TO_FIXED(old_x - 8 + rand() % 17), TO_FIXED(old_y - 8),
+                                   0, 20, PAL_TEXT_GOLD, 7);
+                    spawn_particle(TO_FIXED(old_x - 8 + rand() % 17), TO_FIXED(old_y + 8),
+                                   0, -20, PAL_TEXT_GOLD, 7);
+                }
+            } else if (b->phase_timer == 80) {
+                /* Rewind only the horizontal axis. It is dramatic without
+                 * dropping the pilot directly onto an untelegraphed bullet. */
+                g_game.player.x = b->beam_x;
+                if (g_game.player.x < TO_FIXED(10)) g_game.player.x = TO_FIXED(10);
+                if (g_game.player.x > TO_FIXED(SCREEN_WIDTH - 10))
+                    g_game.player.x = TO_FIXED(SCREEN_WIDTH - 10);
+                g_game.player.invulnerable_timer = 18;
+                g_game.shake_timer = 14;
+                audio_play_sfx(SFX_EXPLOSION);
+            } else if ((b->phase_timer % 12) == 0) {
+                int gap = old_x;
+                for (int x = 12; x < SCREEN_WIDTH - 10; x += 20) {
+                    if (abs(x - gap) < 26) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 8), 0,
+                                    TO_FIXED(3) + 90, false);
+                }
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 60; b->cooldown = 16;
+            }
+            break;
+        }
+
+        default:
+            b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24;
+            break;
+    }
+}
+
 /* Damage gating for the bosses that HAVE a gate.
  * Alien:    none - it is the tutorial, shoot it till it dies.
  * Sledge:   four armour plates soak everything until they are broken off.
@@ -3299,9 +3454,11 @@ static void story_boss_ai(Boss* b) {
         case SBOSS_SPLINTER:        sb_splinter(b); break;
         case SBOSS_COLDSNAP:   sb_coldsnap(b); break;
         case SBOSS_SLEDGE:   sb_sledge(b); break;
-        case SBOSS_WILDFIRE:    sb_wildfire(b); break;
-        case SBOSS_BULWARK:  sb_bulwark(b); break;
-        default:                 sb_reality_queen(b); break;
+        case SBOSS_WILDFIRE:       sb_wildfire(b); break;
+        case SBOSS_BULWARK:        sb_bulwark(b); break;
+        case SBOSS_REALITY_QUEEN:  sb_reality_queen(b); break;
+        case SBOSS_PARADOX_ENGINE: sb_paradox_engine(b); break;
+        default:                    sb_alien(b); break;
     }
 }
 
@@ -3437,10 +3594,11 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
     if (g_game.mode == GAME_MODE_STORY) {
         /* Story bosses get a bigger send-off, then hand control to the
          * result card (the campaign banks the reward, not arcade coins). */
-        int blasts = (b->story_id == SBOSS_REALITY_QUEEN) ? 14 : 8;
+        bool finale = (b->story_id == SBOSS_PARADOX_ENGINE);
+        int blasts = finale ? 18 : (b->story_id == SBOSS_REALITY_QUEEN ? 14 : 8);
         for (int k = 0; k < blasts; k++)
             trigger_explosion(boss_cx + (rand() % 40) - 20, boss_cy + (rand() % 30) - 15);
-        g_game.shake_timer = (b->story_id == SBOSS_REALITY_QUEEN) ? 60 : 34;
+        g_game.shake_timer = finale ? 75 : (b->story_id == SBOSS_REALITY_QUEEN ? 60 : 34);
         award_score(2000 * (b->story_id + 1));
         story_on_kill_scored(1);
         platform_queue_haptic(HAPTIC_BEAM);
@@ -5717,6 +5875,17 @@ void game_draw(void) {
                 gfx_draw_boss_ship(qx, qy, BOSS_SPR_SPLINTER, 1,
                                    sb->flash_timer > 0, s_game_frame);
             }
+            if (sb->story_id == SBOSS_PARADOX_ENGINE && sb->clone_active) {
+                /* The afterimage flickers at 1x behind the 2x live machine.
+                 * It is never a hidden hit target: it exists to disclose the
+                 * second origin before replayed shots leave it. */
+                if ((s_game_frame & 3) != 0) {
+                    int qx = FROM_FIXED(sb->clone_x) + ox;
+                    int qy = FROM_FIXED(sb->clone_y) + oy;
+                    gfx_draw_boss_ship(qx, qy, BOSS_SPR_PARADOX, 1,
+                                       false, s_game_frame + 24);
+                }
+            }
             /* Only two bosses in the campaign have parts to shoot off: the
              * Bulwark's turret nodes and the Sledge's armour plates. */
             if (sb->story_id == SBOSS_BULWARK || sb->story_id == SBOSS_SLEDGE) {
@@ -5838,6 +6007,17 @@ void game_draw(void) {
                 } else {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "CORE EXPOSED - FINISH HER", PAL_TEXT_RED);
+                }
+            } else if (sid == SBOSS_PARADOX_ENGINE) {
+                if (g_game.boss.phase == SB_ATTACK_A) {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "ECHO LOCK - LEAVE YOUR OLD LANE", PAL_TEXT_CYAN);
+                } else if (g_game.boss.phase == SB_ATTACK_C) {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "REWIND ARMED - WATCH THE RETICLE", PAL_TEXT_GOLD);
+                } else {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "THE ECHO REPLAYS YOUR PAST", PAL_TEXT_VIOLET);
                 }
             }
         } else {

@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 /* ── Persistent campaign state ────────────────────────────────────────────
- * Mirrored into the V9 save block by save.c (g_story_save). */
+ * Mirrored into the V12 save block by save.c. */
 StorySave g_story;
 
 void story_init(void) {
@@ -16,7 +16,7 @@ void story_init(void) {
     if (g_story.lives < 1) g_story.lives = STORY_START_LIVES;
     if (g_story.lives > STORY_MAX_LIVES) g_story.lives = STORY_MAX_LIVES;
     if (g_story.cleared_count > STORY_LEVEL_COUNT) g_story.cleared_count = STORY_LEVEL_COUNT;
-    /* Only the 14 real docks have bits; drop anything a corrupt save set. */
+    /* Only the 16 real docks have bits; drop anything a corrupt save set. */
     g_story.docks_used &= (u16)((1u << STORY_DOCK_COUNT) - 1u);
     /* A repair deadline further out than the repair itself means the device
      * clock moved; clamp it rather than grounding the player for ever. */
@@ -566,7 +566,8 @@ static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
     "JUGGERNAUT IS HUGE. FIND A GAP.",
     "INFERNO BURNS HOT. STAY COOL.",
     "AEGIS NEVER BLINKS. BLIND IT.",
-    "THIS IS IT, JACK. THE REALITY QUEEN."
+    "THIS IS IT, JACK. THE REALITY QUEEN.",
+    "THAT MACHINE CAUSED ALL OF IT. END THIS."
 };
 static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. NO CHARGE. GO.",
@@ -575,7 +576,8 @@ static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. DON'T GET CRUSHED.",
     "TAKE A LIFE. DON'T MELT, JACK.",
     "TAKE A LIFE. IT'S ON THE HOUSE.",
-    "TAKE A LIFE. FINISH YOUR REVENGE."
+    "TAKE A LIFE. FINISH YOUR REVENGE.",
+    "TAKE A LIFE. BRING THE STARS BACK."
 };
 static const char* const s_chubb_idle[6] = {
     "STILL ALIVE, JACK? GOOD FOR TRADE.",

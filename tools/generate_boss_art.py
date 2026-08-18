@@ -277,6 +277,32 @@ QUEEN = [
     "..........33",
 ]
 
+# 9 - PARADOX ENGINE (story L80): an impossible hourglass carrier. Two
+# armoured eras pinch around a bright singularity, with split clock-hands and
+# paired engines. Its echoed copy is drawn translucent by the game renderer.
+PARADOX = [
+    "1..........1",
+    "HH........HH",
+    "HHH......HHH",
+    "HHHH....HHHH",
+    "1HHHH..HHHH1",
+    ".1HHHhhHHH1.",
+    "..1HHssHH1..",
+    "...1HsDH1...",
+    "....1Dg1....",
+    ".....11.....",
+    ".....11.....",
+    "....1Dg1....",
+    "...1HsDH1...",
+    "..1HHssHH1..",
+    ".1HHHhhHHH1.",
+    "1HHHH..HHHH1",
+    "HHHH....HHHH",
+    "HHH3....3HHH",
+    "HH33....33HH",
+    "1.33....33.1",
+]
+
 BOSSES = [
     ("RAZORWING", RAZORWING),
     ("GOLIATH", GOLIATH),
@@ -287,6 +313,7 @@ BOSSES = [
     ("WILDFIRE", WILDFIRE),
     ("BULWARK", BULWARK),
     ("QUEEN", QUEEN),
+    ("PARADOX", PARADOX),
 ]
 
 # Paint ramp (accent index 0..7) each boss wears by default; the same ramps
@@ -301,6 +328,7 @@ DEFAULT_ACCENTS = {
     "WILDFIRE": 5,      # crimson void
     "BULWARK": 3,        # plasma mint
     "QUEEN": 2,      # nova violet
+    "PARADOX": 1,    # ion cyan against the null horizon
 }
 
 
@@ -384,18 +412,19 @@ def main():
 
 #define BOSS_SPR_W 24
 #define BOSS_SPR_H 20
-#define NUM_BOSS_SPRITES 9
+#define NUM_BOSS_SPRITES 10
 
 typedef enum {
     BOSS_SPR_RAZORWING = 0,    /* arcade mini-boss (waves 5/15/25...) */
     BOSS_SPR_GOLIATH,          /* arcade battleship (waves 10/20/30...) */
-    BOSS_SPR_ALIEN,          /* story L10 */
-    BOSS_SPR_SPLINTER,           /* story L20 */
-    BOSS_SPR_COLDSNAP,        /* story L30 */
-    BOSS_SPR_SLEDGE,       /* story L40 */
-    BOSS_SPR_WILDFIRE,          /* story L50 */
-    BOSS_SPR_BULWARK,            /* story L60 */
-    BOSS_SPR_QUEEN           /* story L70 */
+    BOSS_SPR_ALIEN,            /* story L10 */
+    BOSS_SPR_SPLINTER,         /* story L20 */
+    BOSS_SPR_COLDSNAP,         /* story L30 */
+    BOSS_SPR_SLEDGE,           /* story L40 */
+    BOSS_SPR_WILDFIRE,         /* story L50 */
+    BOSS_SPR_BULWARK,          /* story L60 */
+    BOSS_SPR_QUEEN,            /* story L70 */
+    BOSS_SPR_PARADOX           /* story L80 */
 } BossSpriteId;
 
 extern const u8 spr_boss[NUM_BOSS_SPRITES][BOSS_SPR_W * BOSS_SPR_H];

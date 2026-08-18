@@ -12,7 +12,14 @@ class GbaPlayer {
         this.volume = 0.8;
         this.muted = false;
 
+        // Keep input sources separate. The old player let the gamepad poller
+        // delete keyboard keys every frame, so plugging in a controller could
+        // make held keyboard directions flicker. The public `keys` set is now
+        // the stable union of keyboard, touch and gamepad state.
         this.keys = new Set();
+        this.keyboardKeys = new Set();
+        this.virtualKeys = new Set();
+        this.gamepadKeys = new Set();
         this.audioContext = null;
         this.audioNode = null;
         // mGBA outputs the GBA's native 32,768 Hz mixed stream.  Keep a
@@ -53,7 +60,8 @@ class GbaPlayer {
         window.addEventListener("keydown", (e) => {
             const id = this.mapKeyCode(e.code);
             if (id !== null) {
-                this.keys.add(id);
+                this.keyboardKeys.add(id);
+                this.syncKeys();
                 e.preventDefault();
             }
         });
@@ -61,10 +69,26 @@ class GbaPlayer {
         window.addEventListener("keyup", (e) => {
             const id = this.mapKeyCode(e.code);
             if (id !== null) {
-                this.keys.delete(id);
+                this.keyboardKeys.delete(id);
+                this.syncKeys();
                 e.preventDefault();
             }
         });
+
+        // Never leave a key latched when the tab loses focus.
+        window.addEventListener("blur", () => {
+            this.keyboardKeys.clear();
+            this.virtualKeys.clear();
+            this.gamepadKeys.clear();
+            this.syncKeys();
+        });
+    }
+
+    syncKeys() {
+        this.keys.clear();
+        for (const source of [this.keyboardKeys, this.virtualKeys, this.gamepadKeys]) {
+            for (const key of source) this.keys.add(key);
+        }
     }
 
     mapKeyCode(code) {
@@ -108,50 +132,42 @@ class GbaPlayer {
     }
 
     setVirtualButton(buttonId, isPressed) {
-        if (isPressed) {
-            this.keys.add(buttonId);
-        } else {
-            this.keys.delete(buttonId);
-        }
+        if (isPressed) this.virtualKeys.add(buttonId);
+        else this.virtualKeys.delete(buttonId);
+        this.syncKeys();
     }
 
     pollGamepad() {
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const next = new Set();
         for (const gp of gamepads) {
             if (!gp || !gp.connected) continue;
 
-            // D-Pad / Left Stick
-            const dpadUp = gp.buttons[12]?.pressed || gp.axes[1] < -0.4;
-            const dpadDown = gp.buttons[13]?.pressed || gp.axes[1] > 0.4;
-            const dpadLeft = gp.buttons[14]?.pressed || gp.axes[0] < -0.4;
-            const dpadRight = gp.buttons[15]?.pressed || gp.axes[0] > 0.4;
+            // D-Pad / Left Stick. Optional chaining keeps odd retro pads safe.
+            const ax = gp.axes[0] || 0;
+            const ay = gp.axes[1] || 0;
+            if (gp.buttons[12]?.pressed || ay < -0.4) next.add(4);
+            if (gp.buttons[13]?.pressed || ay > 0.4) next.add(5);
+            if (gp.buttons[14]?.pressed || ax < -0.4) next.add(6);
+            if (gp.buttons[15]?.pressed || ax > 0.4) next.add(7);
 
-            // Action Buttons
-            const btnA = gp.buttons[0]?.pressed || gp.buttons[7]?.pressed; // A or RT (Fire / Buy)
-            const btnB = gp.buttons[2]?.pressed || gp.buttons[1]?.pressed || gp.buttons[5]?.pressed; // X, B or RB (Beam)
-            const btnL = gp.buttons[4]?.pressed || gp.buttons[6]?.pressed; // LB or LT (Prev Tab)
-            const btnR = gp.buttons[5]?.pressed || gp.buttons[7]?.pressed; // RB or RT (Next Tab)
-            const btnStart = gp.buttons[9]?.pressed || gp.buttons[16]?.pressed; // Start / Menu
-            const btnSelect = gp.buttons[8]?.pressed; // Back / Select
-
-            if (dpadUp) this.keys.add(4); else if (!this.isKeyboardDown(4)) this.keys.delete(4);
-            if (dpadDown) this.keys.add(5); else if (!this.isKeyboardDown(5)) this.keys.delete(5);
-            if (dpadLeft) this.keys.add(6); else if (!this.isKeyboardDown(6)) this.keys.delete(6);
-            if (dpadRight) this.keys.add(7); else if (!this.isKeyboardDown(7)) this.keys.delete(7);
-
-            if (btnA) this.keys.add(8); else if (!this.isKeyboardDown(8)) this.keys.delete(8);
-            if (btnB) this.keys.add(0); else if (!this.isKeyboardDown(0)) this.keys.delete(0);
-            if (btnL) this.keys.add(10); else if (!this.isKeyboardDown(10)) this.keys.delete(10);
-            if (btnR) this.keys.add(11); else if (!this.isKeyboardDown(11)) this.keys.delete(11);
-            if (btnStart) this.keys.add(3); else if (!this.isKeyboardDown(3)) this.keys.delete(3);
-            if (btnSelect) this.keys.add(2); else if (!this.isKeyboardDown(2)) this.keys.delete(2);
-
+            // Context-safe mapping: shoulders emit native L/R. Gameplay also
+            // accepts those for the beam, while menus use them for tabs. This
+            // avoids RT simultaneously firing and switching a shop page.
+            if (gp.buttons[0]?.pressed || gp.buttons[7]?.pressed) next.add(8); // A / RT
+            if (gp.buttons[1]?.pressed || gp.buttons[2]?.pressed) next.add(0); // B / X
+            if (gp.buttons[4]?.pressed || gp.buttons[6]?.pressed) next.add(10); // LB / LT
+            if (gp.buttons[5]?.pressed) next.add(11); // RB
+            if (gp.buttons[9]?.pressed || gp.buttons[16]?.pressed) next.add(3); // Start
+            if (gp.buttons[8]?.pressed) next.add(2); // Back / Select
             break;
         }
+        this.gamepadKeys = next;
+        this.syncKeys();
     }
 
     isKeyboardDown(id) {
-        return false;
+        return this.keyboardKeys.has(id);
     }
 
     initAudio() {

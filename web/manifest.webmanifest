@@ -1,0 +1,20 @@
+{
+  "name": "Space Unlimited: Recharged — Director's Cut",
+  "short_name": "Space Unlimited",
+  "description": "Native GBA space shooter with arcade progression and an Android story campaign.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#070910",
+  "theme_color": "#070910",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

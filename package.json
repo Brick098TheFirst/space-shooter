@@ -1,12 +1,17 @@
 {
   "name": "space-unlimited-gba",
-  "version": "1.0.0",
-  "description": "Space Unlimited: Recharged - Authentic Game Boy Advance (GBA) Port with coin shop and rare powerups",
+  "version": "2.0.0",
+  "description": "Space Unlimited: Recharged Director's Cut — native GBA arcade shooter and 80-level Android campaign",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "generate-assets": "python3 tools/generate_gba_data.py",
     "build:gba": "node tools/build_gba.js",
     "build": "node tools/build_gba.js && node tools/bundle_web.js",
+    "test": "node tools/test_release.js",
+    "test:release": "node tools/test_release.js",
     "start": "node server.js",
     "dev": "node server.js"
   },

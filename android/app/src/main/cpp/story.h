@@ -2,31 +2,31 @@
 #define SPACE_UNLIMITED_STORY_H
 
 /* ── STORY MODE (Android only) ────────────────────────────────────────────
- * A 70-level campaign with 7 themed sectors, a unique boss every 10 levels,
+ * An 80-level campaign with 8 themed sectors, a unique boss every 10 levels,
  * a fly-the-ship level map, and Mr Chubbs' shop docked before each boss.
  *
- * Thirty-five of the seventy levels are puzzles, and they run on THIRTY-THREE
+ * Forty of the eighty levels are puzzles, and they run on THIRTY-THREE
  * different rules - not three shooting galleries wearing thirty-three names.
  * A rule is a different GOAL: scoop drifting salvage, thread numbered gates,
  * shove a cargo pod into its dock, hold a scan on a fleeing probe, load an
  * exact tonnage, alternate port and starboard, chain detonations, shoot a
  * blacked-out field from memory, beat individual fuses, hit the unplated half
  * of a rock, escort a transport, fly a gravity well, swap polarity to eat
- * incoming fire, or stay out of a sweeping scanner beam.  Fifteen of them
+ * incoming fire, or stay out of a sweeping scanner beam. Fifteen missions
  * never let you pull the trigger at all.
  *
  * Hard rule, enforced by tools/story_sim/save_tests.c: no rule is used more
  * than twice in the whole campaign, and the "radar picked a rock, go shoot
- * it" family is capped at two levels out of seventy.
+ * it" family is capped at two levels out of eighty.
  *
  * The story owns its own currency (CHUBBCOIN) and its own life pool; the
- * arcade coin balance is untouched.  Everything persists in the V9 save.  */
+ * arcade coin balance is untouched. Everything persists in the V12 save. */
 
 #include "types.h"
 
-#define STORY_LEVEL_COUNT   70
-#define STORY_PUZZLE_COUNT  35
-#define STORY_SECTOR_COUNT  7
+#define STORY_LEVEL_COUNT   80
+#define STORY_PUZZLE_COUNT  40
+#define STORY_SECTOR_COUNT  8
 #define STORY_SECTOR_LEVELS 10
 #define STORY_START_LIVES   3
 #define STORY_MAX_LIVES     9
@@ -149,8 +149,8 @@ typedef struct {
     u8  modifier;     /* StoryModifier - the level's twist */
 } StoryLevel;
 
-/* ── The seven bosses ─────────────────────────────────────────────────────
- * Levels 10/20/30/40/50/60/70.  Each has its own attack script, movement
+/* ── The eight bosses ─────────────────────────────────────────────────────
+ * Levels 10/20/30/40/50/60/70/80. Each has its own attack script, movement
  * and a KEY MECHANIC no other boss uses — see story_boss_ai() in game.c. */
 typedef enum {
     SBOSS_ALIEN = 0,     /* L10 - just an alien. No gimmick: shoot it till it
@@ -163,8 +163,10 @@ typedef enum {
     SBOSS_WILDFIRE,      /* L50 - OVERHEAT: armoured while it burns, wide open
                           *       for a few seconds every time it vents */
     SBOSS_BULWARK,       /* L60 - SEAL: sealed hull, shoot the turret nodes off */
-    SBOSS_REALITY_QUEEN  /* L70 - FOLD: teleports, mirrors your controls and
+    SBOSS_REALITY_QUEEN, /* L70 - FOLD: teleports, mirrors your controls and
                           *       only her open face takes real damage */
+    SBOSS_PARADOX_ENGINE /* L80 - ECHO: records your position, then replays
+                          *       attacks from mirrored moments in time */
 } StoryBossId;
 
 extern const StoryLevel g_story_levels[STORY_LEVEL_COUNT];
@@ -227,13 +229,13 @@ static inline bool story_boss_dock(int next_level) {
 }
 
 /* ── Kingdom backdrops ────────────────────────────────────────────────────
- * Each of the seven sectors flies over its own sky (see gba/src/starfield.c).
+ * Each of the eight sectors flies over its own sky (see gba/src/starfield.c).
  * Sector 0 -> SF_THEME_BELT, and so on in order, so adding a sector needs no
  * second table. */
 static inline int story_theme_for_sector(int sector) {
     if (sector < 0) sector = 0;
     if (sector >= STORY_SECTOR_COUNT) sector = STORY_SECTOR_COUNT - 1;
-    return 1 + sector;   /* SF_THEME_BELT .. SF_THEME_REALITY */
+    return 1 + sector;   /* SF_THEME_BELT .. SF_THEME_HORIZON */
 }
 
 static inline int story_theme_for_level(int level) {
@@ -242,16 +244,16 @@ static inline int story_theme_for_level(int level) {
 
 
 /* ── Runtime state & progression ─────────────────────────────────────────
- * All of this is persisted in the V9 save block (see save.c). */
+ * All of this is persisted in the current Android save block (see save.c). */
 
 /* Campaign save block. Kept plain and byte-stable so save.c can copy it
- * straight into the V9 layout on every compiler. */
+ * straight into the current layout on every compiler. */
 typedef struct {
-    u8  level;          /* 1..70 - map cursor / level to fly next */
-    u8  unlocked;       /* 1..70 - furthest level reachable */
+    u8  level;          /* 1..80 - map cursor / level to fly next */
+    u8  unlocked;       /* 1..80 - furthest level reachable */
     u8  lives;          /* story life pool */
     u8  cleared_count;  /* how many distinct levels are beaten */
-    u8  cleared[9];     /* 70-level bitmask */
+    u8  cleared[10];    /* 80-level bitmask */
     u8  intro_seen;     /* the opening speech has played once */
     u8  freed;          /* "LET ME BE FREE" tapped 3x in settings */
     u8  boss_gifts;     /* bitmask: bosses whose free life has been handed out */
@@ -259,17 +261,17 @@ typedef struct {
     /* Wall-clock second (epoch) the repair yard hands the ship back.  0 when
      * the ship is spaceworthy.  See story_wreck_ship(). */
     u32 repair_until;
-    /* One bit per dock (level 5, 10, ... 70).  Set the moment the player
-     * leaves that dock: he does not come back for it. */
+    /* One bit per dock (before levels 5, 10, ... 80). Set the moment the
+     * player leaves that dock: he does not come back for it. */
     u16 docks_used;
     u16 pad;
 } StorySave;
 
-/* 70 levels / one dock every 5 = 14 docks, so the mask fits a u16. */
+/* 80 levels / one dock every 5 = 16 docks, exactly filling the u16 mask. */
 #define STORY_DOCK_COUNT (STORY_LEVEL_COUNT / STORY_SHOP_INTERVAL)
 
 /* 0-based dock index for a dock level (-1 when that level has no dock).
- * Level 4 -> 0, level 9 -> 1, ... level 69 -> 13. */
+ * Level 4 -> 0, level 9 -> 1, ... level 79 -> 15. */
 static inline int story_dock_index(int level) {
     if (!story_shop_at(level)) return -1;
     return level / STORY_SHOP_INTERVAL;
@@ -280,7 +282,7 @@ extern StorySave g_story;
 void story_init(void);            /* clamp/repair loaded save fields */
 void story_reset_progress(void);  /* wipe the campaign back to level 1 */
 
-int  story_current_level(void);   /* 1..70 - the level the map cursor sits on */
+int  story_current_level(void);   /* 1..80 - the level the map cursor sits on */
 void story_set_current_level(int level);
 int  story_highest_unlocked(void);/* furthest level the player may fly */
 bool story_is_cleared(int level);
@@ -353,7 +355,7 @@ u32  story_chubbcoin(void);
 void story_award(int amount);
 bool story_spend(int amount);
 
-bool story_is_finished(void);     /* level 70 cleared */
+bool story_is_finished(void);     /* level 80 cleared */
 bool story_content_unlocked(void);/* finished OR "LET ME BE FREE" used */
 void story_free_everything(void); /* the settings escape hatch */
 bool story_intro_seen(void);

@@ -61,15 +61,17 @@ int main(void){
     for(int i=MOD_PZ_FIRST;i<=MOD_PZ_LAST;i++)
         CHK(story_modifier_name(i)[0], "every puzzle rule has a label");
     CHK(!strcmp(story_boss_name(0), "Alien"), "first boss is named Alien");
-    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Reality Queen"),
-        "final boss is named Reality Queen");
-    /* All seven bosses must be different names - no reskins. */
+    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Paradox Engine"),
+        "final boss is named Paradox Engine");
+    /* All eight bosses must be different names - no reskins. */
     for(int i=0;i<STORY_SECTOR_COUNT;i++)
       for(int j=i+1;j<STORY_SECTOR_COUNT;j++)
         CHK(strcmp(story_boss_name(i), story_boss_name(j)), "boss names are unique");
     CHK(!strcmp(g_story_levels[9].name, "ALIEN"), "level 10 uses the Alien name");
     CHK(!strcmp(g_story_levels[69].name, "REALITY QUEEN"),
         "level 70 uses the Reality Queen name");
+    CHK(!strcmp(g_story_levels[79].name, "PARADOX ENGINE"),
+        "level 80 uses the Paradox Engine name");
     /* monotonic difficulty */
     for(int i=1;i<STORY_LEVEL_COUNT;i++){
         CHK(g_story_levels[i].speed_pct>=g_story_levels[i-1].speed_pct,"speed never drops");
@@ -184,8 +186,11 @@ int main(void){
     story_init();
     for(int lv=1; lv<25; lv++){ story_complete_level(lv, NULL); }
 
-    /* save round-trip through SRAM */
+    /* V12 save round-trip through SRAM, including the new tenth clear byte
+     * and sixteenth Mr Chubbs dock bit. */
     g_story.chubbcoin=4242; g_story.level=21; g_story.unlocked=25;
+    g_story.cleared[9] |= (1u << 7); /* level 80 */
+    g_story.docks_used |= (1u << 15);
     save_write();
     StorySave before=g_story;
     memset(&g_story,0,sizeof(g_story));
@@ -194,17 +199,19 @@ int main(void){
     CHK(g_story.unlocked==before.unlocked,"unlock frontier persisted");
     CHK(g_story.cleared_count==before.cleared_count,"clears persisted");
     CHK(story_is_cleared(20),"boss clear persisted");
+    CHK(story_is_cleared(80),"Director's Cut final clear persisted");
+    CHK((g_story.docks_used & (1u << 15)) != 0,"sixteenth dock persisted");
 
     /* ── Mr Chubbs docks every FIFTH level, and each dock is one visit ── */
     g_story.docks_used = 0;
     for(int lv=1; lv<=STORY_LEVEL_COUNT; lv++)
         CHK(story_shop_at(lv) == ((lv % 5) == 4), "dock only every fifth level");
-    CHK(story_shop_at(4) && story_shop_at(9) && story_shop_at(69), "docks at 4/9/69");
+    CHK(story_shop_at(4) && story_shop_at(9) && story_shop_at(79), "docks at 4/9/79");
     CHK(!story_shop_at(5) && !story_shop_at(10) && !story_shop_at(70), "no dock off the fives");
     /* Every dock sits immediately before a boss on the tenth levels. */
-    CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(70),"boss docks on the 10s");
+    CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(80),"boss docks on the 10s");
     CHK(!story_boss_dock(9) && !story_boss_dock(11),"no boss dock off the 10s");
-    CHK(story_dock_index(4)==0 && story_dock_index(9)==1 && story_dock_index(69)==13,
+    CHK(story_dock_index(4)==0 && story_dock_index(9)==1 && story_dock_index(79)==15,
         "dock indices run 0..13");
     CHK(story_dock_index(7)<0, "non-dock levels have no index");
 

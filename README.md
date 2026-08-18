@@ -1,4 +1,6 @@
-# Space Unlimited: Recharged 🚀
+# Space Unlimited: Recharged — Director's Cut 🚀
+
+**Release 2.0** expands the Android campaign to **80 authored levels across 8 sectors**, adds the post-Queen **Null Horizon** epilogue and its time-replaying **Paradox Engine** finale, overhauls the browser flight deck into an installable PWA, and ships a release verification suite that flies every campaign level headlessly before publishing.
 
 A native **Game Boy Advance (GBA)** remake of the original Scratch space shooter.
 The Scratch project is preserved as `spaceshooter.sb3`; the game is a fresh, controller-ready implementation built from the ground up for authentic retro Game Boy Advance hardware.
@@ -100,7 +102,7 @@ Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fi
 
 ### 📖 Story Mode (Android)
 
-Play now opens **Story Mode** — a 70-level campaign that must be finished
+Play now opens **Story Mode** — an 80-level Director's Cut campaign that must be finished
 before the rest of the game unlocks.
 
 - **The story of Jack RK and the Chubbs.** Once upon a time in another
@@ -117,15 +119,14 @@ before the rest of the game unlocks.
   (`Assets/Audio/story_mode.mp3`), which keeps playing across the level map,
   Mr Chubbs' dock, and the result cards, so the campaign never sounds like the
   arcade front end.
-- **70 levels across 7 themed sectors** — The Chubb System, The Rust Yards,
-  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, and The Reality
-  kingdom. **35 of the 70 levels are puzzles**, with five puzzle nodes in
-  every sector, so the campaign changes rhythm constantly rather than saving
-  all its experiments for the finale.
+- **80 levels across 8 themed sectors** — The Chubb System, The Rust Yards,
+  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, The Reality
+  kingdom, and the new post-Queen **Null Horizon**. **40 of the 80 levels are
+  puzzles**, with five puzzle nodes in every sector, so the campaign changes
+  rhythm constantly rather than saving all its experiments for the finale.
 - **Thirty-three puzzle rules, none of them used more than twice.** The puzzle
   half of the campaign is a variety pack of *goals*, not one shooting gallery
-  wearing thirty-three names, and **fifteen of the rules never let you pull the
-  trigger at all**:
+  wearing thirty-three names, and **fifteen missions never let you pull the trigger at all**:
   - **Fly-it rules (guns dead):** *Salvage Run* (scoop drifting fuel cells),
     *Gate Run* (thread numbered gates in order), *Tug of War* (shove an
     engineless cargo pod into its dock with your hull), *Scan Lock* (hold a
@@ -145,7 +146,7 @@ before the rest of the game unlocks.
     cycle), *Escort* (keep a Chubb transport alive), *Fragile Cargo*,
     *Clockwork*, *Clean Combo*, *Drone Code*, *Safe Lane*, *Ricochet Run*,
     *Mirror Aim*, *Limited Ammo*, *Last Shot*, *Color Code* and *Sieve*.
-  - **The radar family is capped at two levels in seventy.** *Target Order*
+  - **The radar family is capped at two levels in eighty.** *Target Order*
     (level 2) and *Ghost Signal* (level 52) are the only "the scanner lit a
     rock, go break that rock" puzzles in the whole campaign.
   - Every rule states itself in one line on the level card and keeps its own
@@ -157,14 +158,15 @@ before the rest of the game unlocks.
   **clear it on the clock**, and **puzzle levels**. Eight arcade field
   modifiers still provide extra variety outside the puzzle nodes.
 
-  `tools/story_sim` flies all 70 levels headlessly with a scripted pilot that
+  `tools/story_sim` flies all 80 levels headlessly with a scripted pilot that
   plays each rule, proving every level terminates, and `save_tests` enforces
-  the variety contract itself: 35 puzzles, at least 30 distinct rules, no rule
-  twice over, at most two scanner levels, and seven differently named bosses.
-- **A different sky over every sector.** All seven sectors retain a distinct
+  the variety contract itself: 40 puzzles, at least 30 distinct rules, no rule
+  more than twice, at most two scanner levels, and eight differently named bosses.
+- **A different sky over every sector.** All eight sectors retain a distinct
   backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
   Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
-  the near-black Cold Vault, and The Reality kingdom's folded violet space.
+  the near-black Cold Vault, The Reality kingdom's folded violet space, and
+  Null Horizon's paired cyan time echoes.
 - **A boss every 10 levels, each a hand-pixelled ship in the fleet's own art
   style** (authored nose-up with the same hull lighting ramp, canopy glass and
   paint accents as the player ship templates, then flipped to fly nose-down),
@@ -174,7 +176,7 @@ before the rest of the game unlocks.
     bolts and a wide five-shot fan you can walk between. No plates, no
     windows, no puzzle: **shoot it until it dies.** It exists to teach the
     grammar of a boss fight — health bar, telegraph, dodge, shoot — before the
-    other six start attaching rules to it, and it is the softest hull in the
+    other seven start attaching rules to it, and it is the softest hull in the
     campaign so it never becomes a wall.
   - **Splinter** *(THE SPLIT)* — a twin-boom raider whose seam vents angled
     jets out both sides; at 50% it **breaks into two mirrored hulls sharing
@@ -198,12 +200,17 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **Reality Queen** *(THE FOLD)* — the finale, and the only boss that is
+  - **Reality Queen** *(THE FOLD)* — the original climax, and the only boss that is
     never where your shots are. Only her **glowing open face** takes real
     damage; she turns it away on a clock, then starts **folding the arena**,
     flipping your ship across the screen mid-dodge, until the last stage tears
     the core open. Axis-aligned cube shot, not another ring barrage. Jack RK
     gets his chance at revenge.
+  - **Paradox Engine** *(THE ECHO)* — the Director's Cut finale behind the
+    fallen Queen. It records the pilot's position, marks that old lane, and
+    replays attacks from a mirrored afterimage. Later phases shrink the delay
+    and can rewind Jack to a loudly telegraphed earlier position, turning
+    deliberate movement—not corner camping—into the answer.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated
@@ -243,11 +250,11 @@ before the rest of the game unlocks.
   clock is wall-clock, so it keeps counting down with the game closed — the map
   shows the countdown in place of LAUNCH until the ship is handed back.
 - **Everything else stays locked** — Shop, Upgrades, Multiplayer, and the
-  Waves/Endless/Overdrive modes — until level 70 falls.
+  Waves/Endless/Overdrive modes — until level 80 falls.
 
-Story progress lives in the **V11 save block** (levels cleared, Chubbcoin,
-lives, unlock flags, which of Mr Chubbs' 14 docks are already spent, and the
-repair-yard deadline). Older saves — including V9/V10 campaign saves — upgrade
+Story progress lives in the **V12 save block** (levels cleared, Chubbcoin,
+lives, unlock flags, which of Mr Chubbs' 16 docks are already spent, and the
+repair-yard deadline). Older saves — including V9/V10/V11 campaign saves — upgrade
 automatically on load and keep all their progress. The campaign is verified by a headless playthrough
 harness that proves every level still terminates — see `tools/story_sim/`.
 
@@ -264,7 +271,7 @@ the samples.
 - **Life-only powerups:** The Shield and Rapid Fire drops are removed. The only powerup that drops is the **life (repair)** pickup, at exactly the same rarity the repair slice had before (the underlying drop chances are unchanged). The now-dead "Rapid" duration tech upgrade is hidden from the Upgrades screen (its data stays in the save).
 - **Adaptive full-screen widescreen:** The framebuffer is always 160 px tall, but its width adapts to the phone (284–480 px) so the game **fills the entire screen — no side bars**, on any aspect ratio from 16:9 up to 21:9+. The app is locked to **landscape** (`sensorLandscape`), draws under the camera cutout, and re-fits live on fold/unfold or multi-window resizes. The GBA build keeps its fixed 240×160 Mode 4 screen untouched.
 
-`cd android && ./gradlew assembleDebug` — see `android/README.md`.
+`cd android && ./gradlew assembleRelease` — see `android/README.md`.
 
 ---
 

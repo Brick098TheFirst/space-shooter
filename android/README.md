@@ -102,27 +102,30 @@ a public APK.
 
 ```bash
 cd android
-./gradlew assembleDebug
+./gradlew assembleRelease
 ```
 
-APK:
+Installable release APK:
 
 ```text
-android/app/build/outputs/apk/debug/app-debug.apk
+android/app/build/outputs/apk/release/app-release.apk
 ```
+
+For Android Studio debugging, `./gradlew assembleDebug` remains available.
 
 ### APK versioning and update signature
 
 GitHub Actions passes a unique `ANDROID_VERSION_CODE` and
-`ANDROID_VERSION_NAME` into every build (`1.0.<workflow run number>`). The
+`ANDROID_VERSION_NAME` into every build (`2.0.<workflow run number>`). The
 version values are determined before Gradle runs, so they are embedded in the
 APK rather than existing only in the GitHub release title.
 
-Downloadable APKs are debug builds, so they use the intentionally public,
-repository-owned `app/space-unlimited-debug.p12` signing identity. **Do not
-replace or regenerate that file:** Android only permits an installed app to be
-updated by another APK signed with the same key. This is a distribution key for
-test/debug APKs only, not a private Play Store release key.
+Downloadable APKs are non-debuggable release builds signed with the intentionally
+public, repository-owned `app/space-unlimited-debug.p12` community identity.
+**Do not replace or regenerate that file:** Android only permits an installed
+app to be updated by another APK signed with the same key. This is a GitHub
+community distribution key, not a private Play Store release key; stores should
+supply their own protected signing configuration.
 
 EOS SDK 1.19.1.2 makes the Android app API 26+ and 64-bit only
 (`arm64-v8a`, `x86_64`). Gradle expands the SDK into an ignored build directory.

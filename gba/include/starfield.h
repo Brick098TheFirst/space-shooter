@@ -4,7 +4,7 @@
 #include "platform.h"
 
 /* ── Backdrop themes ──────────────────────────────────────────────────────
- * Story Mode's seven kingdoms each fly over their own sky: the nebula
+ * Story Mode's eight sectors each fly over their own sky: the nebula
  * colours, their density, the star palette and an extra per-theme drifting
  * layer (dust, sleet, embers, rust motes...) all change.  Theme 0 is the
  * original arcade starfield, so Waves/Endless/Overdrive look exactly as they
@@ -17,7 +17,8 @@
 #define SF_THEME_EMBER    5   /* EMBER REACH      - red heat + embers     */
 #define SF_THEME_VAULT    6   /* THE COLD VAULT   - near black, no stars  */
 #define SF_THEME_REALITY  7   /* THE REALITY GATE - violet folded space   */
-#define SF_THEME_COUNT    8
+#define SF_THEME_HORIZON  8   /* NULL HORIZON - cyan void / time echoes   */
+#define SF_THEME_COUNT    9
 
 void starfield_init(void);
 void starfield_update(void);
