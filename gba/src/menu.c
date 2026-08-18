@@ -11,7 +11,7 @@
  * the FIND MATCH / LEAVE buttons drive matchmaking from the menu itself. */
 #include "eos_online.h"
 #include "coop.h"
-/* Story Mode: the 70-level campaign, its map, and Mr Chubbs' shop. */
+/* Story Mode: the 70-level campaign, 35 puzzle nodes, its map, and Mr Chubbs' shop. */
 #include "story.h"
 #endif
 
@@ -1256,9 +1256,10 @@ static void render_story_map(void) {
         case OBJ_BIGGAME: goal = "CRACK THE BIG ONES"; break;
         case OBJ_TIMED:   goal = "CLEAR IT ON THE CLOCK"; break;
         case OBJ_PUZZLE:
-            goal = (L->modifier == MOD_PZ_SALVO)  ? "PUZZLE: LIMITED AMMO" :
-                   (L->modifier == MOD_PZ_SIGNAL) ? "PUZZLE: SIGNAL HUNT" :
-                                                    "PUZZLE: GUNS OFFLINE";
+            /* Every puzzle has its own named rule now; do not collapse the
+             * 31-variant rotation into the old three-label fallback. */
+            siprintf(buf, "PUZZLE: %s", story_modifier_name(L->modifier));
+            goal = buf;
             break;
         case OBJ_BOSS:    goal = story_boss_name(story_boss_for_level(s_map_cursor)); break;
         default:          goal = "CLEAR EVERYTHING"; break;

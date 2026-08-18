@@ -6,9 +6,14 @@ Story Mode can be tested on a normal machine without an Android device.
 
 ## Playthrough simulator
 
-Flies all 70 story levels with a scripted pilot that dodges the nearest threat
-and holds fire. Proves every level terminates (no unwinnable/stalling level)
-and reports how long each takes.
+Flies all 70 story levels with a scripted pilot that dodges the nearest threat,
+learns the puzzle reticles, handles the drone-only board, and holds fire only
+where the puzzle permits it. Proves every level terminates (no
+unwinnable/stalling level) and reports how long each takes.
+
+The campaign intentionally has **35 puzzle levels**. Their **31 named puzzle
+rules** appear once wherever possible and never more than twice, so this
+harness also makes it easy to audit the variety in the `TWIST` column.
 
 ```bash
 gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
@@ -25,7 +30,7 @@ gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
 soft-lock for a player who buys from Mr Chubbs as intended. The report's `TWIST`
 column shows each level's objective and field modifier, which is the quickest
 way to confirm the campaign is still varied rather than 70 rounds of the same
-level.
+level. A tier-1 godmode run should report `stalls=0` across all 70 levels.
 
 `tier=0` models a player who never spends a single chubbcoin for all 70 levels,
 so it deliberately stalls on the late kill-quota and boss levels (the baseline
@@ -50,7 +55,7 @@ the previous two levels and ground the ship.
 gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABLED=1 \
     tools/story_sim/ui_shots.c tools/story_sim/ui_stubs.c \
     android/app/src/main/cpp/platform_host.c gba/src/menu.c gba/src/renderer.c \
-    gba/src/gfx_data.c gba/src/starfield.c gba/src/save.c \
+    gba/src/gfx_data.c gba/src/starfield.c gba/src/save.c gba/src/boss_gfx.c \
     android/app/src/main/cpp/game.c android/app/src/main/cpp/story.c \
     android/app/src/main/cpp/story_data.c -o /tmp/ui_shots -lm
 
@@ -64,8 +69,9 @@ Round-trips the V11 save block through SRAM and checks progression rules
 (unlock frontier, half-pay replays, the dynamic payout — that idling pays only
 the level's floor while a fast, accurate, untouched clear pays several times
 more — the wreck-and-repair rules on death, the 14-page opening speech and its
-markup, deterministic shop stock, the "LET ME BE FREE" flag) plus Mr Chubbs'
-docking rules: that he only
+markup, deterministic shop stock, the "LET ME BE FREE" flag). It also asserts
+that at least half the campaign is puzzles and no named puzzle rule appears
+more than twice. Mr Chubbs' docking rules cover: that he only
 docks every fifth level, that leaving a dock spends it permanently, that a
 spent dock never reopens, and that the unsold shelf still carries over to the
 next one.

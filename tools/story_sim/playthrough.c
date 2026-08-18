@@ -10,9 +10,9 @@
 extern void platform_set_keys(u16 k);
 
 /* Simple dodge AI: slide away from the nearest incoming threat, keep firing.
- * On puzzle levels the trigger is disciplined instead of held: ammo-limited
- * salvos only fire when lined up under a rock, and signal hunts only fire
- * when lined up under the MARKED rock. */
+ * On puzzle levels the trigger is disciplined instead of held: exact-ammo and
+ * target puzzles line up with the live reticle, the drone code hunts fighters,
+ * and the seven deterministic dodge variants never press the trigger. */
 static u16 pilot_input(void) {
     u16 k = KEY_A;                 /* hold fire */
     int px = g_game.player.x >> 8;
@@ -24,23 +24,54 @@ static u16 pilot_input(void) {
     int puzzle_aim_x = -1;
     if (PL && PL->objective == OBJ_PUZZLE) {
         k = 0;                     /* trigger discipline */
-        if (PL->modifier != MOD_PZ_GAUNTLET) {
+        int no_fire = PL->modifier == MOD_PZ_GAUNTLET ||
+                      PL->modifier == MOD_PZ_RINGS ||
+                      PL->modifier == MOD_PZ_WALLS ||
+                      PL->modifier == MOD_PZ_SCISSOR ||
+                      PL->modifier == MOD_PZ_SPIRAL ||
+                      PL->modifier == MOD_PZ_ZIGZAG ||
+                      PL->modifier == MOD_PZ_PACIFIST;
+        if (!no_fire && PL->modifier == MOD_PZ_DRONECODE) {
             int td = 1<<30;
+            for (int i = 0; i < MAX_DRONES; i++) {
+                if (!g_game.drones[i].active) continue;
+                int ax = g_game.drones[i].x >> 8;
+                int ay = g_game.drones[i].y >> 8;
+                if (ay > py - 6) continue;
+                int d = abs(ax - px);
+                if (d < td) { td = d; puzzle_aim_x = ax; }
+            }
+        } else if (!no_fire) {
+            int td = 1<<30;
+            int mark = game_story_puzzle_mark();
+            int twin = game_story_puzzle_twin_mark();
+            bool targeted = PL->modifier == MOD_PZ_SIGNAL ||
+                            PL->modifier == MOD_PZ_ORDER ||
+                            PL->modifier == MOD_PZ_COLOR ||
+                            PL->modifier == MOD_PZ_ANCHOR ||
+                            PL->modifier == MOD_PZ_GHOST ||
+                            PL->modifier == MOD_PZ_CHAIN ||
+                            PL->modifier == MOD_PZ_LOCKSTEP ||
+                            PL->modifier == MOD_PZ_SWEEP ||
+                            PL->modifier == MOD_PZ_SPLIT ||
+                            PL->modifier == MOD_PZ_SIEVE ||
+                            PL->modifier == MOD_PZ_HEAVY ||
+                            PL->modifier == MOD_PZ_BOMB ||
+                            PL->modifier == MOD_PZ_TWIN;
             for (int i = 0; i < MAX_ASTEROIDS; i++) {
                 if (!g_game.asteroids[i].active) continue;
-                if (PL->modifier == MOD_PZ_SIGNAL &&
-                    i != game_story_puzzle_mark()) continue;
+                if (targeted && i != mark && i != twin) continue;
                 int ax = g_game.asteroids[i].x >> 8;
                 int ay = g_game.asteroids[i].y >> 8;
                 if (ay > py - 6) continue;      /* only shoot what's above */
                 int d = abs(ax - px);
                 if (d < td) { td = d; puzzle_aim_x = ax; }
             }
-            if (puzzle_aim_x >= 0) {
-                if (puzzle_aim_x > px + 3) k |= KEY_RIGHT;
-                else if (puzzle_aim_x < px - 3) k |= KEY_LEFT;
-                else k |= KEY_A;                 /* lined up: take the shot */
-            }
+        }
+        if (puzzle_aim_x >= 0) {
+            if (puzzle_aim_x > px + 3) k |= KEY_RIGHT;
+            else if (puzzle_aim_x < px - 3) k |= KEY_LEFT;
+            else k |= KEY_A;                 /* lined up: take the shot */
         }
     }
 

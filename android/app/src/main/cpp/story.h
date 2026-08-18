@@ -5,12 +5,20 @@
  * A 70-level campaign with 7 themed sectors, a unique boss every 10 levels,
  * a fly-the-ship level map, and Mr Chubbs' shop docked before each boss.
  *
+ * Thirty-five of the seventy levels are puzzles.  They deliberately use a
+ * large rotation of rules rather than three reskinned shooting galleries:
+ * target order, colour/type locks, ricochet shots, moving safe lanes, drone
+ * codes, paired targets, fragile cargo and several learnable dodge patterns
+ * are all represented below.  A puzzle variant appears once whenever
+ * possible, and never more than twice in the campaign.
+ *
  * The story owns its own currency (CHUBBCOIN) and its own life pool; the
  * arcade coin balance is untouched.  Everything persists in the V9 save.  */
 
 #include "types.h"
 
 #define STORY_LEVEL_COUNT   70
+#define STORY_PUZZLE_COUNT  35
 #define STORY_SECTOR_COUNT  7
 #define STORY_SECTOR_LEVELS 10
 #define STORY_START_LIVES   3
@@ -29,10 +37,10 @@ typedef enum {
     /* Clear the field against a countdown. The only objective with a real
      * fail state that is not "you died", so it plays quite differently. */
     OBJ_TIMED   = 5,
-    /* Puzzle levels: ten of them are scattered through the campaign as a
-     * change of pace.  The puzzle variant lives in the level's `modifier`
-     * (MOD_PZ_*) and `quota` carries the variant's number (ammo budget,
-     * signal count, or gauntlet seconds).  See story_update_objective(). */
+    /* Puzzle levels: thirty-five of them are distributed across the campaign.
+     * The puzzle variant lives in the level's `modifier` (MOD_PZ_*) and
+     * `quota` carries that variant's number: ammo, targets, or seconds.
+     * See story_update_objective() for the runtime rules. */
     OBJ_PUZZLE  = 6
 } StoryObjective;
 
@@ -50,11 +58,42 @@ typedef enum {
     MOD_TRICKLE  = 6,  /* the field arrives slowly, a few at a time       */
     MOD_STORM    = 7,  /* heavy continuous reinforcement                  */
     MOD_SNIPERS  = 8,  /* fewer hunters, but they fire much more often    */
-    /* ── Puzzle variants (only valid with OBJ_PUZZLE) ────────────────── */
-    MOD_PZ_SALVO    = 9,   /* LIMITED AMMO: clear the field on a shot budget */
-    MOD_PZ_SIGNAL   = 10,  /* SIGNAL HUNT: only the marked rock counts       */
-    MOD_PZ_GAUNTLET = 11,  /* GUNS OFFLINE: weave a scripted bullet maze     */
-    MOD_COUNT    = 12
+    /* ── Puzzle variants (only valid with OBJ_PUZZLE) ──────────────────
+     * The names are player-facing rules, not cosmetic difficulty labels.
+     * Most occur exactly once; four of the 31 rules return for a second,
+     * harder remix. */
+    MOD_PZ_SALVO      = 9,   /* LIMITED AMMO: clear the field on a budget */
+    MOD_PZ_SIGNAL     = 10,  /* SIGNAL HUNT: one marked rock at a time     */
+    MOD_PZ_GAUNTLET   = 11,  /* GUNS OFFLINE: learn a three-part maze      */
+    MOD_PZ_ORDER      = 12,  /* TARGET ORDER: hit the reticle sequence     */
+    MOD_PZ_COLOR      = 13,  /* COLOR CODE: only one rock type is live    */
+    MOD_PZ_RICOCHET   = 14,  /* RICOCHET RUN: shots bounce off the walls   */
+    MOD_PZ_COMBO      = 15,  /* CLEAN COMBO: build an unbroken streak      */
+    MOD_PZ_SPLIT      = 16,  /* BIG OR SMALL: crack only the big rocks    */
+    MOD_PZ_LANE       = 17,  /* SAFE LANE: fight while the gap slides     */
+    MOD_PZ_ORBIT      = 18,  /* ORBITAL LOCK: stay in the moving beacon   */
+    MOD_PZ_CHAIN      = 19,  /* CHAIN LINK: follow the next link          */
+    MOD_PZ_FRAGILE    = 20,  /* FRAGILE CARGO: nothing may reach the hold */
+    MOD_PZ_MIRROR     = 21,  /* MIRROR AIM: the shot path folds back      */
+    MOD_PZ_TWIN       = 22,  /* TWIN LOCK: clear two lit rocks together   */
+    MOD_PZ_DRONECODE  = 23,  /* DRONE CODE: decode fighters, not rocks    */
+    MOD_PZ_ANCHOR     = 24,  /* ANCHOR BREAK: lowest anchor first         */
+    MOD_PZ_GHOST      = 25,  /* GHOST SIGNAL: scan the fading mark        */
+    MOD_PZ_CLOCK      = 26,  /* CLOCKWORK: empty the field before time    */
+    MOD_PZ_SIEVE      = 27,  /* SIEVE: only the tiny debris is live       */
+    MOD_PZ_BOMB       = 28,  /* BOMB DEFUSAL: wrong rock costs a life   */
+    MOD_PZ_RINGS      = 29,  /* RING MAZE: dodge expanding rings          */
+    MOD_PZ_WALLS      = 30,  /* WALL WALK: find the moving gap             */
+    MOD_PZ_SCISSOR    = 31,  /* SCISSOR CROSS: thread the diagonals         */
+    MOD_PZ_SPIRAL     = 32,  /* SPIRAL STEP: read the rotating lane        */
+    MOD_PZ_ZIGZAG     = 33,  /* ZIGZAG RAIN: move with the open column      */
+    MOD_PZ_PACIFIST   = 34,  /* PACIFIST: no trigger, only movement         */
+    MOD_PZ_SWEEP      = 35,  /* SWEEP CODE: clear the marks left to right   */
+    MOD_PZ_HEAVY      = 36,  /* ARMOUR KEY: only heavy rocks count         */
+    MOD_PZ_LOCKSTEP   = 37,  /* LOCKSTEP: targets unlock in depth order     */
+    MOD_PZ_BEACON     = 38,  /* BEACON RUN: keep inside the moving signal  */
+    MOD_PZ_LASTSHOT   = 39,  /* LAST SHOT: exact ammo, no spare trigger     */
+    MOD_COUNT         = 40
 } StoryModifier;
 
 /* Short label for the HUD banner and the map card, e.g. "BOULDER FIELD". */
@@ -69,7 +108,7 @@ typedef struct {
     u8  objective;    /* StoryObjective */
     u8  rocks;        /* asteroids in the opening field */
     u8  drones;       /* hunters in the opening field */
-    u8  quota;        /* HUNT: kills. SURVIVE/TIMED: seconds. BIGGAME: bigs. */
+    u8  quota;        /* HUNT: kills; clocks: seconds; puzzles: targets/ammo */
     u8  speed_pct;    /* enemy speed scalar, 100 = baseline */
     u16 hp_pct;       /* enemy HP scalar, 100 = baseline */
     u16 reward;       /* chubbcoin paid for a first clear */
