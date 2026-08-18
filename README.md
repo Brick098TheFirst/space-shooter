@@ -122,34 +122,45 @@ before the rest of the game unlocks.
   kingdom. **35 of the 70 levels are puzzles**, with five puzzle nodes in
   every sector, so the campaign changes rhythm constantly rather than saving
   all its experiments for the finale.
-- **Thirty-one puzzle rules with no more than two appearances each** make the
-  puzzle half a real variety pack: *Limited Ammo*, *Signal Hunt*, *Guns
-  Offline*, *Target Order*, *Color Code*, *Ricochet Run*, *Clean Combo*, *Big
-  or Small*, *Safe Lane*, *Orbital Lock*, *Chain Link*, *Fragile Cargo*,
-  *Mirror Aim*, *Twin Lock*, *Drone Code*, *Anchor Break*, *Ghost Signal*,
-  *Clockwork*, *Sieve*, *Bomb Defusal*, *Ring Maze*, *Wall Walk*, *Scissor
-  Cross*, *Spiral Step*, *Zigzag Rain*, *Pacifist*, *Sweep Code*, *Armour
-  Key*, *Lockstep*, *Beacon Run*, and *Last Shot*.
-  - **Shot puzzles** change what counts: exact ammo budgets, reticle order,
-    one coded asteroid type, paired targets, drone-only targets, size locks,
-    and rows that must be swept in sequence. Wrong choices flash the scanner,
-    rewind the sequence, cost a life, or spend the limited shot budget rather
-    than silently awarding progress.
-  - **Movement puzzles** shut the guns down and run deterministic rings,
-    walls, diagonals, spirals, zigzags, and pacifist patterns. The big laser
-    is grounded on every puzzle, so no free screen wipes.
-  - **Field-rule puzzles** add bouncing/mirrored shots, moving safe beacons,
-    a fragile cargo hold, combo chains, and timed defusal. Their live rule is
-    named on the level card before launch and shown again in the HUD.
+- **Thirty-three puzzle rules, none of them used more than twice.** The puzzle
+  half of the campaign is a variety pack of *goals*, not one shooting gallery
+  wearing thirty-three names, and **fifteen of the rules never let you pull the
+  trigger at all**:
+  - **Fly-it rules (guns dead):** *Salvage Run* (scoop drifting fuel cells),
+    *Gate Run* (thread numbered gates in order), *Tug of War* (shove an
+    engineless cargo pod into its dock with your hull), *Scan Lock* (hold a
+    lens on a probe that runs from you), *Gravity Well* (a sky that drags your
+    ship into a burning core), *Polarity* (the trigger swaps your shield
+    colour — matching fire is eaten, the other colour hurts), *Silent Run*
+    (stay out of a sweeping scanner beam), plus the four learnable bullet
+    patterns *Guns Offline*, *Ring Maze*, *Spiral Step* and *Zigzag Rain*.
+  - **Think-it rules (shooting, but not "shoot everything"):** *Exact Load*
+    (hit a tonnage figure exactly — overshoot and the scale tips back to
+    zero), *Tide Lock* (alternate port and starboard), *Chain Blast* (one knot
+    per shot; the detonation does the rest), *Memory Run* (three seconds of
+    light, then the vault goes dark and you shoot from memory), *Fuse Run*
+    (every rock burns its own visible countdown), *Open Side* (a spinning
+    armour plate covers half of each rock — flank it), *Flawless* (one hit and
+    the board resets), *Crossed Wires* (the steering inverts on a telegraphed
+    cycle), *Escort* (keep a Chubb transport alive), *Fragile Cargo*,
+    *Clockwork*, *Clean Combo*, *Drone Code*, *Safe Lane*, *Ricochet Run*,
+    *Mirror Aim*, *Limited Ammo*, *Last Shot*, *Color Code* and *Sieve*.
+  - **The radar family is capped at two levels in seventy.** *Target Order*
+    (level 2) and *Ghost Signal* (level 52) are the only "the scanner lit a
+    rock, go break that rock" puzzles in the whole campaign.
+  - Every rule states itself in one line on the level card and keeps its own
+    scoreboard in the HUD (`CELLS 6/14`, `LOAD 12/18 T`, `GATE 4/12`,
+    `FUSE 3s`, `DOCKED 1/3`, `SCAN 7s/12s`, `RED 22s`...), so no level is a
+    guessing game. The big laser is grounded on every puzzle: no free wipes.
 - **Six objectives:** **clear the field**, **hunt the fighters**,
   **survive the timer**, **crack the big ones** (break N large rocks),
   **clear it on the clock**, and **puzzle levels**. Eight arcade field
   modifiers still provide extra variety outside the puzzle nodes.
 
-  The puzzle rotation is hand-authored so a player sees the same rule at most
-  twice, usually once, while difficulty and target quotas rise through the
-  sectors. The level banner, map card, scanner reticles, moving-lane beacon,
-  and HUD all explain the active twist before it becomes dangerous.
+  `tools/story_sim` flies all 70 levels headlessly with a scripted pilot that
+  plays each rule, proving every level terminates, and `save_tests` enforces
+  the variety contract itself: 35 puzzles, at least 30 distinct rules, no rule
+  twice over, at most two scanner levels, and seven differently named bosses.
 - **A different sky over every sector.** All seven sectors retain a distinct
   backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
   Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
@@ -158,34 +169,41 @@ before the rest of the game unlocks.
   style** (authored nose-up with the same hull lighting ramp, canopy glass and
   paint accents as the player ship templates, then flipped to fly nose-down),
   and each built around a **key mechanic** no other boss uses:
-  - **Alien** *(THE BITE)* — a forked-jaw alien that telegraphs, lunges and
-    snaps its jaws shut at your altitude. A missed bite leaves the jaws
-    **clamped and straining — double damage** until it recovers; the fight is
-    bait-the-bite, punish-the-clamp. Between bites it chews ragged, uneven
-    cones of scrap (real debris spray, not a neat fan).
-  - **Gemini** *(THE SPLIT)* — a twin-boom raider whose seam vents angled jets
-    out both sides; at 50% it **splits into two mirrored hulls sharing one
-    health pool**, the clone shadowing your column while the prime hunts you.
-  - **Frostbite** *(ENGINE ICING)* — an ice interceptor whose cold **freezes
+  - **Alien** *(NO GIMMICK — the tutorial)* — level 10 is just an alien. It
+    hovers, drifts, telegraphs every shot with a long wind-up and lobs slow
+    bolts and a wide five-shot fan you can walk between. No plates, no
+    windows, no puzzle: **shoot it until it dies.** It exists to teach the
+    grammar of a boss fight — health bar, telegraph, dodge, shoot — before the
+    other six start attaching rules to it, and it is the softest hull in the
+    campaign so it never becomes a wall.
+  - **Splinter** *(THE SPLIT)* — a twin-boom raider whose seam vents angled
+    jets out both sides; at 50% it **breaks into two mirrored hulls sharing
+    one health pool**, the shard shadowing your column while the core hunts
+    you.
+  - **Coldsnap** *(ENGINE ICING)* — an ice interceptor whose cold **freezes
     your engines while you sit still**: an icing meter climbs when parked and
     throttles your thrust to ~45%, shedding only while you move. Its web
     lattice and tracking lance are built to make you want to camp — the ice is
     why you can't.
-  - **Juggernaut** *(CRUSH)* — four armour plates that soak damage until
-    broken, a magnet that drags you up into its rings, thrown live asteroids,
-    and a floor-slam whose shock columns rise from below.
-  - **Inferno** *(THE BURN)* — two counter-rotating fire whips that **never
-    stop spinning** for the entire fight, plus aimed flare bolts and a
-    solar-wind curtain that always leaves one way through.
-  - **Aegis** *(THE SEAL)* — **completely invulnerable** behind four rotating
+  - **Sledge** *(THE PLATES)* — four armour plates that soak **everything**
+    until they are broken off (no hull bar at all until then), a magnet that
+    drags you up into its rings, thrown live asteroids, and a floor-slam whose
+    shock columns rise from below.
+  - **Wildfire** *(THE VENT)* — a rhythm fight with nothing to shoot off. It
+    runs hot behind armour that soaks three quarters of your damage, and every
+    attack stokes the gauge further; when the heat tops out it **has to vent**
+    — the whips stop, the plates gape and for three seconds it takes **double
+    damage**. Save your fire for the vents.
+  - **Bulwark** *(THE SEAL)* — **completely invulnerable** behind four rotating
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **Reality Queen** *(THE FOLD)* — the three-stage finale: only the
-    **glowing cube face** takes full damage, then **four pylons** must be
-    shot off (no hull bar), then a last-stand core that **folds you across
-    the screen**. Axis-aligned cube shot, not another ring barrage. Jack
-    RK gets his chance at revenge.
+  - **Reality Queen** *(THE FOLD)* — the finale, and the only boss that is
+    never where your shots are. Only her **glowing open face** takes real
+    damage; she turns it away on a clock, then starts **folding the arena**,
+    flipping your ship across the screen mid-dodge, until the last stage tears
+    the core open. Axis-aligned cube shot, not another ring barrage. Jack RK
+    gets his chance at revenge.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated

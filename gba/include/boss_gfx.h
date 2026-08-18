@@ -17,13 +17,13 @@
 typedef enum {
     BOSS_SPR_RAZORWING = 0,    /* arcade mini-boss (waves 5/15/25...) */
     BOSS_SPR_GOLIATH,          /* arcade battleship (waves 10/20/30...) */
-    BOSS_SPR_IRONMAW,          /* story L10 Alien art */
-    BOSS_SPR_GEMINI,           /* story L20 */
-    BOSS_SPR_FROSTBITE,        /* story L30 */
-    BOSS_SPR_JUGGERNAUT,       /* story L40 */
-    BOSS_SPR_INFERNO,          /* story L50 */
-    BOSS_SPR_AEGIS,            /* story L60 */
-    BOSS_SPR_EMPRESS           /* story L70 */
+    BOSS_SPR_ALIEN,            /* story L10 - Alien */
+    BOSS_SPR_SPLINTER,         /* story L20 - Splinter */
+    BOSS_SPR_COLDSNAP,         /* story L30 - Coldsnap */
+    BOSS_SPR_SLEDGE,           /* story L40 - Sledge */
+    BOSS_SPR_WILDFIRE,         /* story L50 - Wildfire */
+    BOSS_SPR_BULWARK,          /* story L60 - Bulwark */
+    BOSS_SPR_QUEEN             /* story L70 - Reality Queen */
 } BossSpriteId;
 
 extern const u8 spr_boss[NUM_BOSS_SPRITES][BOSS_SPR_W * BOSS_SPR_H];

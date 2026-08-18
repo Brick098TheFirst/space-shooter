@@ -101,9 +101,9 @@ GOLIATH = [
     "......33..33",
 ]
 
-# 2 - IRONMAW (story L10): forked mandible prow — two hull prongs with
+# 2 - ALIEN (story L10): forked mandible prow — two hull prongs with
 # accent teeth around a glowing maw, heavy shoulders, plated body.
-IRONMAW = [
+ALIEN = [
     "......1H....",
     "......HH....",
     ".....HHh3...",
@@ -126,10 +126,10 @@ IRONMAW = [
     "..........33",
 ]
 
-# 3 - GEMINI (story L20): a twin-boom raider — each half is a complete
+# 3 - SPLINTER (story L20): a twin-boom raider — each half is a complete
 # narrow hull with its own canopy and engine, joined by an accent spar.
 # When it splits at 50% the two halves read instantly.
-GEMINI = [
+SPLINTER = [
     ".....1......",
     ".....H......",
     "....HHH.....",
@@ -152,9 +152,9 @@ GEMINI = [
     "............",
 ]
 
-# 4 - FROSTBITE (story L30): an ice interceptor with four crystal leg
+# 4 - COLDSNAP (story L30): an ice interceptor with four crystal leg
 # fins — thin h/s diagonals off a slim Viper-style spine, accent tips.
-FROSTBITE = [
+COLDSNAP = [
     "...........1",
     "...........H",
     "1.........HH",
@@ -177,9 +177,9 @@ FROSTBITE = [
     "............",
 ]
 
-# 5 - JUGGERNAUT (story L40): the Aegis Titan pushed to a wall — full
+# 5 - SLEDGE (story L40): the Aegis Titan pushed to a wall — full
 # width armored slab, riveted skirt, twin pods, triple stern flare.
-JUGGERNAUT = [
+SLEDGE = [
     "........HHHH",
     ".......HHHHH",
     "......HHHHHH",
@@ -202,9 +202,9 @@ JUGGERNAUT = [
     ".....33..333",
 ]
 
-# 6 - INFERNO (story L50): the Manta Ray grown into a firestorm — huge
+# 6 - WILDFIRE (story L50): the Manta Ray grown into a firestorm — huge
 # curved wings with hot accent tips, twin tail fins, wingtip flares.
-INFERNO = [
+WILDFIRE = [
     "...........H",
     "..........HH",
     ".........HHH",
@@ -227,9 +227,9 @@ INFERNO = [
     "..........33",
 ]
 
-# 7 - AEGIS (story L60): a sealed hexagonal fortress — solid hull walls
+# 7 - BULWARK (story L60): a sealed hexagonal fortress — solid hull walls
 # stepping down to an accent ring around the dark vault core.
-AEGIS = [
+BULWARK = [
     ".......HHHHH",
     ".....HHHHHHH",
     "....HHHHHHHH",
@@ -254,7 +254,7 @@ AEGIS = [
 
 # 8 - THE CUBE QUEEN (story L70): a folding cube hull — square prow,
 # bevelled faces, a dark core and a crown of accent vertices.
-EMPRESS = [
+QUEEN = [
     "......HHHHHH",
     ".....HHHHHHH",
     "....HHHXXHHH",
@@ -280,13 +280,13 @@ EMPRESS = [
 BOSSES = [
     ("RAZORWING", RAZORWING),
     ("GOLIATH", GOLIATH),
-    ("IRONMAW", IRONMAW),
-    ("GEMINI", GEMINI),
-    ("FROSTBITE", FROSTBITE),
-    ("JUGGERNAUT", JUGGERNAUT),
-    ("INFERNO", INFERNO),
-    ("AEGIS", AEGIS),
-    ("EMPRESS", EMPRESS),
+    ("ALIEN", ALIEN),
+    ("SPLINTER", SPLINTER),
+    ("COLDSNAP", COLDSNAP),
+    ("SLEDGE", SLEDGE),
+    ("WILDFIRE", WILDFIRE),
+    ("BULWARK", BULWARK),
+    ("QUEEN", QUEEN),
 ]
 
 # Paint ramp (accent index 0..7) each boss wears by default; the same ramps
@@ -294,13 +294,13 @@ BOSSES = [
 DEFAULT_ACCENTS = {
     "RAZORWING": 1,    # ion cyan
     "GOLIATH": 4,      # pulsar gold
-    "IRONMAW": 0,      # solar orange
-    "GEMINI": 2,       # nova violet
-    "FROSTBITE": 1,    # ion cyan
-    "JUGGERNAUT": 4,   # pulsar gold
-    "INFERNO": 5,      # crimson void
-    "AEGIS": 3,        # plasma mint
-    "EMPRESS": 2,      # nova violet
+    "ALIEN": 0,      # solar orange
+    "SPLINTER": 2,       # nova violet
+    "COLDSNAP": 1,    # ion cyan
+    "SLEDGE": 4,   # pulsar gold
+    "WILDFIRE": 5,      # crimson void
+    "BULWARK": 3,        # plasma mint
+    "QUEEN": 2,      # nova violet
 }
 
 
@@ -389,13 +389,13 @@ def main():
 typedef enum {
     BOSS_SPR_RAZORWING = 0,    /* arcade mini-boss (waves 5/15/25...) */
     BOSS_SPR_GOLIATH,          /* arcade battleship (waves 10/20/30...) */
-    BOSS_SPR_IRONMAW,          /* story L10 */
-    BOSS_SPR_GEMINI,           /* story L20 */
-    BOSS_SPR_FROSTBITE,        /* story L30 */
-    BOSS_SPR_JUGGERNAUT,       /* story L40 */
-    BOSS_SPR_INFERNO,          /* story L50 */
-    BOSS_SPR_AEGIS,            /* story L60 */
-    BOSS_SPR_EMPRESS           /* story L70 */
+    BOSS_SPR_ALIEN,          /* story L10 */
+    BOSS_SPR_SPLINTER,           /* story L20 */
+    BOSS_SPR_COLDSNAP,        /* story L30 */
+    BOSS_SPR_SLEDGE,       /* story L40 */
+    BOSS_SPR_WILDFIRE,          /* story L50 */
+    BOSS_SPR_BULWARK,            /* story L60 */
+    BOSS_SPR_QUEEN           /* story L70 */
 } BossSpriteId;
 
 extern const u8 spr_boss[NUM_BOSS_SPRITES][BOSS_SPR_W * BOSS_SPR_H];

@@ -114,22 +114,42 @@ static int  s_story_lost = 0;           /* lives lost this level */
 static bool s_story_waiting_for_start = false;
 
 /* ── Puzzle level state (OBJ_PUZZLE) ─────────────────────────────────────
- * Story puzzles are rules, not just alternate rock counts. Thirty-five
- * campaign nodes use a rotation of target-order, type-lock, paired-target,
- * drone, shot-path, moving-lane, fragile-cargo and learnable dodge puzzles.
- * The state below is intentionally small and reset for every level. */
-static int  s_puzzle_ammo = 0;          /* shot-budget variants */
-static int  s_puzzle_mark = -1;         /* primary marked asteroid slot */
-static int  s_puzzle_twin_mark = -1;   /* second lit slot for TWIN LOCK */
-static int  s_puzzle_found = 0;         /* successful targets / combo breaks */
-static int  s_puzzle_wave_t = 0;        /* deterministic dodge/pattern clock */
+ * Story puzzles are RULES, and thirty-three of them are genuinely different
+ * goals: collect, gate-fly, push, scan, escort, weigh, alternate, chain,
+ * remember, defuse, flank, stay clean, fly crossed wires, ride a gravity
+ * well, swap polarity, hide from a scanner - plus a small, capped number of
+ * scanner-target, type-lock, ammo, shot-path and evasion rules.
+ * The state below is small on purpose and is reset for every level. */
+static int  s_puzzle_ammo = 0;          /* shot-budget rules */
+static int  s_puzzle_mark = -1;         /* lit asteroid slot (scanner rules) */
+static int  s_puzzle_twin_mark = -1;    /* second lit slot, when a rule has one */
+static int  s_puzzle_found = 0;         /* targets solved / combo breaks */
+static int  s_puzzle_wave_t = 0;        /* deterministic pattern clock */
 static int  s_puzzle_flash = 0;         /* HUD flash on a wrong choice */
-static int  s_puzzle_target_type = -1;  /* COLOR/SIEVE/size target */
+static int  s_puzzle_target_type = -1;  /* COLOR / SIEVE live type */
 static int  s_puzzle_safe_x = 120;      /* moving-lane beacon, screen pixels */
 static int  s_puzzle_order_cursor = 0;  /* deterministic target order */
 static int  s_puzzle_streak = 0;        /* CLEAN COMBO current chain */
 
-/* FROSTBITE (story L30) KEY MECHANIC - ENGINE ICING.  Hovering in place
+/* Generic goal state shared by the position-and-timing rules.  Every value
+ * is in screen pixels unless the name says otherwise, so the HUD, the draw
+ * pass and the headless pilot can all read them without conversion. */
+static int  s_pz_goal = 0;          /* progress: cells, gates, tonnes, laps  */
+static int  s_pz_ax = -1, s_pz_ay = -1;  /* the point the rule wants you at  */
+static int  s_pz_avx = 0, s_pz_avy = 0;  /* that point's drift, px * 256     */
+static int  s_pz_hold = 0;          /* SCAN LOCK: ticks of good lock so far  */
+static int  s_pz_side = 0;          /* TIDE LOCK side / POLARITY colour      */
+static int  s_pz_state = 0;         /* per-rule sub-state (sweeps, inverts)  */
+static int  s_pz_cargo_x = 0, s_pz_cargo_y = 0;      /* TUG OF WAR pod, 8.8  */
+static int  s_pz_cargo_vx = 0, s_pz_cargo_vy = 0;
+static int  s_pz_escort_x = 0;      /* ESCORT transport centre, screen px    */
+static int  s_pz_escort_dir = 1;
+static int  s_pz_reveal = 0;        /* MEMORY RUN: ticks the field is lit    */
+static int  s_pz_invert = 0;        /* CROSSED WIRES: steering inverted now  */
+static short s_pz_fuse[MAX_ASTEROIDS];   /* FUSE RUN: per-rock countdown     */
+static u8    s_pz_plate[MAX_ASTEROIDS];  /* OPEN SIDE: 0 = plate on the left */
+
+/* COLDSNAP (story L30) KEY MECHANIC - ENGINE ICING.  Hovering in place
  * lets frost build on the engines (0..256); ice throttles your thrust down
  * to ~45% until you shake it off by MOVING.  The whole fight is about
  * refusing to sit still, which is exactly what its web wants you to do. */
@@ -153,6 +173,22 @@ int  game_story_earned(void)  { return s_story_earned; }
  * Exposed for the HUD/harness; gameplay reads the static directly. */
 int  game_story_puzzle_mark(void) { return s_puzzle_mark; }
 int  game_story_puzzle_twin_mark(void) { return s_puzzle_twin_mark; }
+/* Generic puzzle telemetry: the progress counter, the point the current rule
+ * wants the ship at, the polarity colour and which half of a plated rock is
+ * open.  The HUD and the headless pilot both read these instead of poking at
+ * a dozen rule-specific statics. */
+int  game_story_puzzle_progress(void) { return s_pz_goal; }
+int  game_story_puzzle_anchor_x(void) { return s_pz_ax; }
+int  game_story_puzzle_anchor_y(void) { return s_pz_ay; }
+int  game_story_puzzle_polarity(void) { return s_pz_side; }
+int  game_story_puzzle_side(void)     { return s_pz_side; }
+int  game_story_puzzle_cargo_x(void)  { return s_pz_cargo_x >> 8; }
+int  game_story_puzzle_cargo_y(void)  { return s_pz_cargo_y >> 8; }
+/* -1 = the left half is open, +1 = the right half is open. */
+int  game_story_puzzle_open_side(int idx) {
+    if (idx < 0 || idx >= MAX_ASTEROIDS) return 0;
+    return s_pz_plate[idx] ? 1 : -1;
+}
 int  game_story_waiting_for_start(void) {
     return g_game.mode == GAME_MODE_STORY && s_story_waiting_for_start;
 }
@@ -181,51 +217,122 @@ static const StoryLevel* story_cur(void) {
     return &g_story_levels[i];
 }
 
-/* Puzzle families used by the runtime. Keeping these predicates in one place
- * makes it hard for a new puzzle to accidentally regain the arcade beam or
- * the normal multi-shot weapon. */
-static bool story_puzzle_dodge_mode(int mod) {
+/* ── Puzzle families ─────────────────────────────────────────────────────
+ * These predicates are the only place a rule is allowed to be grouped with
+ * another one, and every group is deliberately tiny.  Two scanner rules.
+ * Two type locks.  Three ammo budgets.  Two shot-path tricks.  Four pure
+ * evasion patterns.  Everything else stands on its own. */
+
+/* Rules whose whole level is "survive this pattern for `quota` seconds"
+ * with the trigger dead. */
+static bool story_puzzle_clock_dodge(int mod) {
     switch (mod) {
         case MOD_PZ_GAUNTLET:
         case MOD_PZ_RINGS:
-        case MOD_PZ_WALLS:
-        case MOD_PZ_SCISSOR:
         case MOD_PZ_SPIRAL:
         case MOD_PZ_ZIGZAG:
-        case MOD_PZ_PACIFIST:
+        case MOD_PZ_GRAVITY:
+        case MOD_PZ_POLARITY:
+        case MOD_PZ_STEALTH:
             return true;
         default:
             return false;
     }
 }
+/* Kept under the old name for the call sites that only care about "is this
+ * a movement-only level with a clock on it". */
+static bool story_puzzle_dodge_mode(int mod) { return story_puzzle_clock_dodge(mod); }
 
+/* No-trigger rules that end on a GOAL rather than a clock: salvage, gates,
+ * the cargo pod and the scan lock. */
+static bool story_puzzle_field_goal(int mod) {
+    return mod == MOD_PZ_COLLECT || mod == MOD_PZ_GATES ||
+           mod == MOD_PZ_HERD    || mod == MOD_PZ_SCAN;
+}
+
+/* Guns dead for the whole level (the header owns the canonical range). */
+static bool story_puzzle_no_guns(int mod) { return story_mod_is_no_guns(mod); }
+
+/* The capped "scanner lit a rock, break that rock" family: two rules only. */
 static bool story_puzzle_mark_mode(int mod) {
+    return mod == MOD_PZ_ORDER || mod == MOD_PZ_GHOST;
+}
+
+/* Only one kind of rock on the board is live. */
+static bool story_puzzle_type_mode(int mod) {
+    return mod == MOD_PZ_COLOR || mod == MOD_PZ_SIEVE;
+}
+
+/* Rules that lose the level when their clock runs out. */
+static bool story_puzzle_timer_mode(int mod) {
+    return mod == MOD_PZ_CLOCK;
+}
+
+/* Rules that hand you a fixed number of shots and nothing else. */
+static bool story_puzzle_uses_budget(int mod) {
+    return mod == MOD_PZ_SALVO || mod == MOD_PZ_LASTSHOT || mod == MOD_PZ_BLAST;
+}
+
+/* Rules whose goal is simply "the board is empty", however you get there. */
+static bool story_puzzle_clear_board(int mod) {
     switch (mod) {
-        case MOD_PZ_SIGNAL:
-        case MOD_PZ_ORDER:
-        case MOD_PZ_ANCHOR:
-        case MOD_PZ_GHOST:
-        case MOD_PZ_CHAIN:
-        case MOD_PZ_LOCKSTEP:
-        case MOD_PZ_SWEEP:
-        case MOD_PZ_BOMB:
+        case MOD_PZ_ESCORT:
+        case MOD_PZ_BLACKOUT:
+        case MOD_PZ_FUSE:
+        case MOD_PZ_PERFECT:
+        case MOD_PZ_REVERSE:
             return true;
         default:
             return false;
     }
 }
 
-static bool story_puzzle_type_mode(int mod) {
-    return mod == MOD_PZ_COLOR || mod == MOD_PZ_SPLIT ||
-           mod == MOD_PZ_SIEVE || mod == MOD_PZ_HEAVY;
+/* One line of plain English per rule, for the level card.  If a rule cannot
+ * be explained in one line it has no business being in the campaign. */
+static const char* story_puzzle_rule_line(int mod) {
+    switch (mod) {
+        case MOD_PZ_SALVO:     return "CLEAR IT ON A SHOT BUDGET";
+        case MOD_PZ_LASTSHOT:  return "EXACT SHOTS - WASTE NOTHING";
+        case MOD_PZ_ORDER:     return "BREAK THE MARKS IN ORDER";
+        case MOD_PZ_GHOST:     return "THE MARK KEEPS MOVING - BE QUICK";
+        case MOD_PZ_COLOR:     return "ONLY THE CODED TYPE IS LIVE";
+        case MOD_PZ_SIEVE:     return "ONLY THE TINY PIECES COUNT";
+        case MOD_PZ_RICOCHET:  return "YOUR SHOTS BOUNCE OFF THE WALLS";
+        case MOD_PZ_MIRROR:    return "THE SHOT PATH FOLDS BACK";
+        case MOD_PZ_COMBO:     return "BUILD THE CLEAN CHAIN";
+        case MOD_PZ_CLOCK:     return "EMPTY THE FIELD BEFORE THE CLOCK";
+        case MOD_PZ_FRAGILE:   return "NOTHING MAY REACH THE HOLD";
+        case MOD_PZ_DRONECODE: return "DECODE THE FIGHTERS";
+        case MOD_PZ_LANE:      return "SHOOT FROM INSIDE THE MOVING LANE";
+        case MOD_PZ_ESCORT:    return "KEEP THE TRANSPORT ALIVE";
+        case MOD_PZ_EXACT:     return "LOAD THE EXACT TONNAGE";
+        case MOD_PZ_ALTERNATE: return "ALTERNATE PORT AND STARBOARD";
+        case MOD_PZ_BLAST:     return "ONE BLAST SETS OFF THE NEXT";
+        case MOD_PZ_BLACKOUT:  return "THE LIGHTS GO OUT - REMEMBER IT";
+        case MOD_PZ_FUSE:      return "BEAT EVERY ROCK'S OWN FUSE";
+        case MOD_PZ_SHIELDARC: return "HIT THE UNPLATED HALF";
+        case MOD_PZ_PERFECT:   return "CLEAR IT WITHOUT TAKING A HIT";
+        case MOD_PZ_REVERSE:   return "THE STEERING WILL INVERT";
+        case MOD_PZ_GAUNTLET:  return "GUNS DEAD - LEARN THE MAZE";
+        case MOD_PZ_RINGS:     return "GUNS DEAD - READ THE RINGS";
+        case MOD_PZ_SPIRAL:    return "GUNS DEAD - WALK THE SPIRAL";
+        case MOD_PZ_ZIGZAG:    return "GUNS DEAD - RIDE THE OPEN COLUMN";
+        case MOD_PZ_COLLECT:   return "GUNS DEAD - SCOOP THE CELLS";
+        case MOD_PZ_GATES:     return "GUNS DEAD - FLY THE GATES IN ORDER";
+        case MOD_PZ_HERD:      return "GUNS DEAD - SHOVE THE POD HOME";
+        case MOD_PZ_SCAN:      return "GUNS DEAD - HOLD THE SCAN";
+        case MOD_PZ_GRAVITY:   return "GUNS DEAD - THE SKY PULLS BACK";
+        case MOD_PZ_POLARITY:  return "TRIGGER SWAPS YOUR SHIELD COLOUR";
+        case MOD_PZ_STEALTH:   return "GUNS DEAD - STAY OUT OF THE BEAM";
+        default:               return "SOLVE THE FIELD RULE";
+    }
 }
 
-static bool story_puzzle_timer_mode(int mod) {
-    return mod == MOD_PZ_CLOCK || mod == MOD_PZ_BOMB;
-}
-
-static bool story_puzzle_uses_budget(int mod) {
-    return mod == MOD_PZ_SALVO || mod == MOD_PZ_LASTSHOT;
+/* Rules that count solved targets up to the level's quota. */
+static bool story_puzzle_counts_targets(int mod) {
+    return story_puzzle_mark_mode(mod) || story_puzzle_type_mode(mod) ||
+           mod == MOD_PZ_COMBO || mod == MOD_PZ_ALTERNATE ||
+           mod == MOD_PZ_SHIELDARC;
 }
 
 GameMode game_get_mode(void) {
@@ -697,19 +804,31 @@ static void spawn_asteroid(AsteroidType type, int x, int y, int vx, int vy) {
 
 static bool story_puzzle_rock_is_target(int idx, AsteroidType t) {
     int mod = story_cur()->modifier;
-    if (mod == MOD_PZ_COLOR || mod == MOD_PZ_SPLIT ||
-        mod == MOD_PZ_SIEVE || mod == MOD_PZ_HEAVY)
-        return t == (AsteroidType)s_puzzle_target_type;
+    if (story_puzzle_type_mode(mod)) return t == (AsteroidType)s_puzzle_target_type;
     if (story_puzzle_mark_mode(mod)) return idx == s_puzzle_mark;
-    if (mod == MOD_PZ_TWIN)
-        return idx == s_puzzle_mark || idx == s_puzzle_twin_mark;
     return true;
+}
+
+/* EXACT LOAD reads the board as tonnage, not as rocks. */
+static int story_puzzle_rock_value(AsteroidType t) {
+    switch (t) {
+        case AST_LARGE: return 5;
+        case AST_MED_A:
+        case AST_MED_B: return 3;
+        case AST_SMALL: return 2;
+        default:        return 1;
+    }
 }
 
 static void story_puzzle_wrong_choice(void) {
     s_puzzle_flash = 45;
     platform_queue_haptic(HAPTIC_HIT);
 }
+
+/* CHAIN BLAST: a broken charge cooks off everything close to it, and those
+ * detonations chain outward.  Handled iteratively (never recursively) so a
+ * full-board chain can never blow the stack. */
+static void story_puzzle_chain_blast(int from_idx);
 
 static void destroy_asteroid(int idx, bool award) {
     Asteroid* a = &g_game.asteroids[idx];
@@ -722,44 +841,18 @@ static void destroy_asteroid(int idx, bool award) {
     trigger_explosion(ax, ay);
 
     /* Puzzle fields never split into extra debris: the board is a deliberate
-     * set of pieces.  Target puzzles score only the lit/coded piece; a wrong
-     * shot is visible feedback instead of an invisible random success. */
+     * set of pieces.  What a break MEANS is different for every rule, which
+     * is the whole point of the campaign's puzzle half. */
     if (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE) {
+        int mod = story_cur()->modifier;
+        s_pz_fuse[idx] = 0;
+        if (mod == MOD_PZ_BLAST) story_puzzle_chain_blast(idx);
         if (!award) return;
         story_on_kill_scored(1);
-        int mod = story_cur()->modifier;
         bool right = story_puzzle_rock_is_target(idx, t);
 
-        if (mod == MOD_PZ_SIGNAL) {
-            if (right) {
-                s_puzzle_found++;
-                s_puzzle_mark = -1;
-                award_score(300);
-                audio_play_sfx(SFX_PICKUP);
-            } else {
-                /* A wrong signal costs one locked result, but never makes a
-                 * spread weapon permanently unwinnable. */
-                if (s_puzzle_found > 0) s_puzzle_found--;
-                story_puzzle_wrong_choice();
-            }
-        } else if (mod == MOD_PZ_TWIN) {
-            if (right) {
-                /* A pair is a choice set: clear either lit member to advance
-                 * and immediately reveal a fresh pair. This keeps the lesson
-                 * tense without requiring a player to chase a target that
-                 * has already drifted off-screen. */
-                s_puzzle_found++;
-                s_puzzle_mark = -1;
-                s_puzzle_twin_mark = -1;
-                award_score(360);
-                audio_play_sfx(SFX_PICKUP);
-            } else {
-                story_puzzle_wrong_choice();
-            }
-        } else if (mod == MOD_PZ_ORDER || mod == MOD_PZ_CHAIN ||
-                   mod == MOD_PZ_ANCHOR || mod == MOD_PZ_GHOST ||
-                   mod == MOD_PZ_LOCKSTEP || mod == MOD_PZ_SWEEP ||
-                   mod == MOD_PZ_BOMB) {
+        if (story_puzzle_mark_mode(mod)) {
+            /* Two rules in the whole campaign work this way. */
             if (right) {
                 s_puzzle_found++;
                 s_puzzle_order_cursor++;
@@ -767,24 +860,11 @@ static void destroy_asteroid(int idx, bool award) {
                 award_score(320);
                 audio_play_sfx(SFX_PICKUP);
             } else {
-                if (mod == MOD_PZ_BOMB) {
-                    /* The live charge was the wrong rock: lose a life and
-                     * reset the scan rather than ending the whole campaign
-                     * on an unlearnable instant fail. */
-                    s_puzzle_found = 0;
-                    s_puzzle_mark = -1;
-                    story_puzzle_wrong_choice();
-                    damage_player();
-                } else {
-                    /* Sequence puzzles rewind, but leave the board intact
-                     * enough to learn instead of turning into a hard lock. */
-                    s_puzzle_found = 0;
-                    s_puzzle_order_cursor = 0;
-                    story_puzzle_wrong_choice();
-                }
+                s_puzzle_found = 0;
+                s_puzzle_order_cursor = 0;
+                story_puzzle_wrong_choice();
             }
-        } else if (mod == MOD_PZ_COLOR || mod == MOD_PZ_SPLIT ||
-                   mod == MOD_PZ_SIEVE || mod == MOD_PZ_HEAVY) {
+        } else if (story_puzzle_type_mode(mod)) {
             if (right) {
                 s_puzzle_found++;
                 s_puzzle_mark = -1;
@@ -793,14 +873,44 @@ static void destroy_asteroid(int idx, bool award) {
             } else {
                 story_puzzle_wrong_choice();
             }
+        } else if (mod == MOD_PZ_EXACT) {
+            /* The dock scale wants an exact figure: overshoot and the whole
+             * load is tipped back out and you start again. */
+            s_pz_goal += story_puzzle_rock_value(t);
+            if (s_pz_goal > story_cur()->quota) {
+                s_pz_goal = 0;
+                story_puzzle_wrong_choice();
+            } else {
+                award_score(160);
+                audio_play_sfx(SFX_PICKUP);
+            }
+        } else if (mod == MOD_PZ_ALTERNATE) {
+            /* Port, starboard, port, starboard.  Break two in a row on the
+             * same side of the lane and the lock drops back to zero. */
+            int want = s_pz_side;
+            int got  = (ax >= SCREEN_WIDTH / 2) ? 1 : 0;
+            if (got == want) {
+                s_puzzle_found++;
+                s_pz_side = !want;
+                award_score(260);
+                audio_play_sfx(SFX_PICKUP);
+            } else {
+                s_puzzle_found = 0;
+                s_pz_side = 0;
+                story_puzzle_wrong_choice();
+            }
+        } else if (mod == MOD_PZ_SHIELDARC) {
+            s_puzzle_found++;
+            award_score(280);
+            audio_play_sfx(SFX_PICKUP);
         } else if (mod == MOD_PZ_COMBO) {
             s_puzzle_streak++;
             s_puzzle_found = s_puzzle_streak;
             award_score(180 + s_puzzle_streak * 12);
         } else {
-            /* SALVO, LAST SHOT, RICOCHET, MIRROR and the moving-field
-             * puzzles are ordinary clear boards; the board geometry is the
-             * puzzle rather than target identity. */
+            /* Budget, shot-path, escort, memory, fuse, flawless and crossed
+             * wires boards are cleared by geometry and discipline, not by
+             * target identity: a break is a break. */
             award_score(120);
         }
         return;
@@ -864,6 +974,35 @@ static void destroy_asteroid(int idx, bool award) {
         }
         try_spawn_powerup(ax, ay, 4);
     }
+}
+
+/* CHAIN BLAST.  Everything within a charge's blast radius goes up too, and
+ * those blasts chain.  The work list is drained by the OUTERMOST call, so a
+ * board-wide chain is one flat loop rather than forty nested frames. */
+static void story_puzzle_chain_blast(int from_idx) {
+    static bool draining = false;
+    static int  queue[MAX_ASTEROIDS];
+    static int  qn = 0;
+
+    int cx = FROM_FIXED(g_game.asteroids[from_idx].x);
+    int cy = FROM_FIXED(g_game.asteroids[from_idx].y);
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        if (i == from_idx || !g_game.asteroids[i].active) continue;
+        int dx = FROM_FIXED(g_game.asteroids[i].x) - cx;
+        int dy = FROM_FIXED(g_game.asteroids[i].y) - cy;
+        int r  = 26 + g_game.asteroids[i].radius;
+        if (dx * dx + dy * dy <= r * r && qn < MAX_ASTEROIDS) queue[qn++] = i;
+    }
+    if (draining) return;              /* the outer call owns the drain */
+    draining = true;
+    while (qn > 0) {
+        int idx = queue[--qn];
+        if (!g_game.asteroids[idx].active) continue;
+        spawn_particle(g_game.asteroids[idx].x, g_game.asteroids[idx].y,
+                       (rand() & 127) - 64, -((rand() & 63) + 20), PAL_TEXT_GOLD, 10);
+        destroy_asteroid(idx, true);
+    }
+    draining = false;
 }
 
 static void destroy_drone(int idx, bool award) {
@@ -1329,6 +1468,153 @@ static bool story_spawn_hunter(void) {
 
 static void story_spawn_boss(int boss_id);
 
+/* ── Puzzle board setup ──────────────────────────────────────────────────
+ * One board recipe per rule.  A rule that wants nothing on screen gets an
+ * empty sky; a rule about tonnage gets a spread of sizes; a rule about
+ * memory gets slow, predictable drift so remembering it is actually fair. */
+static void story_puzzle_setup(const StoryLevel* L) {
+    int mod = L->modifier;
+
+    s_pz_goal = 0;
+    s_pz_hold = 0;
+    s_pz_side = 0;
+    s_pz_state = 0;
+    s_pz_reveal = 0;
+    s_pz_invert = 0;
+    s_pz_ax = s_pz_ay = -1;
+    s_pz_avx = s_pz_avy = 0;
+    s_pz_escort_x = SCREEN_WIDTH / 2;
+    s_pz_escort_dir = 1;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) { s_pz_fuse[i] = 0; s_pz_plate[i] = 0; }
+
+    /* Movement-only rules with a clock: nothing to shoot, everything to read. */
+    if (story_puzzle_clock_dodge(mod)) {
+        s_story_timer = L->quota * 90;
+        if (mod == MOD_PZ_GRAVITY) {           /* the well starts up and left */
+            s_pz_ax = SCREEN_WIDTH / 2;
+            s_pz_ay = 70;
+            s_pz_avx = 90;
+            s_pz_avy = 40;
+        }
+        if (mod == MOD_PZ_POLARITY) s_pz_side = 0;   /* start on red */
+        if (mod == MOD_PZ_STEALTH) { s_pz_ax = 24; s_pz_avx = 130; }
+        return;
+    }
+
+    if (mod == MOD_PZ_CLOCK) s_story_timer = L->quota * 90;
+
+    /* Goal-driven no-gun rules place their first anchor here. */
+    if (mod == MOD_PZ_GATES) {
+        s_pz_ax = 40 + (rand() % (SCREEN_WIDTH - 80));
+        s_pz_ay = 40 + (rand() % 70);
+    } else if (mod == MOD_PZ_SCAN) {
+        s_pz_ax = SCREEN_WIDTH / 2;
+        s_pz_ay = 60;
+        s_pz_avx = 150;
+        s_pz_avy = 70;
+    } else if (mod == MOD_PZ_HERD) {
+        s_pz_cargo_x = TO_FIXED(SCREEN_WIDTH / 2);
+        s_pz_cargo_y = TO_FIXED(SCREEN_HEIGHT - 52);
+        s_pz_cargo_vx = s_pz_cargo_vy = 0;
+        s_pz_ax = 42;                       /* the lit dock */
+        s_pz_ay = 34;
+    }
+
+    /* Every puzzle board is hand-laid: one-hit pieces in a readable spread,
+     * with the drift each rule needs to be learnable. */
+    for (int i = 0; i < L->rocks; i++) {
+        int x = 20 + ((i * 37 + rand() % 17) % (SCREEN_WIDTH - 40));
+        int y = 10 + ((i * 29 + rand() % 23) % 92);
+        int vx = ((rand() % 90) - 45);
+        int vy = (rand() % 34) + 18;
+        AsteroidType t;
+
+        if (mod == MOD_PZ_COLOR) {
+            /* Three visually distinct type codes, one live colour. */
+            t = (i % 3 == 0) ? AST_LARGE : ((i & 1) ? AST_MED_A : AST_MED_B);
+            if (i == 0) s_puzzle_target_type = (int)t;
+        } else if (mod == MOD_PZ_SIEVE) {
+            t = (i & 1) ? AST_TINY : AST_SMALL;
+            s_puzzle_target_type = AST_TINY;
+        } else if (mod == MOD_PZ_EXACT) {
+            /* A spread of tonnages, so the arithmetic has real choices. */
+            int r = i % 4;
+            t = (r == 0) ? AST_LARGE : (r == 1) ? AST_MED_A
+              : (r == 2) ? AST_SMALL : AST_TINY;
+        } else if (mod == MOD_PZ_COLLECT) {
+            t = (i & 1) ? AST_TINY : AST_SMALL;      /* drifting fuel cells */
+        } else {
+            t = (i % 4 == 0) ? AST_LARGE
+              : ((i & 1) ? AST_MED_A : AST_MED_B);
+        }
+
+        if (mod == MOD_PZ_RICOCHET || mod == MOD_PZ_MIRROR) {
+            vx = (i & 1) ? 70 : -70;
+            vy = 28 + (i % 4) * 12;
+        } else if (mod == MOD_PZ_LANE) {
+            vx = (i & 1) ? 34 : -34;
+            vy = 16 + (i % 3) * 8;
+        } else if (mod == MOD_PZ_BLACKOUT) {
+            /* Slow, straight and honest: the field you memorise is the field
+             * that is still there when the lights go out. */
+            vx = (i & 1) ? 12 : -12;
+            vy = 6 + (i % 3) * 3;
+        } else if (mod == MOD_PZ_BLAST) {
+            /* One knot per shot in the budget, spread far enough apart that
+             * a chain cannot jump between knots.  Which knot you break, and
+             * from where, is the whole puzzle. */
+            int knots = (L->quota > 2) ? (L->quota - 1) : 3;  /* one spare shot */
+            int cols  = (knots + 1) / 2;
+            if (cols < 1) cols = 1;
+            int span  = (cols > 1) ? (SCREEN_WIDTH - 68) / (cols - 1) : 0;
+            int knot  = i % knots;
+            int slot  = i / knots;
+            x = 34 + (knot % cols) * span + (((slot % 3) - 1) * 11);
+            y = 30 + (knot / cols) * 56 + ((slot / 3) * 11);
+            vx = 0;
+            vy = 5;
+        } else if (mod == MOD_PZ_COLLECT) {
+            vx = ((rand() % 40) - 20);
+            vy = 10 + (i % 4) * 5;
+        } else if (mod == MOD_PZ_PERFECT) {
+            vx = (i & 1) ? 16 : -16;         /* slow: the rule is the pressure */
+            vy = 10 + (i % 3) * 4;
+        } else if (mod == MOD_PZ_SHIELDARC) {
+            /* Big rocks only: the open half has to be a target a human can
+             * actually aim at, not a three-pixel sliver. */
+            t = AST_LARGE;
+            vx = 0;
+            vy = 7 + (i % 3) * 3;
+            y = 18 + ((i * 19) % 70);
+        } else if (mod == MOD_PZ_HERD || mod == MOD_PZ_SCAN) {
+            vx = (i & 1) ? 26 : -26;         /* hazards, not targets */
+            vy = 14 + (i % 3) * 6;
+        }
+        spawn_asteroid(t, TO_FIXED(x), TO_FIXED(y), vx, vy);
+    }
+    for (int i = 0; i < MAX_ASTEROIDS; i++)
+        if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
+
+    if (mod == MOD_PZ_FUSE) {
+        /* Staggered fuses: the board tells you the order it must be cleared
+         * in, and the HUD always names the one about to go. */
+        int n = 0;
+        for (int i = 0; i < MAX_ASTEROIDS; i++)
+            if (g_game.asteroids[i].active) s_pz_fuse[i] = (short)(540 + (n++) * 150);
+    }
+    if (mod == MOD_PZ_SHIELDARC) {
+        for (int i = 0; i < MAX_ASTEROIDS; i++)
+            s_pz_plate[i] = (u8)(rand() & 1);
+    }
+    if (mod == MOD_PZ_BLACKOUT) s_pz_reveal = 200;   /* a look, then darkness */
+
+    /* DRONE CODE is intentionally not a rock puzzle at all. */
+    if (mod == MOD_PZ_DRONECODE)
+        for (int i = 0; i < L->drones; i++) story_spawn_hunter();
+
+    if (story_puzzle_uses_budget(mod)) s_puzzle_ammo = L->quota;
+}
+
 static void story_begin_level(void) {
     const StoryLevel* L = story_cur();
     s_story_kills = 0;
@@ -1362,6 +1648,18 @@ static void story_begin_level(void) {
     s_puzzle_safe_x = SCREEN_WIDTH / 2;
     s_puzzle_order_cursor = 0;
     s_puzzle_streak = 0;
+    s_pz_goal = 0;
+    s_pz_hold = 0;
+    s_pz_side = 0;
+    s_pz_state = 0;
+    s_pz_reveal = 0;
+    s_pz_invert = 0;
+    s_pz_ax = s_pz_ay = -1;
+    s_pz_avx = s_pz_avy = 0;
+    s_pz_cargo_x = s_pz_cargo_y = s_pz_cargo_vx = s_pz_cargo_vy = 0;
+    s_pz_escort_x = SCREEN_WIDTH / 2;
+    s_pz_escort_dir = 1;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) { s_pz_fuse[i] = 0; s_pz_plate[i] = 0; }
     s_frost_ice = 0;
 
     if (L->objective == OBJ_BOSS) {
@@ -1377,74 +1675,7 @@ static void story_begin_level(void) {
         s_story_to_spawn = 0;
         s_story_queue_len = s_story_queue_pos = 0;
         s_story_pending_med = 0;
-
-        /* The no-trigger puzzles are pure movement mazes. Their bullet
-         * figures are generated deterministically in story_update_objective
-         * so the player can learn a route instead of gambling on RNG. */
-        if (story_puzzle_dodge_mode(L->modifier)) {
-            s_story_timer = L->quota * 90;
-            return;
-        }
-
-        if (L->modifier == MOD_PZ_CLOCK || L->modifier == MOD_PZ_BOMB)
-            s_story_timer = L->quota * 90;
-
-        /* Each puzzle gets a deliberately different board recipe. They all
-         * use one-hit pieces, but the piece types, drift and target rules are
-         * what make COLOR, SPLIT, SIEVE, RICOCHET and the mark puzzles feel
-         * unlike a normal CLEAR level. */
-        for (int i = 0; i < L->rocks; i++) {
-            int x = 20 + ((i * 37 + rand() % 17) % (SCREEN_WIDTH - 40));
-            int y = 10 + ((i * 29 + rand() % 23) % 92);
-            int vx = ((rand() % 90) - 45);
-            int vy = (rand() % 34) + 18;
-            AsteroidType t;
-
-            if (L->modifier == MOD_PZ_COLOR) {
-                /* Three visually distinct type codes, one live colour. */
-                t = (i % 3 == 0) ? AST_LARGE : ((i & 1) ? AST_MED_A : AST_MED_B);
-                if (i == 0) s_puzzle_target_type = (int)t;
-            } else if (L->modifier == MOD_PZ_SPLIT ||
-                       L->modifier == MOD_PZ_HEAVY) {
-                t = (i % 3 == 0) ? AST_LARGE : AST_MED_A;
-                s_puzzle_target_type = AST_LARGE;
-            } else if (L->modifier == MOD_PZ_SIEVE) {
-                t = (i & 1) ? AST_TINY : AST_SMALL;
-                s_puzzle_target_type = AST_TINY;
-            } else {
-                t = (i % 4 == 0) ? AST_LARGE
-                  : ((i & 1) ? AST_MED_A : AST_MED_B);
-            }
-
-            if (L->modifier == MOD_PZ_RICOCHET ||
-                L->modifier == MOD_PZ_MIRROR) {
-                vx = (i & 1) ? 70 : -70;
-                vy = 28 + (i % 4) * 12;
-            } else if (L->modifier == MOD_PZ_LANE ||
-                       L->modifier == MOD_PZ_ORBIT ||
-                       L->modifier == MOD_PZ_BEACON) {
-                vx = (i & 1) ? 34 : -34;
-                vy = 16 + (i % 3) * 8;
-            } else if (L->modifier == MOD_PZ_ANCHOR ||
-                       L->modifier == MOD_PZ_LOCKSTEP ||
-                       L->modifier == MOD_PZ_SWEEP) {
-                /* Nearly fixed rows make the order visible and learnable. */
-                vx = 0;
-                vy = 8 + (i % 3) * 4;
-                y = 18 + ((i * 17) % 72);
-            }
-            spawn_asteroid(t, TO_FIXED(x), TO_FIXED(y), vx, vy);
-        }
-        for (int i = 0; i < MAX_ASTEROIDS; i++)
-            if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
-
-        /* DRONE CODE is intentionally not a rock puzzle at all. */
-        if (L->modifier == MOD_PZ_DRONECODE) {
-            for (int i = 0; i < L->drones; i++) story_spawn_hunter();
-        }
-        if (L->modifier == MOD_PZ_SALVO ||
-            L->modifier == MOD_PZ_LASTSHOT)
-            s_puzzle_ammo = L->quota;
+        story_puzzle_setup(L);
         return;
     }
 
@@ -1513,8 +1744,8 @@ static int story_par_seconds(const StoryLevel* L) {
         case OBJ_BIGGAME: return 25 + L->quota * 8;
         case OBJ_PUZZLE:
             if (story_puzzle_dodge_mode(L->modifier) ||
-                L->modifier == MOD_PZ_CLOCK ||
-                L->modifier == MOD_PZ_BOMB)
+                story_puzzle_field_goal(L->modifier) ||
+                L->modifier == MOD_PZ_CLOCK)
                 return 0;
             return 20 + L->rocks * 3;
         default:          return 30 + L->rocks * 3 + L->drones * 5;
@@ -1529,13 +1760,9 @@ static int story_par_kills(const StoryLevel* L) {
         case OBJ_BIGGAME: return L->quota * 3;
         case OBJ_PUZZLE:
             if (story_puzzle_dodge_mode(L->modifier)) return 0;
+            if (story_puzzle_field_goal(L->modifier)) return 0;
             if (L->modifier == MOD_PZ_DRONECODE) return L->quota;
-            if (L->modifier == MOD_PZ_BOMB) return L->rocks;
-            if (story_puzzle_mark_mode(L->modifier) ||
-                story_puzzle_type_mode(L->modifier) ||
-                L->modifier == MOD_PZ_TWIN ||
-                L->modifier == MOD_PZ_COMBO)
-                return L->quota;
+            if (story_puzzle_counts_targets(L->modifier)) return L->quota;
             return L->rocks;
         default:          return L->rocks * 2 + L->drones;
     }
@@ -1566,17 +1793,22 @@ static void story_finish(int outcome) {
     }
 }
 
-/* Spawn one replacement target when a puzzle has been solved too eagerly or
- * a wrong choice destroyed the only piece of a required type. */
-static void story_puzzle_spawn_piece(AsteroidType type) {
+/* Spawn one replacement piece when a rule still needs a legal target and the
+ * board has run dry.  Puzzles must never become unwinnable. */
+static void story_puzzle_spawn_piece_at(AsteroidType type, int x) {
     if (count_active_asteroids() >= MAX_ASTEROIDS - 2) return;
-    int x = 18 + rand() % (SCREEN_WIDTH - 36);
+    if (x < 18) x = 18;
+    if (x > SCREEN_WIDTH - 18) x = SCREEN_WIDTH - 18;
     int y = -TO_FIXED(8 + rand() % 24);
     int vx = ((rand() % 80) - 40);
     int vy = 20 + rand() % 28;
     spawn_asteroid(type, TO_FIXED(x), y, vx, vy);
     for (int i = 0; i < MAX_ASTEROIDS; i++)
         if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
+}
+
+static void story_puzzle_spawn_piece(AsteroidType type) {
+    story_puzzle_spawn_piece_at(type, 18 + rand() % (SCREEN_WIDTH - 36));
 }
 
 static bool story_puzzle_slot_matches(int idx, const StoryLevel* L) {
@@ -1586,72 +1818,28 @@ static bool story_puzzle_slot_matches(int idx, const StoryLevel* L) {
     return g_game.asteroids[idx].type == (AsteroidType)s_puzzle_target_type;
 }
 
-/* Select the next mark using a different ordering for each mark puzzle. */
+/* The two scanner rules in the whole campaign.  TARGET ORDER walks a fixed
+ * sequence; GHOST SIGNAL keeps jumping to a new rock before you can settle. */
 static void story_puzzle_pick_mark(const StoryLevel* L) {
     if (story_puzzle_slot_matches(s_puzzle_mark, L)) return;
     int live[MAX_ASTEROIDS];
     int n = 0;
-    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+    for (int i = 0; i < MAX_ASTEROIDS; i++)
         if (story_puzzle_slot_matches(i, L)) live[n++] = i;
-    }
     if (n == 0) {
         if (story_puzzle_type_mode(L->modifier))
             story_puzzle_spawn_piece((AsteroidType)s_puzzle_target_type);
-        else if (story_puzzle_mark_mode(L->modifier) &&
-                 L->modifier != MOD_PZ_BOMB)
+        else
             story_puzzle_spawn_piece((rand() & 1) ? AST_MED_A : AST_MED_B);
         return;
     }
-
-    int pick = 0;
-    if (L->modifier == MOD_PZ_ANCHOR ||
-        L->modifier == MOD_PZ_LOCKSTEP) {
-        int best_y = 1 << 30;
-        for (int i = 0; i < n; i++) {
-            int y = g_game.asteroids[live[i]].y;
-            if (y < best_y) { best_y = y; pick = i; }
-        }
-    } else if (L->modifier == MOD_PZ_SWEEP) {
-        int best_x = 1 << 30;
-        for (int i = 0; i < n; i++) {
-            int x = g_game.asteroids[live[i]].x;
-            if (x < best_x) { best_x = x; pick = i; }
-        }
-    } else if (L->modifier == MOD_PZ_ORDER ||
-               L->modifier == MOD_PZ_CHAIN) {
-        pick = s_puzzle_order_cursor % n;
-    } else {
-        pick = rand() % n;
-    }
+    int pick = (L->modifier == MOD_PZ_ORDER) ? (s_puzzle_order_cursor % n)
+                                             : (rand() % n);
     s_puzzle_mark = live[pick];
 }
 
-static void story_puzzle_pick_twin(const StoryLevel* L) {
-    (void)L;
-    int live[MAX_ASTEROIDS], n = 0;
-    for (int i = 0; i < MAX_ASTEROIDS; i++)
-        if (g_game.asteroids[i].active) live[n++] = i;
-    if (n < 2) {
-        story_puzzle_spawn_piece((rand() & 1) ? AST_MED_A : AST_MED_B);
-        n = 0;
-        for (int i = 0; i < MAX_ASTEROIDS; i++)
-            if (g_game.asteroids[i].active) live[n++] = i;
-    }
-    if (s_puzzle_mark < 0 || !g_game.asteroids[s_puzzle_mark].active)
-        s_puzzle_mark = n ? live[rand() % n] : -1;
-    if (s_puzzle_twin_mark < 0 || !g_game.asteroids[s_puzzle_twin_mark].active ||
-        s_puzzle_twin_mark == s_puzzle_mark) {
-        s_puzzle_twin_mark = -1;
-        for (int i = 0; i < n; i++) {
-            if (live[i] != s_puzzle_mark) {
-                s_puzzle_twin_mark = live[i];
-                break;
-            }
-        }
-    }
-}
-
-/* Seven no-trigger puzzles share a timer but not a pattern. */
+/* ── The four no-trigger bullet patterns, plus the three movement rules that
+ * also run on a clock: gravity, polarity and the scanner sweep. ────────── */
 static void story_update_dodge_puzzle(const StoryLevel* L) {
     if (s_story_timer > 0) s_story_timer--;
     if (s_story_timer <= 0) {
@@ -1662,10 +1850,12 @@ static void story_update_dodge_puzzle(const StoryLevel* L) {
         return;
     }
 
-    s_puzzle_wave_t++;
     int t = s_puzzle_wave_t;
     int hard = s_story_level / 20;
     int mod = L->modifier;
+    int px = FROM_FIXED(g_game.player.x);
+    int py = FROM_FIXED(g_game.player.y);
+
     if (mod == MOD_PZ_GAUNTLET) {
         int phase = (t / 360) % 3;
         if (phase == 0 && (t % (90 - hard * 12)) == 0) {
@@ -1706,28 +1896,6 @@ static void story_update_dodge_puzzle(const StoryLevel* L) {
                                 (lu_sin(ang) * sp) >> 12, false);
             }
         }
-    } else if (mod == MOD_PZ_WALLS) {
-        int period = 34 - hard * 3;
-        if (period < 18) period = 18;
-        if ((t % period) == 0) {
-            int gap = SCREEN_WIDTH / 2 +
-                      ((lu_sin(t * 110) * (SCREEN_WIDTH / 3)) >> 12);
-            for (int x = 10; x < SCREEN_WIDTH - 8; x += 18) {
-                if (x > gap - 24 && x < gap + 24) continue;
-                add_boss_bullet(TO_FIXED(x), -TO_FIXED(5), 0,
-                                TO_FIXED(2) + hard * 30, false);
-            }
-        }
-    } else if (mod == MOD_PZ_SCISSOR) {
-        int period = 22 - hard * 2;
-        if (period < 11) period = 11;
-        if ((t % period) == 0) {
-            int y = 12 + ((t / period) * 13) % 48;
-            int sp = TO_FIXED(1) + 100 + hard * 25;
-            add_boss_bullet(TO_FIXED(2), TO_FIXED(y), sp, TO_FIXED(1) + 50, false);
-            add_boss_bullet(TO_FIXED(SCREEN_WIDTH - 2), TO_FIXED(y + 18), -sp,
-                            TO_FIXED(1) + 50, false);
-        }
     } else if (mod == MOD_PZ_SPIRAL) {
         int period = 18 - hard * 2;
         if (period < 9) period = 9;
@@ -1752,30 +1920,421 @@ static void story_update_dodge_puzzle(const StoryLevel* L) {
                                 TO_FIXED(2) + 45 + hard * 20, false);
             }
         }
-    } else { /* PACIFIST: sparse triplets, no trigger allowed. */
-        int period = 42 - hard * 3;
-        if (period < 20) period = 20;
+    } else if (mod == MOD_PZ_GRAVITY) {
+        /* GRAVITY WELL.  The sky itself is the enemy: a drifting well drags
+         * the ship in, and the core burns anything it swallows.  Flying is
+         * the whole puzzle - there is nothing here to shoot. */
+        s_pz_ax += s_pz_avx / 90;
+        s_pz_ay += s_pz_avy / 90;
+        if (s_pz_ax < 34)                 { s_pz_ax = 34;                 s_pz_avx = -s_pz_avx; }
+        if (s_pz_ax > SCREEN_WIDTH - 34)  { s_pz_ax = SCREEN_WIDTH - 34;  s_pz_avx = -s_pz_avx; }
+        if (s_pz_ay < 34)                 { s_pz_ay = 34;                 s_pz_avy = -s_pz_avy; }
+        if (s_pz_ay > SCREEN_HEIGHT - 40) { s_pz_ay = SCREEN_HEIGHT - 40; s_pz_avy = -s_pz_avy; }
+
+        int dx = s_pz_ax - px, dy = s_pz_ay - py;
+        int dist = abs(dx) + abs(dy);
+        if (dist < 8) dist = 8;
+        int pull = 3200 / dist;                 /* stronger the closer you get */
+        if (pull > 46) pull = 46;
+        g_game.player.x += (dx * pull) / 12;
+        g_game.player.y += (dy * pull) / 12;
+        if (dx * dx + dy * dy < 20 * 20) {
+            story_puzzle_wrong_choice();
+            damage_player();
+            g_game.player.x -= TO_FIXED(dx / 2);
+            g_game.player.y -= TO_FIXED(dy / 2);
+        }
+        if ((t % (34 - hard * 3)) == 0) {       /* debris falling into the well */
+            int sx = 10 + rand() % (SCREEN_WIDTH - 20);
+            add_boss_bullet(TO_FIXED(sx), -TO_FIXED(4), 0, TO_FIXED(1) + 60, false);
+        }
+    } else if (mod == MOD_PZ_POLARITY) {
+        /* POLARITY.  Two colours of incoming fire and one trigger, which no
+         * longer shoots: it swaps the colour of your shield.  Matching fire
+         * is eaten; the other colour still hurts. */
+        int period = 20 - hard;
+        if (period < 10) period = 10;
         if ((t % period) == 0) {
-            int lane = 18 + ((t * 17) % (SCREEN_WIDTH - 36));
-            for (int k = -1; k <= 1; k++)
-                add_boss_bullet(TO_FIXED(lane + k * 12), -TO_FIXED(5),
-                                k * 24, TO_FIXED(2) + 70 + hard * 20, k == 0);
+            int colour = ((t / (period * 4)) & 1);
+            int lane = 14 + ((t * 37) % (SCREEN_WIDTH - 28));
+            add_boss_bullet(TO_FIXED(lane), -TO_FIXED(4), 0,
+                            TO_FIXED(1) + 80 + hard * 20, colour);
+        }
+        if ((t % 150) == 0) {                    /* an honest mixed volley */
+            for (int k = 0; k < 5; k++)
+                add_boss_bullet(TO_FIXED(22 + k * 42), -TO_FIXED(4), 0,
+                                TO_FIXED(1) + 70, (k & 1));
+        }
+    } else if (mod == MOD_PZ_STEALTH) {
+        /* SILENT RUN.  A scanner beam walks the corridor and pings.  Be in
+         * the light when it does and the guns find you. */
+        s_pz_ax += s_pz_avx / 90;
+        if (s_pz_ax < 18)                { s_pz_ax = 18;                s_pz_avx = -s_pz_avx; }
+        if (s_pz_ax > SCREEN_WIDTH - 18) { s_pz_ax = SCREEN_WIDTH - 18; s_pz_avx = -s_pz_avx; }
+        s_pz_state = ((t % 78) > 62);            /* the beam is about to ping */
+        if ((t % 78) == 0) {
+            if (abs(px - s_pz_ax) < 22) {
+                story_puzzle_wrong_choice();
+                g_game.shake_timer = 10;
+                for (int k = -1; k <= 1; k++)
+                    add_boss_bullet(TO_FIXED(s_pz_ax), TO_FIXED(16),
+                                    k * 90, TO_FIXED(2) + 60, false);
+            }
         }
     }
 }
 
-static void story_puzzle_update_safe_zone(const StoryLevel* L) {
-    int mod = L->modifier;
-    if (mod != MOD_PZ_LANE && mod != MOD_PZ_ORBIT && mod != MOD_PZ_BEACON)
-        return;
+/* SAFE LANE: the only rule that asks you to shoot from inside a moving box. */
+static void story_puzzle_update_lane(const StoryLevel* L) {
+    if (L->modifier != MOD_PZ_LANE) return;
     int t = s_puzzle_wave_t;
     int span = SCREEN_WIDTH / 2 - 20;
-    int speed = (mod == MOD_PZ_ORBIT) ? 230 : (mod == MOD_PZ_BEACON ? 150 : 95);
-    s_puzzle_safe_x = SCREEN_WIDTH / 2 + ((lu_sin(t * speed) * span) >> 12);
-    int margin = (mod == MOD_PZ_ORBIT) ? 16 : 24;
-    if ((t % 120) == 0 && abs(FROM_FIXED(g_game.player.x) - s_puzzle_safe_x) > margin) {
+    s_puzzle_safe_x = SCREEN_WIDTH / 2 + ((lu_sin(t * 95) * span) >> 12);
+    if ((t % 120) == 0 && abs(FROM_FIXED(g_game.player.x) - s_puzzle_safe_x) > 24) {
         story_puzzle_wrong_choice();
         if (t > 240) damage_player();
+    }
+}
+
+/* ── The goal-driven no-trigger rules ─────────────────────────────────── */
+
+/* SALVAGE RUN: guns cold, hold empty.  Fly through the cells. */
+static void story_puzzle_update_collect(const StoryLevel* L) {
+    if (s_pz_goal >= L->quota) {
+        s_story_end_delay = 45;
+        story_finish(1);
+        return;
+    }
+    if (count_active_asteroids() < 6 && (s_puzzle_wave_t % 30) == 0)
+        story_puzzle_spawn_piece((rand() & 1) ? AST_TINY : AST_SMALL);
+}
+
+/* GATE RUN: the gate is the goal, and it moves on to the next one the moment
+ * you fly through it. */
+static void story_puzzle_update_gates(const StoryLevel* L) {
+    int px = FROM_FIXED(g_game.player.x);
+    int py = FROM_FIXED(g_game.player.y);
+    if (s_story_level > 40) {                 /* the late remix drifts */
+        s_pz_ax += ((s_puzzle_wave_t & 63) < 32) ? 1 : -1;
+        if (s_pz_ax < 26) s_pz_ax = 26;
+        if (s_pz_ax > SCREEN_WIDTH - 26) s_pz_ax = SCREEN_WIDTH - 26;
+    }
+    int dx = px - s_pz_ax, dy = py - s_pz_ay;
+    if (dx * dx + dy * dy < 17 * 17) {
+        s_pz_goal++;
+        award_score(240);
+        audio_play_sfx(SFX_PICKUP);
+        platform_queue_haptic(HAPTIC_KILL);
+        if (s_pz_goal >= L->quota) {
+            s_story_end_delay = 45;
+            story_finish(1);
+            return;
+        }
+        /* Walk the gates around the field instead of teleporting randomly,
+         * so the run reads as a route and can be flown well. */
+        s_pz_ax = 30 + ((s_pz_goal * 61 + 17) % (SCREEN_WIDTH - 60));
+        s_pz_ay = 34 + ((s_pz_goal * 43) % 78);
+    }
+    if ((s_puzzle_wave_t % 46) == 0) {        /* a little weather in the way */
+        int sx = 10 + rand() % (SCREEN_WIDTH - 20);
+        add_boss_bullet(TO_FIXED(sx), -TO_FIXED(4), 0, TO_FIXED(1) + 40, false);
+    }
+}
+
+/* TUG OF WAR: an engineless cargo pod, your hull, and a lit dock. */
+static void story_puzzle_update_herd(const StoryLevel* L) {
+    s_pz_cargo_x += s_pz_cargo_vx;
+    s_pz_cargo_y += s_pz_cargo_vy;
+    s_pz_cargo_vx = (s_pz_cargo_vx * 236) / 256;      /* it is heavy cargo */
+    s_pz_cargo_vy = (s_pz_cargo_vy * 236) / 256;
+    if (s_pz_cargo_x < TO_FIXED(16)) { s_pz_cargo_x = TO_FIXED(16); s_pz_cargo_vx = -s_pz_cargo_vx / 2; }
+    if (s_pz_cargo_x > TO_FIXED(SCREEN_WIDTH - 16)) { s_pz_cargo_x = TO_FIXED(SCREEN_WIDTH - 16); s_pz_cargo_vx = -s_pz_cargo_vx / 2; }
+    if (s_pz_cargo_y < TO_FIXED(26)) { s_pz_cargo_y = TO_FIXED(26); s_pz_cargo_vy = -s_pz_cargo_vy / 2; }
+    if (s_pz_cargo_y > TO_FIXED(SCREEN_HEIGHT - 14)) { s_pz_cargo_y = TO_FIXED(SCREEN_HEIGHT - 14); s_pz_cargo_vy = -s_pz_cargo_vy / 2; }
+
+    int cx = FROM_FIXED(s_pz_cargo_x), cy = FROM_FIXED(s_pz_cargo_y);
+    int px = FROM_FIXED(g_game.player.x), py = FROM_FIXED(g_game.player.y);
+    int dx = cx - px, dy = cy - py;
+    if (dx * dx + dy * dy < 17 * 17) {
+        /* Nudging it is safe - it is cargo, not a rock.  Push comes off the
+         * line between the two hulls, so you steer it by choosing a side. */
+        int mag = abs(dx) + abs(dy);
+        if (mag < 1) mag = 1;
+        s_pz_cargo_vx += (dx * 120) / mag;
+        s_pz_cargo_vy += (dy * 120) / mag;
+        if (s_pz_cargo_vx >  TO_FIXED(3)) s_pz_cargo_vx =  TO_FIXED(3);
+        if (s_pz_cargo_vx < -TO_FIXED(3)) s_pz_cargo_vx = -TO_FIXED(3);
+        if (s_pz_cargo_vy >  TO_FIXED(3)) s_pz_cargo_vy =  TO_FIXED(3);
+        if (s_pz_cargo_vy < -TO_FIXED(3)) s_pz_cargo_vy = -TO_FIXED(3);
+    }
+    int ddx = cx - s_pz_ax, ddy = cy - s_pz_ay;
+    if (ddx * ddx + ddy * ddy < 19 * 19) {
+        s_pz_goal++;
+        award_score(500);
+        audio_play_sfx(SFX_PICKUP);
+        trigger_explosion(s_pz_ax, s_pz_ay);
+        if (s_pz_goal >= L->quota) {
+            s_story_end_delay = 45;
+            story_finish(1);
+            return;
+        }
+        s_pz_cargo_x = TO_FIXED(SCREEN_WIDTH / 2);
+        s_pz_cargo_y = TO_FIXED(SCREEN_HEIGHT - 52);
+        s_pz_cargo_vx = s_pz_cargo_vy = 0;
+        s_pz_ax = (s_pz_goal & 1) ? SCREEN_WIDTH - 42 : 42;   /* dock switches side */
+        s_pz_ay = 34;
+    }
+}
+
+/* SCAN LOCK: hold the lens on a probe that actively runs from you. */
+static void story_puzzle_update_scan(const StoryLevel* L) {
+    int px = FROM_FIXED(g_game.player.x), py = FROM_FIXED(g_game.player.y);
+    int dx = s_pz_ax - px, dy = s_pz_ay - py;
+    int d2 = dx * dx + dy * dy;
+
+    if (d2 < 46 * 46) {                        /* it edges away when crowded */
+        s_pz_avx += (dx > 0) ? 8 : -8;
+        s_pz_avy += (dy > 0) ? 7 : -7;
+    } else {                                    /* and settles when left alone */
+        s_pz_avx = (s_pz_avx * 250) / 256;
+        s_pz_avy = (s_pz_avy * 250) / 256;
+    }
+    /* Capped just under a stock engine, so a steady pilot CAN sit on it. */
+    if (s_pz_avx >  62) s_pz_avx =  62;
+    if (s_pz_avx < -62) s_pz_avx = -62;
+    if (s_pz_avy >  54) s_pz_avy =  54;
+    if (s_pz_avy < -54) s_pz_avy = -54;
+    s_pz_ax += s_pz_avx / 60;
+    s_pz_ay += s_pz_avy / 60;
+    if (s_pz_ax < 20)                { s_pz_ax = 20;                s_pz_avx = -s_pz_avx; }
+    if (s_pz_ax > SCREEN_WIDTH - 20) { s_pz_ax = SCREEN_WIDTH - 20; s_pz_avx = -s_pz_avx; }
+    if (s_pz_ay < 28)                { s_pz_ay = 28;                s_pz_avy = -s_pz_avy; }
+    if (s_pz_ay > SCREEN_HEIGHT - 26){ s_pz_ay = SCREEN_HEIGHT - 26; s_pz_avy = -s_pz_avy; }
+
+    if (d2 < 27 * 27) {
+        s_pz_hold++;
+        if ((s_pz_hold % 30) == 0) award_score(90);
+    } else if (s_pz_hold > 0 && (s_puzzle_wave_t & 1) == 0) {
+        s_pz_hold--;                            /* the lock bleeds off slowly */
+    }
+    s_pz_goal = s_pz_hold / 90;
+    if (s_pz_hold >= L->quota * 90) {
+        s_story_end_delay = 45;
+        story_finish(1);
+    }
+}
+
+/* ESCORT: the transport cannot shoot and cannot dodge.  You are its guns. */
+static void story_puzzle_update_escort(const StoryLevel* L) {
+    (void)L;
+    s_pz_escort_x += s_pz_escort_dir;
+    if (s_pz_escort_x < 26)                { s_pz_escort_x = 26;                s_pz_escort_dir = 1; }
+    if (s_pz_escort_x > SCREEN_WIDTH - 26) { s_pz_escort_x = SCREEN_WIDTH - 26; s_pz_escort_dir = -1; }
+    int ey = SCREEN_HEIGHT - 22;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        if (!g_game.asteroids[i].active) continue;
+        int ax = FROM_FIXED(g_game.asteroids[i].x);
+        int ay = FROM_FIXED(g_game.asteroids[i].y);
+        if (ay > ey - 10 && ay < ey + 12 && abs(ax - s_pz_escort_x) < 24) {
+            /* A breach is on Jack, not on the transport: the Chubbs aboard
+             * are not a fail state, they are the reason you are here. */
+            destroy_asteroid(i, false);
+            story_puzzle_wrong_choice();
+            g_game.shake_timer = 14;
+            damage_player();
+            break;
+        }
+    }
+}
+
+/* FUSE RUN: every rock burns its own clock.  Let one finish and it takes a
+ * bite out of you - so the board dictates the order, not the radar. */
+static void story_puzzle_update_fuse(const StoryLevel* L) {
+    (void)L;
+    int urgent = -1, best = 1 << 30;
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        if (!g_game.asteroids[i].active) continue;
+        if (s_pz_fuse[i] <= 0) continue;
+        s_pz_fuse[i]--;
+        if (s_pz_fuse[i] <= 0) {
+            trigger_explosion(FROM_FIXED(g_game.asteroids[i].x),
+                              FROM_FIXED(g_game.asteroids[i].y));
+            g_game.asteroids[i].active = false;
+            story_puzzle_wrong_choice();
+            g_game.shake_timer = 16;
+            damage_player();
+            continue;
+        }
+        if (s_pz_fuse[i] < best) { best = s_pz_fuse[i]; urgent = i; }
+    }
+    s_puzzle_mark = urgent;      /* the HUD always names the next one to blow */
+    s_pz_goal = (best == (1 << 30)) ? 0 : (best + 89) / 90;
+}
+
+/* MEMORY RUN: three seconds of light, then the vault goes dark and only a
+ * slow radar ping shows you the field you already memorised. */
+static void story_puzzle_update_blackout(const StoryLevel* L) {
+    (void)L;
+    if (s_pz_reveal > 0) s_pz_reveal--;
+    else if ((s_puzzle_wave_t % 330) == 0) s_pz_reveal = 60;
+}
+
+/* OPEN SIDE: a spinning armour plate covers one half of each rock. */
+static void story_puzzle_update_shieldarc(const StoryLevel* L) {
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        if (!g_game.asteroids[i].active) continue;
+        if (((s_puzzle_wave_t + i * 23) % 210) == 0) s_pz_plate[i] ^= 1;
+    }
+    int live = count_active_asteroids();
+    if (live < 3 && (s_puzzle_wave_t % 40) == 0)
+        story_puzzle_spawn_piece(AST_LARGE);
+    (void)L;
+}
+
+/* FLAWLESS: one hit and the run at this board starts again from scratch. */
+static void story_puzzle_update_perfect(const StoryLevel* L) {
+    if (s_story_lost > s_pz_state) {
+        s_pz_state = s_story_lost;
+        s_puzzle_flash = 60;
+        for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
+        for (int i = 0; i < L->rocks; i++) {
+            int x = 20 + ((i * 41) % (SCREEN_WIDTH - 40));
+            int y = 16 + ((i * 27) % 80);
+            spawn_asteroid((i % 4 == 0) ? AST_LARGE : ((i & 1) ? AST_MED_A : AST_MED_B),
+                           TO_FIXED(x), TO_FIXED(y), (i & 1) ? 16 : -16, 10 + (i % 3) * 4);
+        }
+        for (int i = 0; i < MAX_ASTEROIDS; i++)
+            if (g_game.asteroids[i].active) g_game.asteroids[i].hp = 1;
+    }
+}
+
+/* CROSSED WIRES: the steering inverts on a telegraphed cycle. */
+static void story_puzzle_update_reverse(const StoryLevel* L) {
+    (void)L;
+    int cycle = s_puzzle_wave_t % 420;
+    s_pz_invert = (cycle > 240 && cycle < 390) ? 1 : 0;
+    s_pz_state  = (cycle >= 210 && cycle <= 240) ? 1 : 0;   /* warning window */
+}
+
+/* ── Puzzle dispatcher ───────────────────────────────────────────────────
+ * Every rule gets its own ending condition here.  Nothing falls through to
+ * "well, the rocks are gone, I suppose you won". */
+static void story_update_puzzle(const StoryLevel* L) {
+    int mod = L->modifier;
+    if (s_puzzle_flash > 0) s_puzzle_flash--;
+    s_puzzle_wave_t++;
+
+    if (story_puzzle_clock_dodge(mod)) { story_update_dodge_puzzle(L); return; }
+
+    if (mod == MOD_PZ_DRONECODE) {
+        if (s_puzzle_found >= L->quota) {
+            s_story_end_delay = 45;
+            story_finish(1);
+            return;
+        }
+        if (count_active_drones() < 3 && (--g_game.spawn_timer <= 0)) {
+            story_spawn_hunter();
+            g_game.spawn_timer = 42;
+        }
+        return;
+    }
+
+    switch (mod) {
+        case MOD_PZ_COLLECT: story_puzzle_update_collect(L); return;
+        case MOD_PZ_GATES:   story_puzzle_update_gates(L);   return;
+        case MOD_PZ_HERD:    story_puzzle_update_herd(L);    return;
+        case MOD_PZ_SCAN:    story_puzzle_update_scan(L);    return;
+        default: break;
+    }
+
+    /* Per-rule upkeep for the boards you actually shoot. */
+    story_puzzle_update_lane(L);
+    if (mod == MOD_PZ_GHOST && (s_puzzle_wave_t % 78) == 0) s_puzzle_mark = -1;
+    if (story_puzzle_mark_mode(mod) || story_puzzle_type_mode(mod))
+        story_puzzle_pick_mark(L);
+    if (mod == MOD_PZ_ESCORT)    story_puzzle_update_escort(L);
+    if (mod == MOD_PZ_FUSE)      story_puzzle_update_fuse(L);
+    if (mod == MOD_PZ_BLACKOUT)  story_puzzle_update_blackout(L);
+    if (mod == MOD_PZ_SHIELDARC) story_puzzle_update_shieldarc(L);
+    if (mod == MOD_PZ_PERFECT)   story_puzzle_update_perfect(L);
+    if (mod == MOD_PZ_REVERSE)   story_puzzle_update_reverse(L);
+
+    if (mod == MOD_PZ_ALTERNATE) {
+        /* Always keep a legal target on the side the lock is asking for. */
+        bool have = false;
+        for (int i = 0; i < MAX_ASTEROIDS; i++) {
+            if (!g_game.asteroids[i].active) continue;
+            int ax = FROM_FIXED(g_game.asteroids[i].x);
+            if (((ax >= SCREEN_WIDTH / 2) ? 1 : 0) == s_pz_side) { have = true; break; }
+        }
+        if (!have && (s_puzzle_wave_t % 24) == 0)
+            story_puzzle_spawn_piece_at((rand() & 1) ? AST_MED_A : AST_MED_B,
+                                        s_pz_side ? (SCREEN_WIDTH * 3) / 4 : SCREEN_WIDTH / 4);
+    }
+    if (mod == MOD_PZ_EXACT) {
+        /* Never let the scale become unreachable: top the board back up with
+         * pieces small enough to finish the load. */
+        int need = L->quota - s_pz_goal;
+        bool reachable = false;
+        for (int i = 0; i < MAX_ASTEROIDS && !reachable; i++)
+            if (g_game.asteroids[i].active &&
+                story_puzzle_rock_value(g_game.asteroids[i].type) <= need)
+                reachable = true;
+        if (!reachable && (s_puzzle_wave_t % 20) == 0)
+            story_puzzle_spawn_piece(need >= 5 ? AST_LARGE
+                                   : need >= 3 ? AST_MED_A
+                                   : need >= 2 ? AST_SMALL : AST_TINY);
+    }
+
+    /* ── Endings ─────────────────────────────────────────────────────── */
+    if (story_puzzle_counts_targets(mod) && s_puzzle_found >= L->quota) {
+        s_story_end_delay = 45;
+        story_finish(1);
+        return;
+    }
+    if (mod == MOD_PZ_EXACT && s_pz_goal >= L->quota) {
+        s_story_end_delay = 45;
+        story_finish(1);
+        return;
+    }
+    if (story_puzzle_timer_mode(mod)) {
+        if (s_story_timer > 0) s_story_timer--;
+        if (s_story_timer <= 0) { story_finish(2); return; }
+    }
+    if (story_puzzle_uses_budget(mod)) {
+        if (count_medium_equivalents() == 0) {
+            s_story_end_delay = 45;
+            story_finish(1);
+            return;
+        }
+        if (s_puzzle_ammo <= 0) {
+            bool in_flight = false;
+            for (int i = 0; i < MAX_BULLETS; i++)
+                if (g_game.bullets[i].active && !g_game.bullets[i].enemy) in_flight = true;
+            if (!in_flight) story_finish(2);
+        }
+        return;
+    }
+    /* Boards whose goal is simply an empty sky.  Target boards are excluded:
+     * they own their own quota above and may legitimately contain only tiny
+     * pieces (SIEVE) that the medium-equivalent count never sees. */
+    if (!story_puzzle_counts_targets(mod) && mod != MOD_PZ_EXACT &&
+        count_medium_equivalents() == 0) {
+        s_story_end_delay = 45;
+        story_finish(1);
+        return;
+    }
+    if (mod == MOD_PZ_FRAGILE) {
+        for (int i = 0; i < MAX_ASTEROIDS; i++) {
+            if (g_game.asteroids[i].active &&
+                FROM_FIXED(g_game.asteroids[i].y) > SCREEN_HEIGHT - 14) {
+                /* A breached hold costs a life and resets the ship, but the
+                 * puzzle stays learnable instead of being an instant fail. */
+                story_puzzle_wrong_choice();
+                damage_player();
+                break;
+            }
+        }
     }
 }
 
@@ -1797,103 +2356,10 @@ static void story_update_objective(void) {
         case OBJ_BOSS:
             break;
 
-        case OBJ_PUZZLE: {
-            if (s_puzzle_flash > 0) s_puzzle_flash--;
-            int mod = L->modifier;
-            if (story_puzzle_dodge_mode(mod)) {
-                story_update_dodge_puzzle(L);
-                break;
-            }
-            if (mod == MOD_PZ_DRONECODE) {
-                if (s_puzzle_found >= L->quota) {
-                    s_story_end_delay = 45;
-                    story_finish(1);
-                    break;
-                }
-                if (hunters < 3 && (--g_game.spawn_timer <= 0)) {
-                    story_spawn_hunter();
-                    g_game.spawn_timer = 42;
-                }
-                break;
-            }
-
-            s_puzzle_wave_t++;
-            story_puzzle_update_safe_zone(L);
-            if (mod == MOD_PZ_GHOST && (s_puzzle_wave_t % 78) == 0)
-                s_puzzle_mark = -1;
-
-            bool target_goal = story_puzzle_mark_mode(mod) ||
-                               story_puzzle_type_mode(mod) ||
-                               mod == MOD_PZ_TWIN || mod == MOD_PZ_COMBO;
-            bool target_complete = mod != MOD_PZ_BOMB &&
-                                   s_puzzle_found >= L->quota;
-            if (target_goal && target_complete) {
-                s_story_end_delay = 45;
-                story_finish(1);
-                break;
-            }
-            if (mod == MOD_PZ_TWIN) {
-                story_puzzle_pick_twin(L);
-            } else if (story_puzzle_mark_mode(mod) ||
-                       story_puzzle_type_mode(mod)) {
-                story_puzzle_pick_mark(L);
-            }
-            if (story_puzzle_timer_mode(mod)) {
-                if (s_story_timer > 0) s_story_timer--;
-                if (s_story_timer <= 0) {
-                    story_finish(2);
-                    break;
-                }
-            }
-            if (story_puzzle_uses_budget(mod)) {
-                if (count_medium_equivalents() == 0) {
-                    s_story_end_delay = 45;
-                    story_finish(1);
-                    break;
-                }
-                if (s_puzzle_ammo <= 0) {
-                    bool in_flight = false;
-                    for (int i = 0; i < MAX_BULLETS; i++)
-                        if (g_game.bullets[i].active && !g_game.bullets[i].enemy)
-                            in_flight = true;
-                    if (!in_flight && !g_game.beam_active && !g_game.primary_beam_active)
-                        story_finish(2);
-                }
-                break;
-            }
-            if (mod == MOD_PZ_COMBO && s_puzzle_found >= L->quota) {
-                s_story_end_delay = 45;
-                story_finish(1);
-                break;
-            }
-            /* Target boards can intentionally contain only tiny pieces
-             * (SIEVE), so medium-equivalent zero is not a universal clear
-             * signal. Their quota/reticle check above owns completion. */
-            bool target_board = story_puzzle_mark_mode(mod) ||
-                                story_puzzle_type_mode(mod) ||
-                                mod == MOD_PZ_TWIN ||
-                                mod == MOD_PZ_COMBO;
-            if (count_medium_equivalents() == 0 &&
-                (!target_board || mod == MOD_PZ_BOMB)) {
-                s_story_end_delay = 45;
-                story_finish(1);
-                break;
-            }
-            if (mod == MOD_PZ_FRAGILE) {
-                for (int i = 0; i < MAX_ASTEROIDS; i++) {
-                    if (g_game.asteroids[i].active &&
-                        FROM_FIXED(g_game.asteroids[i].y) > SCREEN_HEIGHT - 14) {
-                        /* A breached hold costs a life and resets the ship,
-                         * but the puzzle remains learnable rather than
-                         * becoming an opaque instant-fail wall. */
-                        story_puzzle_wrong_choice();
-                        damage_player();
-                        break;
-                    }
-                }
-            }
+        case OBJ_PUZZLE:
+            story_update_puzzle(L);
             break;
-        }
+
         case OBJ_CLEAR:
             /* Release the rest of the field a few at a time, then win when
              * the sky is empty. */
@@ -2034,8 +2500,11 @@ static int story_boss_hp(int boss_id) {
      * so these land a little faster in practice. */
     static const int base[STORY_SECTOR_COUNT] = {
         /* Shorter, readable duels: difficulty comes from each ship's gimmick,
-         * not from repeating its hardest barrage against an HP sponge. */
-        300, 650, 1800, 2500, 6200, 4600, 22000
+         * not from repeating its hardest barrage against an HP sponge.
+         * The Alien is deliberately the softest thing in the campaign - it
+         * is a tutorial, and a tutorial that lasts ninety seconds is a wall.
+         * Wildfire carries more, because its vents hand out double damage. */
+        140, 650, 1800, 2500, 8200, 4600, 22000
     };
     int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
     int hp = base[id];
@@ -2068,18 +2537,16 @@ static void story_spawn_boss(int boss_id) {
     b->sweep_dir = 1;
     b->clone_active = false;
 
-    if (boss_id == SBOSS_JUGGERNAUT || boss_id == SBOSS_AEGIS) {
+    if (boss_id == SBOSS_SLEDGE || boss_id == SBOSS_BULWARK) {
         for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 10;
-        if (boss_id == SBOSS_AEGIS) b->shield = 1;
+        if (boss_id == SBOSS_BULWARK) b->shield = 1;
     }
-    if (boss_id == SBOSS_INFERNO) {
-        for (int i = 0; i < 3; i++) b->node_hp[i] = b->hp_max / 8;
-        b->node_hp[3] = 0;
+    if (boss_id == SBOSS_WILDFIRE) {
+        /* No parts: the heat gauge is the fight. */
+        b->charge = 0;
+        b->shield = 0;
     }
-    if (boss_id == SBOSS_REALITY_QUEEN) {
-        for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
-        b->charge = 1;
-    }
+    if (boss_id == SBOSS_REALITY_QUEEN) b->charge = 1;
 
     g_game.boss_active = true;
     g_game.boss_hit_flash = 0;
@@ -2150,89 +2617,71 @@ static int sb_next_attack(Boss* b, int count) {
 }
 
 /* ── BOSS 1 - ALIEN (L10) ─────────────────────────────────────────────────
- * KEY MECHANIC - THE BITE. This is not a shooting gallery: the hull is
- * plated (1/3 damage) until a missed lunge leaves the jaws CLAMPED.
- * During the clamp the plates gap and it takes double. Bait the dive,
- * then empty the guns into the strain. */
+ * Just an alien.  No key mechanic, no windows, no plates, nothing to solve:
+ * it hovers, it drifts, it lobs slow shots with a long telegraph, and it
+ * dies to sustained fire.  Level 10 exists to teach the grammar of a boss
+ * fight - health bar, telegraph, dodge, shoot - before Splinter, Coldsnap
+ * and the rest start attaching rules to it. */
 static void sb_alien(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     switch (b->phase) {
         case SB_IDLE:
-            sb_drift(b, TO_FIXED(1) + 40);
+            /* A slow, honest patrol at a comfortable distance. */
+            sb_drift(b, TO_FIXED(1));
             sb_hover(b, 34, TO_FIXED(1));
-            /* Almost no idle fire — the bite IS the fight. */
             if (--b->cooldown <= 0) {
-                add_boss_bullet(b->x, b->y + TO_FIXED(12), 0, TO_FIXED(3), false);
-                b->cooldown = 70;
+                add_boss_bullet(b->x, b->y + TO_FIXED(12), 0, TO_FIXED(2), false);
+                b->cooldown = 60;
             }
             if (b->phase_timer <= 0) {
-                /* 2-in-3 chance to bite so the punish window keeps coming. */
-                b->phase = ((rand() % 3) == 0) ? SB_ATTACK_B : SB_ATTACK_A;
+                b->phase = (b->attack_timer == 0) ? SB_ATTACK_B : SB_ATTACK_A;
+                b->attack_timer = (b->phase == SB_ATTACK_A) ? 0 : 1;
                 b->phase_timer = 150;
-                b->aim_x = ai_target_ship()->x;
-                b->charge = 0;
+                b->charge = 45;           /* telegraph before either attack */
             }
             break;
-        case SB_ATTACK_A: {   /* THE BITE: line up, telegraph, lunge, CLAMP */
-            if (b->phase_timer > 110) {
-                /* Track the target column and telegraph with falling sparks. */
-                b->charge = 0;
-                int diff = b->aim_x - b->x;
-                int step = TO_FIXED(3);
-                if (diff > step) b->x += step; else if (diff < -step) b->x -= step; else b->x = b->aim_x;
-                if ((b->phase_timer & 3) == 0)
-                    spawn_particle(b->x, b->y + TO_FIXED(16), 0, 120, PAL_TEXT_RED, 8);
-            } else if (b->phase_timer > 70) {
-                /* Lunge.  The jaws spray a closing pincer of teeth. */
-                b->y += TO_FIXED(5);
-                if (FROM_FIXED(b->y) > SCREEN_HEIGHT - 44) b->y = TO_FIXED(SCREEN_HEIGHT - 44);
-                if ((b->phase_timer & 7) == 0) {
-                    add_boss_bullet(b->x - TO_FIXED(14), b->y + TO_FIXED(8),
-                                    TO_FIXED(1) + 60, TO_FIXED(2) + 60, false);
-                    add_boss_bullet(b->x + TO_FIXED(14), b->y + TO_FIXED(8),
-                                    -TO_FIXED(1) - 60, TO_FIXED(2) + 60, false);
-                }
-            } else if (b->phase_timer > 30) {
-                /* CLAMPED: the missed bite leaves it straining in place.
-                 * b->charge flags the double-damage window for
-                 * story_boss_absorb(); sparks sell the strain. */
-                b->charge = 1;
-                if ((b->phase_timer & 3) == 0)
-                    spawn_particle(b->x + ((rand() & 31) - 16) * 256, b->y + TO_FIXED(10),
-                                   (rand() & 127) - 64, -((rand() & 63) + 30),
-                                   PAL_TEXT_GOLD, 9);
-            } else {
-                b->charge = 0;
-                b->y -= TO_FIXED(3);
-                if (b->y <= TO_FIXED(34)) { b->y = TO_FIXED(34); b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 30; }
+
+        case SB_ATTACK_A:     /* THREE SHOTS: slow, aimed, well spaced out. */
+            sb_drift(b, TO_FIXED(1));
+            if (b->charge > 0) {
+                /* Wind-up: red sparks under the nose so the shot is never a
+                 * surprise, and the ship does not move while it aims. */
+                b->charge--;
+                if ((b->charge & 3) == 0)
+                    spawn_particle(b->x, b->y + TO_FIXED(14), 0, 90, PAL_TEXT_RED, 8);
+                break;
             }
-            if (b->phase_timer <= 0) { b->charge = 0; b->phase = SB_IDLE; b->phase_timer = 90; }
+            if ((b->phase_timer % 40) == 0)
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(2) + 40, 0);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 100; b->cooldown = 40; }
             break;
-        }
-        case SB_ATTACK_B:     /* SCRAP SPIT: chews and sprays ragged junk in
-                               * an uneven cone — debris, not a neat fan. */
-            sb_drift(b, TO_FIXED(2));
-            if ((b->phase_timer % (sb_hp_pct(b) < 50 ? 5 : 8)) == 0) {
-                int ang = 16384 + ((rand() % 20000) - 10000);  /* downish */
-                int spd = TO_FIXED(2) + (rand() % 512);
-                add_boss_bullet(b->x + ((rand() & 31) - 16) * 256,
-                                b->y + TO_FIXED(12),
-                                (lu_cos(ang) * spd) >> 12,
-                                (lu_sin(ang) * spd) >> 12,
-                                (rand() % 5) == 0);
+
+        case SB_ATTACK_B:     /* WIDE SPIT: a five-shot fan with big gaps you
+                               * can simply walk between. */
+            sb_hover(b, 30, TO_FIXED(1));
+            if (b->charge > 0) {
+                b->charge--;
+                if ((b->charge & 3) == 0)
+                    spawn_particle(b->x + ((rand() & 15) - 8) * 256, b->y + TO_FIXED(12),
+                                   0, 80, PAL_TEXT_GOLD, 8);
+                break;
             }
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 30; }
+            if ((b->phase_timer % 45) == 0)
+                sb_fan(cx, cy + 12, 5, TO_FIXED(2), 14000);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 100; b->cooldown = 40; }
             break;
+
         default:
-            b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 40;
+            b->phase = SB_IDLE; b->phase_timer = 90; b->cooldown = 40;
             break;
     }
 }
 
-/* ── BOSS 2 - GEMINI (L20) ─────────────────────────────────────────────
- * One hull until 50%, then it splits: the clone mirrors your position while
- * the original hunts you, and they cross-fire the gap between them. */
-static void sb_gemini(Boss* b) {
+/* ── BOSS 2 - SPLINTER (L20) ───────────────────────────────────────────
+ * KEY MECHANIC - THE SPLIT. One hull until 50%, then it breaks in two: the
+ * shard mirrors your column while the core hunts you, and they cross-fire
+ * the gap between them. Damage is shared, so neither half is a safe rest. */
+static void sb_splinter(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
 
     if (!b->clone_active && sb_hp_pct(b) <= 50) {
@@ -2308,12 +2757,12 @@ static void sb_gemini(Boss* b) {
     }
 }
 
-/* ── BOSS 3 - FROSTBITE (L30) ────────────────────────────────────────────
+/* ── BOSS 3 - COLDSNAP (L30) ────────────────────────────────────────────
  * An ice interceptor.  KEY MECHANIC - ENGINE ICING: standing still lets
  * frost build on your engines and throttles your ship to a crawl; moving
  * shakes it off.  Its web lattice and tracking lance are both designed to
  * make you WANT to camp a safe pixel — the ice is why you can't. */
-static void sb_frostbite(Boss* b) {
+static void sb_coldsnap(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
 
     /* Engine icing: build fast while parked, shed faster while flying. */
@@ -2405,12 +2854,12 @@ static void sb_frostbite(Boss* b) {
     }
 }
 
-/* ── BOSS 4 - JUGGERNAUT (L40) ───────────────────────────────────────────
+/* ── BOSS 4 - SLEDGE (L40) ───────────────────────────────────────────
  * KEY MECHANIC - CRUSH. This is NOT a health-bar fight until the four
  * armour plates are gone. The hull takes ZERO damage while any plate
  * lives. Break the plates, then punish the exposed machine while it
  * magnet-drags you into its rings and slams the floor. */
-static void sb_juggernaut(Boss* b) {
+static void sb_sledge(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int plates = 0;
     for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) plates++;
@@ -2459,21 +2908,59 @@ static void sb_juggernaut(Boss* b) {
     }
 }
 
-/* ── BOSS 5 - INFERNO (L50) ─────────────────────────────────────────────
- * KEY MECHANIC - THE BURN. Two fire whips never stop. The hull is sealed
- * until the three orbiting ember cores are shot off. After that the
- * furnace is open — but the whips stay live the whole fight. */
-static void sb_inferno(Boss* b) {
+/* ── BOSS 5 - WILDFIRE (L50) ─────────────────────────────────────────────
+ * KEY MECHANIC - THE VENT.  Nothing to shoot off, nothing to circle: this
+ * one is a rhythm.  Wildfire runs hot, and armour plating soaks almost
+ * everything while it burns.  Every attack stokes it further, and when the
+ * heat tops out it has to VENT: the whips stop, the plates gape and for
+ * three seconds it takes DOUBLE damage.  Learn the beat, save your fire for
+ * the vents, and do not be standing in the whip when it seals up again.
+ * b->charge is the heat, b->shield is 1 while it is venting. */
+static void sb_wildfire(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
-    int cores = 0;
-    for (int i = 0; i < 3; i++) if (b->node_hp[i] > 0) cores++;
-    b->spin += (cores > 0) ? 1100 : 1600;
+    b->spin += b->shield ? 400 : 1400;
+
+    /* Venting: a hard, readable three-second window. */
+    if (b->shield) {
+        b->charge -= 6;
+        sb_hover(b, 30, TO_FIXED(1));
+        if ((s_game_frame & 3) == 0)
+            spawn_particle(b->x + ((rand() & 63) - 32) * 256, b->y,
+                           (rand() & 127) - 64, -((rand() & 63) + 40),
+                           PAL_TEXT_GOLD, 12);
+        if (b->charge <= 0) {          /* sealed again, straight back to work */
+            b->charge = 0;
+            b->shield = 0;
+            b->phase = SB_IDLE;
+            b->phase_timer = 60;
+            b->cooldown = 24;
+            for (int k = 0; k < 10; k++) {   /* the re-seal blows the ash off */
+                int ang = k * 6553;
+                add_boss_bullet(b->x, b->y,
+                                (lu_cos(ang) * TO_FIXED(2)) >> 12,
+                                (lu_sin(ang) * TO_FIXED(2)) >> 12, false);
+            }
+        }
+        return;
+    }
+
+    /* Heat climbs while it fights; a full gauge forces the vent. */
+    b->charge += 1;
+    if (b->charge >= 300) {
+        b->charge = 270;               /* three seconds of open furnace */
+        b->shield = 1;
+        b->phase = SB_STAGGER;
+        b->phase_timer = 270;
+        g_game.shake_timer = 20;
+        audio_play_sfx(SFX_EXPLOSION);
+        return;
+    }
 
     switch (b->phase) {
         case SB_IDLE:
             sb_hover(b, 28, TO_FIXED(1));
             sb_drift(b, TO_FIXED(1) + 80);
-            /* The whips are always live: two arms of embers sweeping round. */
+            /* The whips are always live while it is sealed. */
             if ((s_game_frame % 7) == 0) {
                 add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy),
                                 (lu_cos(b->spin) * (TO_FIXED(3))) >> 12,
@@ -2489,6 +2976,7 @@ static void sb_inferno(Boss* b) {
             break;
         case SB_ATTACK_A:     /* FLARE: aimed heavy bolts between whip passes */
             sb_drift(b, TO_FIXED(2) + 60);
+            b->charge += 2;                       /* attacking runs it hotter */
             if ((b->phase_timer % 24) == 0) sb_shoot_at_player(cx, cy + 12, TO_FIXED(5) + 60, 1);
             if ((s_game_frame % 9) == 0)
                 add_boss_bullet(TO_FIXED(cx), TO_FIXED(cy),
@@ -2498,6 +2986,7 @@ static void sb_inferno(Boss* b) {
             break;
         case SB_ATTACK_B:     /* SOLAR WIND: dense downward curtain with a gap */
             sb_hover(b, 24, TO_FIXED(1));
+            b->charge += 2;
             if ((b->phase_timer % 12) == 0) {
                 int gap = 30 + (rand() % (SCREEN_WIDTH - 90));
                 for (int x = 16; x < SCREEN_WIDTH - 16; x += 26) {
@@ -2511,10 +3000,10 @@ static void sb_inferno(Boss* b) {
     }
 }
 
-/* ── BOSS 6 - AEGIS (L60) ──────────────────────────────────────────
+/* ── BOSS 6 - BULWARK (L60) ──────────────────────────────────────────
  * Invulnerable behind a shield until all four turret nodes are destroyed;
  * the nodes rotate around the hull and fire independently. */
-static void sb_aegis(Boss* b) {
+static void sb_bulwark(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int alive = 0;
     for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) alive++;
@@ -2585,28 +3074,29 @@ static void sb_aegis(Boss* b) {
 }
 
 /* ── BOSS 7 - REALITY QUEEN (L70) ────────────────────────────────────────
- * KEY MECHANIC - THE FOLD. Three stages that are not the same fight:
- *   0  OPEN FACE     only the glowing face takes full damage
- *   1  PYLONS        four cube corners must be shot off (no hull HP)
- *   2  CORE          last-stand core that folds you across the screen
- * Axis-aligned cube shot is her handwriting. */
+ * KEY MECHANIC - THE FOLD.  No plates, no nodes, no parts to farm: she
+ * simply is not where your shots are.  Only the glowing open face takes
+ * damage, and she keeps turning it away and folding the arena - flipping
+ * your ship across the screen mid-dodge - until the last stage tears the
+ * core open. Three stages that are not the same fight:
+ *   0  OPEN FACE   the face turns slowly; read it and aim at it
+ *   1  FOLD        the face turns fast AND she folds you across the screen
+ *   2  CORE        exposed core, everything lands, everything hurts */
 static void sb_reality_queen(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int pct = sb_hp_pct(b);
-    int pylons = 0;
-    for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) pylons++;
 
     if (b->stage == 0 && pct <= 66) {
         b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 110;
         g_game.shake_timer = 30;
-        for (int i = 0; i < 4; i++) if (b->node_hp[i] <= 0) b->node_hp[i] = b->hp_max / 12;
-    } else if (b->stage == 1 && pylons == 0) {
+    } else if (b->stage == 1 && pct <= 30) {
         b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 110;
         g_game.shake_timer = 40;
     }
 
     b->spin += 600 + b->stage * 350;
-    if (b->stage == 0 && (s_game_frame % 180) == 0)
+    /* The open face turns on a clock, twice as fast once she starts folding. */
+    if (b->stage < 2 && (s_game_frame % (b->stage ? 100 : 180)) == 0)
         b->charge = (b->charge + 1) & 3;
 
     switch (b->phase) {
@@ -2697,71 +3187,41 @@ static void sb_reality_queen(Boss* b) {
     }
 }
 
-/* Damage gating for bosses with destructible parts.
- * Juggernaut: four armour plates soak most damage until broken.
- * Aegis: fully immune while any turret node lives — you must shoot
- * the rotating nodes off first (hits near a node damage that node). */
+/* Damage gating for the bosses that HAVE a gate.
+ * Alien:    none - it is the tutorial, shoot it till it dies.
+ * Sledge:   four armour plates soak everything until they are broken off.
+ * Bulwark:  sealed hull; hits land on the nearest surviving turret node.
+ * Wildfire: orbiting cores eat the damage while they live.
+ * Splinter: shots nearer the clone chew the clone down instead. */
 static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
     if (g_game.mode != GAME_MODE_STORY) return dmg;
 
-    if (b->story_id == SBOSS_ALIEN) {
-        if (b->charge) return dmg * 2;
-        int chip = dmg / 3;
+    /* The Alien has no gimmick at all: every bolt that lands, lands.  It is
+     * the tutorial boss, and the lesson is simply "bosses have health bars". */
+    if (b->story_id == SBOSS_ALIEN) return dmg;
+
+    if (b->story_id == SBOSS_WILDFIRE) {
+        /* Plated while it burns, wide open while it vents. */
+        if (b->shield) return dmg * 2;
+        int chip = dmg / 4;
         return chip > 0 ? chip : 1;
     }
 
-    if (b->story_id == SBOSS_INFERNO) {
-        int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
-        int best = -1, best_d = 0;
-        for (int i = 0; i < 3; i++) {
-            if (b->node_hp[i] <= 0) continue;
-            int ang = b->spin + i * 21845;
-            int nx = cx + ((lu_cos(ang) * 26) >> 12);
-            int ny = cy + ((lu_sin(ang) * 20) >> 12);
-            int d = (hit_x - nx) * (hit_x - nx) + (hit_y - ny) * (hit_y - ny);
-            if (best < 0 || d < best_d) { best = i; best_d = d; }
-        }
-        if (best >= 0) {
-            b->node_hp[best] -= dmg;
-            if (b->node_hp[best] <= 0) {
-                b->node_hp[best] = 0;
-                trigger_explosion(hit_x, hit_y);
-                g_game.shake_timer = 14;
-            }
-            b->flash_timer = 4;
-            return 0;
-        }
-        return dmg;
-    }
-
     if (b->story_id == SBOSS_REALITY_QUEEN) {
-        if (b->stage == 0) {
+        /* Her hull folds away from anything that is not aimed at the open
+         * face.  Stage 2 drops the trick entirely: the core is exposed. */
+        if (b->stage < 2) {
             int face = (b->charge & 3);
             int hit_face = ((hit_x - FROM_FIXED(b->x)) > 0) ? 1 : 0;
             if ((hit_y - FROM_FIXED(b->y)) > 0) hit_face += 2;
-            if (hit_face == face) return dmg;
+            if (hit_face == face) return b->stage ? dmg : dmg;
             int chip = dmg / 4;
             return chip > 0 ? chip : 1;
-        }
-        if (b->stage == 1) {
-            int best = -1;
-            for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) { best = i; break; }
-            if (best >= 0) {
-                b->node_hp[best] -= dmg;
-                if (b->node_hp[best] <= 0) {
-                    b->node_hp[best] = 0;
-                    trigger_explosion(hit_x, hit_y);
-                    g_game.shake_timer = 16;
-                }
-                b->flash_timer = 4;
-                return 0;
-            }
-            return dmg;
         }
         return dmg;
     }
 
-    if (b->story_id == SBOSS_AEGIS) {
+    if (b->story_id == SBOSS_BULWARK) {
         int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
         int best = -1, best_d = 0;
         for (int i = 0; i < 4; i++) {
@@ -2786,7 +3246,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
         return dmg;                     /* all nodes down: hull is open */
     }
 
-    if (b->story_id == SBOSS_JUGGERNAUT) {
+    if (b->story_id == SBOSS_SLEDGE) {
         for (int i = 0; i < 4; i++) {
             if (b->node_hp[i] > 0) {
                 b->node_hp[i] -= dmg;
@@ -2801,7 +3261,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
         return dmg;
     }
 
-    if (b->story_id == SBOSS_GEMINI && b->clone_active) {
+    if (b->story_id == SBOSS_SPLINTER && b->clone_active) {
         /* Shots landing nearer the clone chew the clone down instead. */
         int dx = hit_x - FROM_FIXED(b->clone_x);
         int dy = hit_y - FROM_FIXED(b->clone_y);
@@ -2836,11 +3296,11 @@ static void story_boss_ai(Boss* b) {
     b->phase_timer--;
     switch (b->story_id) {
         case SBOSS_ALIEN:      sb_alien(b); break;
-        case SBOSS_GEMINI:        sb_gemini(b); break;
-        case SBOSS_FROSTBITE:   sb_frostbite(b); break;
-        case SBOSS_JUGGERNAUT:   sb_juggernaut(b); break;
-        case SBOSS_INFERNO:    sb_inferno(b); break;
-        case SBOSS_AEGIS:  sb_aegis(b); break;
+        case SBOSS_SPLINTER:        sb_splinter(b); break;
+        case SBOSS_COLDSNAP:   sb_coldsnap(b); break;
+        case SBOSS_SLEDGE:   sb_sledge(b); break;
+        case SBOSS_WILDFIRE:    sb_wildfire(b); break;
+        case SBOSS_BULWARK:  sb_bulwark(b); break;
         default:                 sb_reality_queen(b); break;
     }
 }
@@ -3199,7 +3659,7 @@ static bool story_puzzle_guns_offline(void) {
     if (g_game.mode != GAME_MODE_STORY) return false;
     const StoryLevel* L = story_cur();
     if (L->objective != OBJ_PUZZLE) return false;
-    if (story_puzzle_dodge_mode(L->modifier)) return true;
+    if (story_puzzle_no_guns(L->modifier)) return true;
     if (story_puzzle_uses_budget(L->modifier) && s_puzzle_ammo <= 0) return true;
     return false;
 }
@@ -3208,7 +3668,15 @@ static void fire_player_weapon(void) {
     if (g_game.mode == GAME_MODE_STORY && story_cur()->objective == OBJ_PUZZLE) {
         const StoryLevel* L = story_cur();
         int mod = L->modifier;
-        if (story_puzzle_dodge_mode(mod)) return;
+        if (mod == MOD_PZ_POLARITY) {
+            /* The trigger is wired to the shield, not to the guns. */
+            s_pz_side = !s_pz_side;
+            g_game.player.fire_cooldown = 14;
+            audio_play_sfx(SFX_PICKUP);
+            platform_queue_haptic(HAPTIC_CHARGE);
+            return;
+        }
+        if (story_puzzle_no_guns(mod)) return;
         if (story_puzzle_uses_budget(mod)) {
             if (s_puzzle_ammo <= 0) { s_puzzle_flash = 20; return; }
             s_puzzle_ammo--;
@@ -3219,11 +3687,13 @@ static void fire_player_weapon(void) {
             audio_play_sfx(SFX_LASER);
             return;
         }
-        /* Mark/type/twin puzzles are about choosing a target, not weapon
-         * width. Infinity Beam gets the same fair single-bolt fallback. */
+        /* Rules about CHOOSING a target are not about weapon width: they all
+         * fire one precise bolt, so an endgame spread rig cannot solve (or
+         * fail) the lesson for the player.  Infinity Beam included. */
         if (g_settings.weapon_rig == WEAPON_INFINITY ||
             story_puzzle_mark_mode(mod) || story_puzzle_type_mode(mod) ||
-            mod == MOD_PZ_TWIN) {
+            mod == MOD_PZ_ALTERNATE || mod == MOD_PZ_EXACT ||
+            mod == MOD_PZ_SHIELDARC || mod == MOD_PZ_FUSE) {
             story_on_shot_fired(1);
             add_player_bullet(g_game.player.x, g_game.player.y - TO_FIXED(7),
                               0, -TO_FIXED(7), 1, true, 0);
@@ -3656,6 +4126,14 @@ static void game_update_tick(void) {
         if (key_is_down(KEY_RIGHT)) mx += 1;
         if (key_is_down(KEY_UP)) my -= 1;
         if (key_is_down(KEY_DOWN)) my += 1;
+        /* CROSSED WIRES: reality static reverses the steering for a spell.
+         * Telegraphed on the HUD first - it is a rule, not a gotcha. */
+        if (s_pz_invert && g_game.mode == GAME_MODE_STORY &&
+            story_cur()->objective == OBJ_PUZZLE &&
+            story_cur()->modifier == MOD_PZ_REVERSE) {
+            mx = -mx;
+            my = -my;
+        }
     }
 
     // ── Engine speed with 2x cap logic ───────────────────────────────
@@ -3664,10 +4142,10 @@ static void game_update_tick(void) {
     base_spd = (base_spd * eng_mult) >> 8;
     int spd = base_spd;
 
-    /* FROSTBITE's engine icing: fully iced engines run at ~45% thrust.
-     * The meter climbs while parked and sheds while flying (sb_frostbite). */
+    /* COLDSNAP's engine icing: fully iced engines run at ~45% thrust.
+     * The meter climbs while parked and sheds while flying (sb_coldsnap). */
     if (g_game.mode == GAME_MODE_STORY && g_game.boss_active &&
-        g_game.boss.story_id == SBOSS_FROSTBITE && s_frost_ice > 0) {
+        g_game.boss.story_id == SBOSS_COLDSNAP && s_frost_ice > 0) {
         spd = spd - ((spd * s_frost_ice * 140 / 256) >> 8);
     }
 
@@ -4265,11 +4743,32 @@ static void game_update_tick(void) {
     }
 
     // Boss bullets vs player
+    const bool pz_polarity = g_game.mode == GAME_MODE_STORY &&
+                             story_cur()->objective == OBJ_PUZZLE &&
+                             story_cur()->modifier == MOD_PZ_POLARITY;
     for (int bb = 0; bb < MAX_BOSS_BULLETS; bb++) {
         if (!g_game.boss_bullets[bb].active) continue;
         int bbx = FROM_FIXED(g_game.boss_bullets[bb].x);
         int bby = FROM_FIXED(g_game.boss_bullets[bb].y);
         int bbr = g_game.boss_bullets[bb].radius;
+        /* POLARITY: your shield colour decides whether a bolt is food or a
+         * hit. Matching fire is absorbed even while you are invulnerable. */
+        if (pz_polarity) {
+            int dist_sq = (bbx - px)*(bbx - px) + (bby - py)*(bby - py);
+            if (dist_sq <= (bbr + 9)*(bbr + 9)) {
+                int colour = g_game.boss_bullets[bb].heavy ? 1 : 0;
+                g_game.boss_bullets[bb].active = false;
+                if (colour == s_pz_side) {
+                    award_score(40);
+                    spawn_particle(TO_FIXED(bbx), TO_FIXED(bby), 0, -60,
+                                   colour ? PAL_TEXT_CYAN : PAL_TEXT_RED, 8);
+                } else if (g_game.player.invulnerable_timer == 0) {
+                    story_puzzle_wrong_choice();
+                    damage_player();
+                }
+                continue;
+            }
+        }
         if (g_game.player.invulnerable_timer == 0) {
             int dist_sq = (bbx - px)*(bbx - px) + (bby - py)*(bby - py);
             if (dist_sq <= (bbr + 6)*(bbr + 6)) {
@@ -4304,6 +4803,22 @@ static void game_update_tick(void) {
             int ar = g_game.asteroids[a].radius;
             int dist_sq = (bx - ax)*(bx - ax) + (by - ay)*(by - ay);
             if (dist_sq <= (br + ar)*(br + ar)) {
+                /* OPEN SIDE: a spinning plate plugs one half of the rock.
+                 * Shots into the plate ring off it - you have to fly around
+                 * and hit the half it has left open. */
+                if (g_game.mode == GAME_MODE_STORY &&
+                    story_cur()->objective == OBJ_PUZZLE &&
+                    story_cur()->modifier == MOD_PZ_SHIELDARC) {
+                    int off = bx - ax;
+                    bool plated = (s_pz_plate[a] ? (off <= 2) : (off >= -2));
+                    if (plated) {
+                        g_game.bullets[b].active = false;
+                        consumed = true;
+                        spawn_particle(TO_FIXED(bx), TO_FIXED(by),
+                                       (rand() & 63) - 32, -40, PAL_TEXT_CYAN, 7);
+                        break;
+                    }
+                }
                 if (g_game.bullets[b].owner == 0) story_on_shot_hit();
                 g_game.asteroids[a].hp -= g_game.bullets[b].damage;
 #ifdef PLATFORM_HOST
@@ -4387,7 +4902,27 @@ static void game_update_tick(void) {
         }
     }
 
-    if (g_game.player.invulnerable_timer == 0) {
+    /* SALVAGE RUN: the field is cargo, not shrapnel.  Flying through a cell
+     * scoops it up - there is no trigger on this level at all. */
+    if (g_game.mode == GAME_MODE_STORY &&
+        story_cur()->objective == OBJ_PUZZLE &&
+        story_cur()->modifier == MOD_PZ_COLLECT) {
+        for (int a = 0; a < MAX_ASTEROIDS; a++) {
+            if (!g_game.asteroids[a].active) continue;
+            int ax = FROM_FIXED(g_game.asteroids[a].x);
+            int ay = FROM_FIXED(g_game.asteroids[a].y);
+            int ar = g_game.asteroids[a].radius;
+            int dist_sq = (px - ax)*(px - ax) + (py - ay)*(py - ay);
+            if (dist_sq <= (8 + ar)*(8 + ar)) {
+                g_game.asteroids[a].active = false;
+                s_pz_goal++;
+                award_score(150);
+                audio_play_sfx(SFX_PICKUP);
+                platform_queue_haptic(HAPTIC_KILL);
+                spawn_particle(TO_FIXED(ax), TO_FIXED(ay), 0, -70, PAL_TEXT_GREEN, 10);
+            }
+        }
+    } else if (g_game.player.invulnerable_timer == 0) {
         for (int a = 0; a < MAX_ASTEROIDS; a++) {
             if (!g_game.asteroids[a].active) continue;
             int ax = FROM_FIXED(g_game.asteroids[a].x);
@@ -4507,6 +5042,136 @@ void game_update(void) {
     }
 }
 
+/* Small helpers so the puzzle furniture reads at 240x160 without sprites. */
+static void pz_draw_box(int x, int y, int hw, int hh, u8 col) {
+    gfx_draw_rect(x - hw, y - hh, hw * 2, hh * 2, col);
+}
+static void pz_draw_ring(int x, int y, int r, u8 col) {
+    for (int k = 0; k < 16; k++) {
+        int ang = (k * 65536) / 16;
+        gfx_draw_pixel(x + ((lu_cos(ang) * r) >> 12),
+                       y + ((lu_sin(ang) * r) >> 12), col);
+    }
+}
+
+/* ── Puzzle furniture ────────────────────────────────────────────────────
+ * Everything a puzzle rule owns in the world is drawn here, so a new rule
+ * never has to be threaded through the whole draw pass. */
+static void story_puzzle_draw_world(int ox, int oy) {
+    const StoryLevel* L = story_cur();
+    int mod = L->modifier;
+    bool blink = ((s_game_frame >> 3) & 1) != 0;
+
+    switch (mod) {
+        case MOD_PZ_LANE: {
+            int lane = s_puzzle_safe_x + ox;
+            for (int y = 24; y < SCREEN_HEIGHT; y += 4) {
+                gfx_draw_pixel(lane - 24, y + oy, PAL_TEXT_CYAN);
+                gfx_draw_pixel(lane + 24, y + oy, PAL_TEXT_CYAN);
+            }
+            break;
+        }
+        case MOD_PZ_GATES: {
+            int gx = s_pz_ax + ox, gy = s_pz_ay + oy;
+            u8 c = blink ? PAL_TEXT_GREEN : PAL_TEXT_GOLD;
+            pz_draw_box(gx, gy, 15, 11, c);
+            pz_draw_box(gx, gy, 9, 6, c);
+            char gb[8];
+            siprintf(gb, "%d", s_pz_goal + 1);
+            gfx_draw_text(gx - 3, gy - 3, gb, PAL_TEXT_WHITE);
+            break;
+        }
+        case MOD_PZ_HERD: {
+            int dx = s_pz_ax + ox, dy = s_pz_ay + oy;
+            pz_draw_box(dx, dy, 18, 12, blink ? PAL_TEXT_GREEN : PAL_TEXT_CYAN);
+            gfx_draw_text(dx - 12, dy - 3, "DOCK", PAL_TEXT_WHITE);
+            int cx = FROM_FIXED(s_pz_cargo_x) + ox;
+            int cy = FROM_FIXED(s_pz_cargo_y) + oy;
+            gfx_fill_rect(cx - 9, cy - 7, 18, 14, PAL_TEXT_GOLD);
+            gfx_draw_rect(cx - 9, cy - 7, 18, 14, PAL_TEXT_WHITE);
+            break;
+        }
+        case MOD_PZ_SCAN: {
+            int sx = s_pz_ax + ox, sy = s_pz_ay + oy;
+            gfx_fill_rect(sx - 3, sy - 3, 6, 6, blink ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
+            pz_draw_ring(sx, sy, 8, blink ? PAL_TEXT_CYAN : PAL_TEXT_WHITE);
+            pz_draw_ring(sx, sy, 26, PAL_TEXT_CYAN);
+            int px = FROM_FIXED(g_game.player.x) + ox;
+            int py = FROM_FIXED(g_game.player.y) + oy;
+            int dx = sx - px, dy = sy - py;
+            if (dx * dx + dy * dy < 27 * 27) {
+                for (int k = 0; k < 6; k++)
+                    gfx_draw_pixel(px + (dx * k) / 6, py + (dy * k) / 6, PAL_TEXT_GREEN);
+            }
+            break;
+        }
+        case MOD_PZ_GRAVITY: {
+            /* Read against the violet Reality sky: a white event horizon,
+             * a collapsing gold ring and a hot core you must not touch. */
+            int wx = s_pz_ax + ox, wy = s_pz_ay + oy;
+            pz_draw_ring(wx, wy, 30, PAL_TEXT_WHITE);
+            pz_draw_ring(wx, wy, 24 - (s_game_frame % 12), PAL_TEXT_GOLD);
+            pz_draw_ring(wx, wy, 12, PAL_TEXT_GOLD);
+            gfx_fill_rect(wx - 4, wy - 4, 8, 8, PAL_TEXT_RED);
+            break;
+        }
+        case MOD_PZ_STEALTH: {
+            int bx = s_pz_ax + ox;
+            u8 c = s_pz_state ? PAL_TEXT_RED : PAL_TEXT_CYAN;
+            for (int y = 20; y < SCREEN_HEIGHT; y += 3) {
+                gfx_draw_pixel(bx - 22, y + oy, c);
+                gfx_draw_pixel(bx + 22, y + oy, c);
+                if (s_pz_state && ((y >> 1) & 1)) gfx_draw_pixel(bx, y + oy, c);
+            }
+            break;
+        }
+        case MOD_PZ_POLARITY: {
+            int px = FROM_FIXED(g_game.player.x) + ox;
+            int py = FROM_FIXED(g_game.player.y) + oy;
+            pz_draw_ring(px, py, 12, s_pz_side ? PAL_TEXT_CYAN : PAL_TEXT_RED);
+            pz_draw_ring(px, py, 13, s_pz_side ? PAL_TEXT_CYAN : PAL_TEXT_RED);
+            break;
+        }
+        case MOD_PZ_ESCORT: {
+            int ex = s_pz_escort_x + ox, ey = SCREEN_HEIGHT - 22 + oy;
+            gfx_fill_rect(ex - 20, ey - 5, 40, 10, PAL_TEXT_GREEN);
+            gfx_draw_rect(ex - 20, ey - 5, 40, 10, PAL_TEXT_WHITE);
+            gfx_draw_text(ex - 15, ey - 3, "CHUBB", PAL_TEXT_WHITE);
+            break;
+        }
+        case MOD_PZ_ALTERNATE: {
+            /* The lane tells you which side the lock wants next. */
+            int half = SCREEN_WIDTH / 2;
+            u8 c = blink ? PAL_TEXT_GOLD : PAL_TEXT_GREEN;
+            int x0 = s_pz_side ? half + 4 : 4;
+            for (int x = x0; x < x0 + half - 8; x += 8)
+                gfx_draw_pixel(x + ox, 22 + oy, c);
+            for (int y = 24; y < SCREEN_HEIGHT; y += 10)
+                gfx_draw_pixel(half + ox, y + oy, 15);
+            break;
+        }
+        case MOD_PZ_REVERSE: {
+            if (s_pz_invert)
+                gfx_draw_text_centered((SCREEN_WIDTH - 120) / 2, 22, 120,
+                                       "WIRES CROSSED", blink ? PAL_TEXT_RED : PAL_TEXT_GOLD);
+            else if (s_pz_state)
+                gfx_draw_text_centered((SCREEN_WIDTH - 120) / 2, 22, 120,
+                                       "STATIC INCOMING", PAL_TEXT_GOLD);
+            break;
+        }
+        case MOD_PZ_BLACKOUT: {
+            if (s_pz_reveal <= 0) {
+                /* A faint sweep line, so the dark still feels like radar. */
+                int y = 24 + ((s_game_frame * 2) % (SCREEN_HEIGHT - 30));
+                for (int x = 6; x < SCREEN_WIDTH - 6; x += 6)
+                    gfx_draw_pixel(x + ox, y + oy, 15);
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
 static void game_draw_static(void) {
     starfield_draw_base(0, 0);
     int wave_x = (SCREEN_WIDTH - 52) / 2;
@@ -4531,20 +5196,11 @@ void game_draw(void) {
 
     starfield_draw_stars(ox, oy);
 
-    /* Moving-lane puzzles leave a small, animated beacon trail. It is a
-     * visual promise of the safe corridor, not a hidden collision box. */
+    /* Every puzzle rule that owns something in the world - a lane, a gate, a
+     * dock, a probe, a well, a scanner beam, a transport - draws it here. */
     if (g_game.mode == GAME_MODE_STORY && !g_game.is_game_over &&
-        story_cur()->objective == OBJ_PUZZLE &&
-        (story_cur()->modifier == MOD_PZ_LANE ||
-         story_cur()->modifier == MOD_PZ_ORBIT ||
-         story_cur()->modifier == MOD_PZ_BEACON)) {
-        int lane = s_puzzle_safe_x + ox;
-        int half = (story_cur()->modifier == MOD_PZ_ORBIT) ? 16 : 24;
-        u8 lc = (story_cur()->modifier == MOD_PZ_BEACON) ? PAL_TEXT_GOLD : PAL_TEXT_CYAN;
-        for (int y = 24; y < SCREEN_HEIGHT; y += 4) {
-            gfx_draw_pixel(lane - half, y + oy, lc);
-            gfx_draw_pixel(lane + half, y + oy, lc);
-        }
+        story_cur()->objective == OBJ_PUZZLE) {
+        story_puzzle_draw_world(ox, oy);
     }
 
     for (int i = 0; i < MAX_POWERUPS; i++) {
@@ -4610,20 +5266,50 @@ void game_draw(void) {
             } else {
                 sprite = spr_ast_tiny; size = 6; radius = 3;
             }
+            bool story_puzzle = g_game.mode == GAME_MODE_STORY &&
+                                story_cur()->objective == OBJ_PUZZLE;
+            int  pz_mod = story_puzzle ? story_cur()->modifier : MOD_NONE;
+
+            /* MEMORY RUN: once the vault lights die the rocks are gone from
+             * the screen but not from the sky.  Only the radar ping and your
+             * own memory put them back. */
+            if (pz_mod == MOD_PZ_BLACKOUT && s_pz_reveal <= 0) continue;
+
             if (rainbow_asteroids)
                 gfx_draw_sprite_rainbow(ax - radius, ay - radius, size, size, sprite, s_game_frame);
             else
                 gfx_draw_sprite(ax - radius, ay - radius, size, size, sprite);
 
-            /* Target-order, type-lock and signal puzzles all advertise the
-             * current legal target with the same readable scanner language.
-             * TWIN LOCK draws a second reticle so the pair is obvious. */
-            if (g_game.mode == GAME_MODE_STORY &&
-                story_cur()->objective == OBJ_PUZZLE &&
+            /* SALVAGE RUN cells are cargo, not rocks: ring them so nobody
+             * mistakes a pickup for something that wants to kill them. */
+            if (pz_mod == MOD_PZ_COLLECT) {
+                u8 cc = ((s_game_frame >> 3) & 1) ? PAL_TEXT_GREEN : PAL_TEXT_CYAN;
+                gfx_draw_rect(ax - radius - 3, ay - radius - 3,
+                              radius * 2 + 6, radius * 2 + 6, cc);
+            }
+
+            /* OPEN SIDE: the armour plate is drawn on the half it covers. */
+            if (pz_mod == MOD_PZ_SHIELDARC) {
+                int sx = s_pz_plate[i] ? (ax - radius - 3) : (ax + radius + 1);
+                gfx_fill_rect(sx, ay - radius, 3, radius * 2, PAL_TEXT_CYAN);
+            }
+
+            /* FUSE RUN: the rock about to blow wears its countdown. */
+            if (pz_mod == MOD_PZ_FUSE && s_pz_fuse[i] > 0) {
+                int secs = (s_pz_fuse[i] + 89) / 90;
+                char fb[8];
+                siprintf(fb, "%d", secs);
+                u8 fc = (secs <= 3) ? PAL_TEXT_RED
+                      : (secs <= 6) ? PAL_TEXT_GOLD : PAL_TEXT_WHITE;
+                gfx_draw_text(ax - 2, ay - radius - 9, fb, fc);
+            }
+
+            /* The two scanner rules in the campaign light their target with
+             * the same readable reticle. */
+            if (story_puzzle &&
                 (i == s_puzzle_mark || i == s_puzzle_twin_mark) &&
-                (story_puzzle_mark_mode(story_cur()->modifier) ||
-                 story_puzzle_type_mode(story_cur()->modifier) ||
-                 story_cur()->modifier == MOD_PZ_TWIN)) {
+                (story_puzzle_mark_mode(pz_mod) ||
+                 story_puzzle_type_mode(pz_mod))) {
                 int r = radius + 5 + (((s_game_frame >> 3) & 1) ? 1 : 0);
                 u8 mc = (i == s_puzzle_twin_mark) ? PAL_TEXT_CYAN
                        : (((s_game_frame >> 3) & 1) ? PAL_TEXT_GOLD : PAL_TEXT_GREEN);
@@ -4775,26 +5461,71 @@ void game_draw(void) {
                 siprintf(obuf, "%s", story_boss_name(story_boss_for_level(s_story_level)));
                 break;
             case OBJ_PUZZLE:
-                if (story_puzzle_dodge_mode(L->modifier)) {
-                    siprintf(obuf, "DODGE  %ds", (s_story_timer + 89) / 90);
-                } else if (story_puzzle_uses_budget(L->modifier)) {
-                    siprintf(obuf, "AMMO %d  ROCKS %d", s_puzzle_ammo,
-                             count_medium_equivalents());
-                } else if (L->modifier == MOD_PZ_DRONECODE) {
-                    siprintf(obuf, "DRONES %d/%d", s_puzzle_found, (int)L->quota);
-                } else if (L->modifier == MOD_PZ_TWIN) {
-                    siprintf(obuf, "PAIRS %d/%d", s_puzzle_found, (int)L->quota);
-                } else if (story_puzzle_mark_mode(L->modifier) ||
-                           story_puzzle_type_mode(L->modifier) ||
-                           L->modifier == MOD_PZ_COMBO) {
-                    siprintf(obuf, "%s %d/%d",
-                             L->modifier == MOD_PZ_COMBO ? "CHAIN" : "TARGET",
-                             s_puzzle_found, (int)L->quota);
-                } else if (story_puzzle_timer_mode(L->modifier)) {
-                    siprintf(obuf, "ROCKS %d  %ds", count_medium_equivalents(),
-                             (s_story_timer + 89) / 90);
-                } else {
-                    siprintf(obuf, "ROCKS %d LEFT", count_medium_equivalents());
+                /* Every rule states its own scoreboard: the player should
+                 * never have to guess what this level is counting. */
+                switch (L->modifier) {
+                    case MOD_PZ_COLLECT:
+                        siprintf(obuf, "CELLS %d/%d", s_pz_goal, (int)L->quota);
+                        break;
+                    case MOD_PZ_GATES:
+                        siprintf(obuf, "GATE %d/%d", s_pz_goal + 1, (int)L->quota);
+                        break;
+                    case MOD_PZ_HERD:
+                        siprintf(obuf, "DOCKED %d/%d", s_pz_goal, (int)L->quota);
+                        break;
+                    case MOD_PZ_SCAN:
+                        siprintf(obuf, "SCAN %ds/%ds", s_pz_goal, (int)L->quota);
+                        break;
+                    case MOD_PZ_EXACT:
+                        siprintf(obuf, "LOAD %d/%d T", s_pz_goal, (int)L->quota);
+                        break;
+                    case MOD_PZ_ALTERNATE:
+                        siprintf(obuf, "%s  %d/%d", s_pz_side ? "STARBOARD" : "PORT",
+                                 s_puzzle_found, (int)L->quota);
+                        break;
+                    case MOD_PZ_FUSE:
+                        siprintf(obuf, "FUSE %ds  ROCKS %d", s_pz_goal,
+                                 count_medium_equivalents());
+                        break;
+                    case MOD_PZ_BLACKOUT:
+                        siprintf(obuf, "%s  ROCKS %d",
+                                 s_pz_reveal > 0 ? "LOOK" : "DARK",
+                                 count_medium_equivalents());
+                        break;
+                    case MOD_PZ_ESCORT:
+                        siprintf(obuf, "GUARD  ROCKS %d", count_medium_equivalents());
+                        break;
+                    case MOD_PZ_PERFECT:
+                        siprintf(obuf, "NO HITS  ROCKS %d", count_medium_equivalents());
+                        break;
+                    case MOD_PZ_SHIELDARC:
+                        siprintf(obuf, "OPEN SIDE %d/%d", s_puzzle_found, (int)L->quota);
+                        break;
+                    case MOD_PZ_POLARITY:
+                        siprintf(obuf, "%s  %ds", s_pz_side ? "BLUE" : "RED",
+                                 (s_story_timer + 89) / 90);
+                        break;
+                    case MOD_PZ_DRONECODE:
+                        siprintf(obuf, "DRONES %d/%d", s_puzzle_found, (int)L->quota);
+                        break;
+                    case MOD_PZ_COMBO:
+                        siprintf(obuf, "CHAIN %d/%d", s_puzzle_found, (int)L->quota);
+                        break;
+                    default:
+                        if (story_puzzle_dodge_mode(L->modifier)) {
+                            siprintf(obuf, "SURVIVE  %ds", (s_story_timer + 89) / 90);
+                        } else if (story_puzzle_uses_budget(L->modifier)) {
+                            siprintf(obuf, "AMMO %d  ROCKS %d", s_puzzle_ammo,
+                                     count_medium_equivalents());
+                        } else if (story_puzzle_counts_targets(L->modifier)) {
+                            siprintf(obuf, "TARGET %d/%d", s_puzzle_found, (int)L->quota);
+                        } else if (story_puzzle_timer_mode(L->modifier)) {
+                            siprintf(obuf, "ROCKS %d  %ds", count_medium_equivalents(),
+                                     (s_story_timer + 89) / 90);
+                        } else {
+                            siprintf(obuf, "ROCKS %d LEFT", count_medium_equivalents());
+                        }
+                        break;
                 }
                 break;
             default: {
@@ -4902,23 +5633,7 @@ void game_draw(void) {
                     case OBJ_SURVIVE: objn = "SURVIVE THE FIELD"; break;
                     case OBJ_BIGGAME: objn = "CRACK THE BIG ONES"; break;
                     case OBJ_TIMED:   objn = "CLEAR IT BEFORE THE CLOCK"; break;
-                    case OBJ_PUZZLE:
-                        objn = story_puzzle_dodge_mode(L->modifier)
-                                 ? "GUNS DEAD - DODGE IT ALL"
-                             : story_puzzle_uses_budget(L->modifier)
-                                 ? "CLEAR IT ON EXACT SHOTS"
-                             : (L->modifier == MOD_PZ_DRONECODE)
-                                 ? "DECODE THE FIGHTERS"
-                             : (L->modifier == MOD_PZ_TWIN)
-                                 ? "CLEAR THE LIT PAIRS"
-                             : story_puzzle_mark_mode(L->modifier)
-                                 ? "FOLLOW THE TARGET ORDER"
-                             : story_puzzle_type_mode(L->modifier)
-                                 ? "BREAK ONLY THE CODED TYPE"
-                             : (L->modifier == MOD_PZ_COMBO)
-                                 ? "BUILD THE CLEAN CHAIN"
-                                 : "SOLVE THE FIELD RULE";
-                        break;
+                    case OBJ_PUZZLE: objn = story_puzzle_rule_line(L->modifier); break;
                     default:          objn = "CLEAR EVERYTHING"; break;
                 }
                 const char* modn = story_modifier_name(L->modifier);
@@ -4981,8 +5696,8 @@ void game_draw(void) {
         // Boss hull: a real pixel-art ship in the fleet's own art style.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
         if (g_game.mode == GAME_MODE_STORY) {
-            int spr = BOSS_SPR_IRONMAW + g_game.boss.story_id;
-            if (spr < BOSS_SPR_IRONMAW || spr >= NUM_BOSS_SPRITES) spr = BOSS_SPR_IRONMAW;
+            int spr = BOSS_SPR_ALIEN + g_game.boss.story_id;
+            if (spr < BOSS_SPR_ALIEN || spr >= NUM_BOSS_SPRITES) spr = BOSS_SPR_ALIEN;
             gfx_draw_boss_ship(bxi, byi, spr, 2, flash != 0, s_game_frame);
         } else {
             gfx_draw_boss_ship(bxi, byi,
@@ -4990,36 +5705,47 @@ void game_draw(void) {
                                g_game.boss.mini ? 1 : 2, flash != 0, s_game_frame);
         }
 
-        /* Story boss extras: Gemini's second hull and the Aegis/Juggernaut
+        /* Story boss extras: Splinter's second hull and the Bulwark/Sledge
          * nodes are real, shootable parts, so they must be drawn. */
         if (g_game.mode == GAME_MODE_STORY) {
             const Boss* sb = &g_game.boss;
-            if (sb->story_id == SBOSS_GEMINI && sb->clone_active) {
+            if (sb->story_id == SBOSS_SPLINTER && sb->clone_active) {
                 /* The severed twin: same hull, 1x, so the pair still reads
                  * as two halves of one catamaran. */
                 int qx = FROM_FIXED(sb->clone_x) + ox;
                 int qy = FROM_FIXED(sb->clone_y) + oy;
-                gfx_draw_boss_ship(qx, qy, BOSS_SPR_GEMINI, 1,
+                gfx_draw_boss_ship(qx, qy, BOSS_SPR_SPLINTER, 1,
                                    sb->flash_timer > 0, s_game_frame);
             }
-            if (sb->story_id == SBOSS_AEGIS || sb->story_id == SBOSS_JUGGERNAUT ||
-                sb->story_id == SBOSS_INFERNO || sb->story_id == SBOSS_REALITY_QUEEN) {
-                int n = (sb->story_id == SBOSS_INFERNO) ? 3 : 4;
-                for (int i = 0; i < n; i++) {
-                    if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage != 1) continue;
+            /* Only two bosses in the campaign have parts to shoot off: the
+             * Bulwark's turret nodes and the Sledge's armour plates. */
+            if (sb->story_id == SBOSS_BULWARK || sb->story_id == SBOSS_SLEDGE) {
+                for (int i = 0; i < 4; i++) {
                     if (sb->node_hp[i] <= 0) continue;
-                    int ang = sb->spin + i * (65536 / n);
-                    int rad = (sb->story_id == SBOSS_INFERNO) ? 26 : 30;
-                    int nx = bxi + ((lu_cos(ang) * rad) >> 12);
+                    int ang = sb->spin + i * 16384;
+                    int nx = bxi + ((lu_cos(ang) * 30) >> 12);
                     int ny = byi + ((lu_sin(ang) * 22) >> 12);
-                    u8 col = (sb->story_id == SBOSS_AEGIS) ? PAL_TEXT_CYAN :
-                             (sb->story_id == SBOSS_INFERNO) ? PAL_TEXT_RED :
-                             (sb->story_id == SBOSS_REALITY_QUEEN) ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD;
+                    u8 col = (sb->story_id == SBOSS_BULWARK) ? PAL_TEXT_CYAN : PAL_TEXT_GOLD;
                     gfx_fill_rect(nx - 4, ny - 4, 8, 8, col);
                     gfx_fill_rect(nx - 2, ny - 2, 4, 4, PAL_TEXT_WHITE);
                 }
             }
-            if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage == 0) {
+            /* Wildfire wears its heat instead: a gauge of embers round the
+             * hull, and a bright halo the moment it vents. */
+            if (sb->story_id == SBOSS_WILDFIRE) {
+                int heat = sb->charge;
+                if (heat > 300) heat = 300;
+                int lit = (heat * 8) / 300;
+                for (int i = 0; i < lit; i++) {
+                    int ang = sb->spin + i * (65536 / 8);
+                    int nx = bxi + ((lu_cos(ang) * 28) >> 12);
+                    int ny = byi + ((lu_sin(ang) * 20) >> 12);
+                    gfx_fill_rect(nx - 2, ny - 2, 4, 4,
+                                  sb->shield ? PAL_TEXT_GOLD : PAL_TEXT_RED);
+                }
+                if (sb->shield) pz_draw_ring(bxi, byi, 34, PAL_TEXT_GOLD);
+            }
+            if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage < 2) {
                 int face = sb->charge & 3;
                 int ox = (face & 1) ? 10 : -10;
                 int oy = (face & 2) ? 8 : -6;
@@ -5045,16 +5771,13 @@ void game_draw(void) {
 #endif
         if (hp_w < 0) hp_w = 0;
         if (hp_w > bar_w) hp_w = bar_w;
-        /* Some story bosses are not health-bar fights until a part falls. */
+        /* The two part-bosses are not health-bar fights until their parts
+         * fall off, so an empty bar is the honest reading. */
         if (g_game.mode == GAME_MODE_STORY) {
             int sid0 = g_game.boss.story_id;
-            int parts = 0;
-            if (sid0 == SBOSS_AEGIS || sid0 == SBOSS_JUGGERNAUT ||
-                (sid0 == SBOSS_REALITY_QUEEN && g_game.boss.stage == 1)) {
+            if (sid0 == SBOSS_BULWARK || sid0 == SBOSS_SLEDGE) {
+                int parts = 0;
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) parts++;
-                if (parts > 0) hp_w = 0;
-            } else if (sid0 == SBOSS_INFERNO) {
-                for (int i = 0; i < 3; i++) if (g_game.boss.node_hp[i] > 0) parts++;
                 if (parts > 0) hp_w = 0;
             }
         }
@@ -5064,7 +5787,7 @@ void game_draw(void) {
             gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH, story_boss_name(sid), PAL_TEXT_RED);
             /* Aegis: show how many turret nodes are still sealing the
              * hull, so the player understands why damage is bouncing off. */
-            if (sid == SBOSS_AEGIS) {
+            if (sid == SBOSS_BULWARK) {
                 int alive = 0;
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) alive++;
                 if (alive > 0) {
@@ -5072,7 +5795,7 @@ void game_draw(void) {
                     siprintf(nbuf, "SHIELDED - %d NODES", alive);
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
                 }
-            } else if (sid == SBOSS_JUGGERNAUT) {
+            } else if (sid == SBOSS_SLEDGE) {
                 int plates = 0;
                 for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) plates++;
                 if (plates > 0) {
@@ -5080,44 +5803,41 @@ void game_draw(void) {
                     siprintf(nbuf, "ARMOUR %d/4", plates);
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_CYAN);
                 }
-            } else if (sid == SBOSS_ALIEN && g_game.boss.charge) {
-                /* The clamp window: shout the punish. */
-                if ((s_game_frame >> 2) & 1)
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "JAWS CLAMPED - HIT IT NOW", PAL_TEXT_GOLD);
-            } else if (sid == SBOSS_FROSTBITE && s_frost_ice > 64) {
+            } else if (sid == SBOSS_ALIEN) {
+                /* No gimmick to explain - say so, and let them shoot. */
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                       "NO TRICKS - JUST SHOOT IT", PAL_TEXT_GREEN);
+            } else if (sid == SBOSS_COLDSNAP && s_frost_ice > 64) {
                 /* Engine icing meter: the player must see WHY they slowed. */
                 char nbuf[28];
                 siprintf(nbuf, "ENGINES ICING %d%%", (s_frost_ice * 100) / 256);
                 gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf,
                                        s_frost_ice > 192 ? PAL_TEXT_RED : PAL_TEXT_CYAN);
-            } else if (sid == SBOSS_GEMINI && g_game.boss.clone_active) {
+            } else if (sid == SBOSS_SPLINTER && g_game.boss.clone_active) {
                 gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                        "TWIN HULLS - SHARE THE POOL", PAL_TEXT_CYAN);
-            } else if (sid == SBOSS_INFERNO) {
-                int cores = 0;
-                for (int i = 0; i < 3; i++) if (g_game.boss.node_hp[i] > 0) cores++;
-                if (cores > 0) {
-                    char nbuf[28];
-                    siprintf(nbuf, "SEALED - %d CORES", cores);
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_RED);
+            } else if (sid == SBOSS_WILDFIRE) {
+                if (g_game.boss.shield) {
+                    if ((s_game_frame >> 2) & 1)
+                        gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                               "VENTING - HIT IT NOW", PAL_TEXT_GOLD);
                 } else {
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "FURNACE OPEN", PAL_TEXT_GOLD);
+                    char nbuf[28];
+                    int heat = (g_game.boss.charge * 100) / 300;
+                    if (heat > 99) heat = 99;
+                    siprintf(nbuf, "PLATED - HEAT %d%%", heat);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_RED);
                 }
             } else if (sid == SBOSS_REALITY_QUEEN) {
                 if (g_game.boss.stage == 0) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "SHOOT THE OPEN FACE", PAL_TEXT_VIOLET);
                 } else if (g_game.boss.stage == 1) {
-                    int pyl = 0;
-                    for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) pyl++;
-                    char nbuf[28];
-                    siprintf(nbuf, "PYLONS %d/4", pyl);
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_GOLD);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "SHE IS FOLDING THE ARENA", PAL_TEXT_GOLD);
                 } else {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "CORE EXPOSED - FOLDING", PAL_TEXT_RED);
+                                           "CORE EXPOSED - FINISH HER", PAL_TEXT_RED);
                 }
             }
         } else {
@@ -5137,12 +5857,23 @@ void game_draw(void) {
         }
     }
 
-    // Boss bullets
+    // Boss bullets.  Normally they cycle through the laser palette; on the
+    // POLARITY puzzle the colour IS the rule, so they are drawn as flat red
+    // and blue blobs that can be read at a glance.
+    bool polarity_fire = g_game.mode == GAME_MODE_STORY &&
+                         story_cur()->objective == OBJ_PUZZLE &&
+                         story_cur()->modifier == MOD_PZ_POLARITY;
     for (int i = 0; i < MAX_BOSS_BULLETS; i++) {
         if (g_game.boss_bullets[i].active) {
             int bx = FROM_FIXED(g_game.boss_bullets[i].x) + ox;
             int by = FROM_FIXED(g_game.boss_bullets[i].y) + oy;
             bool heavy = g_game.boss_bullets[i].heavy;
+            if (polarity_fire) {
+                u8 pc = heavy ? PAL_TEXT_CYAN : PAL_TEXT_RED;
+                gfx_fill_rect(bx - 3, by - 3, 6, 6, pc);
+                gfx_fill_rect(bx - 1, by - 1, 2, 2, PAL_TEXT_WHITE);
+                continue;
+            }
             int c = (s_game_frame + i) % NUM_LASERS;
             gfx_draw_laser(bx, by, heavy, c, s_game_frame, true);
         }
