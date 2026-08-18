@@ -80,13 +80,13 @@ typedef struct {
  * Levels 10/20/30/40/50/60/70.  Each has its own attack script, movement
  * and a KEY MECHANIC no other boss uses — see story_boss_ai() in game.c. */
 typedef enum {
-    SBOSS_IRONMAW = 0,   /* L10 - BITE: jaws lunge and clamp a no-fly zone */
-    SBOSS_GEMINI,        /* L20 - SPLIT: two mirrored hulls, shared pool */
-    SBOSS_FROSTBITE,     /* L30 - FREEZE: engine icing slows your ship */
-    SBOSS_JUGGERNAUT,    /* L40 - CRUSH: armour plates + magnet drag */
-    SBOSS_INFERNO,       /* L50 - BURN: ever-rotating fire whips */
+    SBOSS_IRONMAW = 0,   /* L10 - BITE: only the clamp window is a real punish */
+    SBOSS_GEMINI,        /* L20 - SPLIT: two hulls, sandwich crossfire */
+    SBOSS_FROSTBITE,     /* L30 - ICING: standing still freezes your engines */
+    SBOSS_JUGGERNAUT,    /* L40 - CRUSH: break plates first, no hull HP until then */
+    SBOSS_INFERNO,       /* L50 - BURN: shoot the orbiting cores, whips never stop */
     SBOSS_AEGIS,         /* L60 - SEAL: invulnerable until nodes fall */
-    SBOSS_EMPRESS        /* L70 - UNMAKE: reality tears, 3 stage finale */
+    SBOSS_EMPRESS        /* L70 - THE CUBE QUEEN: fold the arena, open-face DPS */
 } StoryBossId;
 
 extern const StoryLevel g_story_levels[STORY_LEVEL_COUNT];

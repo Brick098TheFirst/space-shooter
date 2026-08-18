@@ -1667,8 +1667,16 @@ static void story_spawn_boss(int boss_id) {
     b->clone_active = false;
 
     if (boss_id == SBOSS_JUGGERNAUT || boss_id == SBOSS_AEGIS) {
-        for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
+        for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 10;
         if (boss_id == SBOSS_AEGIS) b->shield = 1;
+    }
+    if (boss_id == SBOSS_INFERNO) {
+        for (int i = 0; i < 3; i++) b->node_hp[i] = b->hp_max / 8;
+        b->node_hp[3] = 0;
+    }
+    if (boss_id == SBOSS_EMPRESS) {
+        for (int i = 0; i < 4; i++) b->node_hp[i] = b->hp_max / 12;
+        b->charge = 1;
     }
 
     g_game.boss_active = true;
@@ -1740,23 +1748,24 @@ static int sb_next_attack(Boss* b, int count) {
 }
 
 /* ── BOSS 1 - IRONMAW (L10) ───────────────────────────────────────────────
- * A forked-jaw hunter.  KEY MECHANIC - THE BITE: it lines up on your
- * column, telegraphs, then lunges and SNAPS ITS JAWS SHUT at your altitude.
- * The snap is lethal, but a missed bite leaves the jaws clamped and the
- * hull straining for a moment — during that clamp it takes DOUBLE damage.
- * The whole fight is bait-the-bite, then punish the clamp. */
+ * KEY MECHANIC - THE BITE. This is not a shooting gallery: the hull is
+ * plated (1/3 damage) until a missed lunge leaves the jaws CLAMPED.
+ * During the clamp the plates gap and it takes double. Bait the dive,
+ * then empty the guns into the strain. */
 static void sb_ironmaw(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     switch (b->phase) {
         case SB_IDLE:
-            sb_drift(b, TO_FIXED(1) + 60);
+            sb_drift(b, TO_FIXED(1) + 40);
             sb_hover(b, 34, TO_FIXED(1));
+            /* Almost no idle fire — the bite IS the fight. */
             if (--b->cooldown <= 0) {
-                sb_shoot_at_player(cx, cy + 14, TO_FIXED(4), 0);
-                b->cooldown = (sb_hp_pct(b) < 40) ? 26 : 40;
+                add_boss_bullet(b->x, b->y + TO_FIXED(12), 0, TO_FIXED(3), false);
+                b->cooldown = 70;
             }
             if (b->phase_timer <= 0) {
-                b->phase = sb_next_attack(b, 2);
+                /* 2-in-3 chance to bite so the punish window keeps coming. */
+                b->phase = ((rand() % 3) == 0) ? SB_ATTACK_B : SB_ATTACK_A;
                 b->phase_timer = 150;
                 b->aim_x = ai_target_ship()->x;
                 b->charge = 0;
@@ -1925,6 +1934,12 @@ static void sb_frostbite(Boss* b) {
             sb_hover(b, 30, TO_FIXED(1));
             sb_drift(b, TO_FIXED(1) + 100);
             if (--b->cooldown <= 0) { sb_fan(cx, cy + 12, 3, TO_FIXED(4), 6000); b->cooldown = 34; }
+    }
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 30, TO_FIXED(1));
+            sb_drift(b, TO_FIXED(1) + 100);
+            if (--b->cooldown <= 0) { sb_fan(cx, cy + 12, 3, TO_FIXED(4), 6000); b->cooldown = 34; }
             if (b->phase_timer <= 0) {
                 b->phase = sb_next_attack(b, 3);
                 b->phase_timer = 160;
@@ -1989,8 +2004,10 @@ static void sb_frostbite(Boss* b) {
 }
 
 /* ── BOSS 4 - JUGGERNAUT (L40) ───────────────────────────────────────────
- * Four armour plates soak damage until broken; it drags you toward it with a
- * magnet field and hurls whole asteroids. Slow, heavy, unavoidable pressure. */
+ * KEY MECHANIC - CRUSH. This is NOT a health-bar fight until the four
+ * armour plates are gone. The hull takes ZERO damage while any plate
+ * lives. Break the plates, then punish the exposed machine while it
+ * magnet-drags you into its rings and slams the floor. */
 static void sb_juggernaut(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int plates = 0;
@@ -2041,11 +2058,14 @@ static void sb_juggernaut(Boss* b) {
 }
 
 /* ── BOSS 5 - INFERNO (L50) ─────────────────────────────────────────────
- * Two counter-rotating whips of fire. The safe gaps rotate continuously, so
- * you must keep orbiting rather than camping a corner. */
+ * KEY MECHANIC - THE BURN. Two fire whips never stop. The hull is sealed
+ * until the three orbiting ember cores are shot off. After that the
+ * furnace is open — but the whips stay live the whole fight. */
 static void sb_inferno(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
-    b->spin += (sb_hp_pct(b) < 45) ? 1500 : 1000;
+    int cores = 0;
+    for (int i = 0; i < 3; i++) if (b->node_hp[i] > 0) cores++;
+    b->spin += (cores > 0) ? 1100 : 1600;
 
     switch (b->phase) {
         case SB_IDLE:
@@ -2162,30 +2182,33 @@ static void sb_aegis(Boss* b) {
     }
 }
 
-/* ── BOSS 7 - THE VOID EMPRESS (L70) ─────────────────────────────────────
- * The finale. Jack flies as the Reality King against the Void Empress, in
- * three cinematic stages: her honour guard, the unmaking (reality tears that
- * rewrite the field), and a last desperate all-out barrage.
- * KEY MECHANIC - THE UNMAKING: twin mirrored reality tears claim whole
- * columns of space, and each stage she reaches unmakes MORE of the sky
- * (stage 2 doubles the tear), so the arena itself shrinks as she weakens. */
+/* ── BOSS 7 - THE CUBE QUEEN (L70) ───────────────────────────────────────
+ * KEY MECHANIC - THE FOLD. Three stages that are not the same fight:
+ *   0  OPEN FACE     only the glowing face takes full damage
+ *   1  PYLONS        four cube corners must be shot off (no hull HP)
+ *   2  CORE          last-stand core that folds you across the screen
+ * Axis-aligned cube shot is her handwriting. */
 static void sb_empress(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int pct = sb_hp_pct(b);
+    int pylons = 0;
+    for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) pylons++;
 
-    /* Stage transitions punctuate the fight with a stagger + shockwave. */
     if (b->stage == 0 && pct <= 66) {
         b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 110;
-        g_game.shake_timer = 30; g_game.wave_banner_timer = 100;
-    } else if (b->stage == 1 && pct <= 33) {
+        g_game.shake_timer = 30;
+        for (int i = 0; i < 4; i++) if (b->node_hp[i] <= 0) b->node_hp[i] = b->hp_max / 12;
+    } else if (b->stage == 1 && pylons == 0) {
         b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 110;
-        g_game.shake_timer = 40; g_game.wave_banner_timer = 100;
+        g_game.shake_timer = 40;
     }
 
-    b->spin += 800 + b->stage * 400;
+    b->spin += 600 + b->stage * 350;
+    if (b->stage == 0 && (s_game_frame % 180) == 0)
+        b->charge = (b->charge + 1) & 3;
 
     switch (b->phase) {
-        case SB_STAGGER:      /* cinematic beat: she reels, the screen burns */
+        case SB_STAGGER:
             sb_hover(b, 30, TO_FIXED(1));
             if ((b->phase_timer & 3) == 0) {
                 trigger_explosion(cx + (rand() % 40) - 20, cy + (rand() % 20) - 10);
@@ -2193,72 +2216,79 @@ static void sb_empress(Boss* b) {
                                PAL_TEXT_VIOLET, 12);
             }
             if (b->phase_timer <= 0) {
-                sb_ring(cx, cy, 16, TO_FIXED(3), b->spin, 2);   /* shockwave */
+                for (int k = 0; k < 8; k++) {
+                    int ang = k * 8192;
+                    add_boss_bullet(b->x, b->y,
+                                    (lu_cos(ang) * TO_FIXED(3)) >> 12,
+                                    (lu_sin(ang) * TO_FIXED(3)) >> 12, k & 1);
+                }
                 b->phase = SB_IDLE; b->phase_timer = 60; b->cooldown = 20;
             }
             break;
         case SB_IDLE:
-            sb_hover(b, 30, TO_FIXED(1) + 60);
-            sb_drift(b, TO_FIXED(2));
+            sb_hover(b, 30, TO_FIXED(1) + 40);
+            sb_drift(b, TO_FIXED(1) + 80);
             if (--b->cooldown <= 0) {
-                sb_shoot_at_player(cx, cy + 14, TO_FIXED(5), 1);
-                b->cooldown = 30 - b->stage * 6;
+                add_boss_bullet(b->x, b->y, 0, TO_FIXED(4), true);
+                add_boss_bullet(b->x, b->y, TO_FIXED(3), 0, false);
+                add_boss_bullet(b->x, b->y, -TO_FIXED(3), 0, false);
+                b->cooldown = 36 - b->stage * 6;
             }
             if (b->phase_timer <= 0) {
                 b->phase = sb_next_attack(b, b->stage >= 1 ? 3 : 2);
-                b->phase_timer = 170;
+                b->phase_timer = 160;
                 b->beam_x = ai_target_ship()->x;
             }
             break;
-        case SB_ATTACK_A:     /* HONOUR GUARD: spiral lattice */
+        case SB_ATTACK_A:
             sb_hover(b, 26, TO_FIXED(1));
-            if ((b->phase_timer % (14 - b->stage * 3)) == 0)
-                sb_ring(cx, cy, 8 + b->stage * 2, TO_FIXED(3), b->spin, 3);
+            if ((b->phase_timer % 18) == 0) {
+                int step = 36;
+                int ox = (b->phase_timer / 6) % step;
+                for (int x = 10 + ox; x < SCREEN_WIDTH - 8; x += step)
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 10), 0, TO_FIXED(3), false);
+                for (int y = 20; y < SCREEN_HEIGHT - 20; y += step)
+                    add_boss_bullet(TO_FIXED(cx), TO_FIXED(y),
+                                    (b->sweep_dir > 0) ? TO_FIXED(2) : -TO_FIXED(2), 0, false);
+            }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24; }
             break;
-        case SB_ATTACK_B: {   /* THE UNMAKING: twin tearing beams */
-            if (b->phase_timer > 120) {
-                b->beam_x = ai_target_ship()->x;
-                if ((b->phase_timer & 2) == 0)
-                    spawn_particle(b->beam_x + TO_FIXED((rand() & 15) - 8), TO_FIXED(30 + rand() % 100),
-                                   0, 90, PAL_TEXT_VIOLET, 9);
-                b->beam_timer = 0;
-            } else {
-                if (b->beam_timer == 0) b->beam_timer = 120;
-                b->beam_timer--;
-                int diff = ai_target_ship()->x - b->beam_x;
-                int step = TO_FIXED(1) / 5;
-                if (diff > step) b->beam_x += step; else if (diff < -step) b->beam_x -= step;
-                int beam_px = FROM_FIXED(b->beam_x);
-                int px = FROM_FIXED(g_game.player.x), py = FROM_FIXED(g_game.player.y);
-                int half = 10;
-                /* Mirrored second tear on the opposite side of the screen. */
-                int mirror_px = SCREEN_WIDTH - beam_px;
-                if (g_game.player.invulnerable_timer == 0 && py > 12 &&
-                    ((px >= beam_px - half && px <= beam_px + half) ||
-                     (b->stage >= 2 && px >= mirror_px - half && px <= mirror_px + half)))
-                    damage_player();
-                if ((b->phase_timer & 1) == 0) {
-                    spawn_particle(TO_FIXED(beam_px + (rand() & 31) - 15), TO_FIXED(20 + rand() % 120),
-                                   (rand() & 63) - 32, -((rand() & 31) + 40), PAL_TEXT_VIOLET, 10);
-                    if (b->stage >= 2)
-                        spawn_particle(TO_FIXED(mirror_px + (rand() & 31) - 15), TO_FIXED(20 + rand() % 120),
-                                       (rand() & 63) - 32, -((rand() & 31) + 40), PAL_TEXT_RED, 10);
+        case SB_ATTACK_B: {
+            if (b->phase_timer > 80) {
+                int px = FROM_FIXED(g_game.player.x);
+                int dest = SCREEN_WIDTH - px;
+                if ((b->phase_timer & 2) == 0) {
+                    spawn_particle(TO_FIXED(px + (rand() & 7) - 4), g_game.player.y,
+                                   0, -80, PAL_TEXT_VIOLET, 8);
+                    spawn_particle(TO_FIXED(dest + (rand() & 7) - 4), g_game.player.y,
+                                   0, -80, PAL_TEXT_GOLD, 8);
                 }
+            } else if (b->phase_timer == 80) {
+                g_game.player.x = TO_FIXED(SCREEN_WIDTH) - g_game.player.x;
+                g_game.shake_timer = 16;
+                audio_play_sfx(SFX_EXPLOSION);
+            } else {
+                if ((b->phase_timer % 10) == 0)
+                    add_boss_bullet(b->x - TO_FIXED(16), b->y, 0, TO_FIXED(3) + 40, false);
+                if ((b->phase_timer % 10) == 5)
+                    add_boss_bullet(b->x + TO_FIXED(16), b->y, 0, TO_FIXED(3) + 40, false);
             }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 24; }
             break;
         }
-        case SB_ATTACK_C:     /* NO TOMORROW: curtain + aimed lances, with gaps */
-            sb_drift(b, TO_FIXED(3));
-            if ((b->phase_timer % 16) == 0) {
-                int gap = 24 + (rand() % (SCREEN_WIDTH - 80));
-                for (int x = 14; x < SCREEN_WIDTH - 14; x += 24) {
-                    if (x > gap && x < gap + 46) continue;
-                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 14), 0, TO_FIXED(3) + 40, false);
+        case SB_ATTACK_C:
+            sb_hover(b, 28, TO_FIXED(1));
+            if ((b->phase_timer % 20) == 0) {
+                int gap = 28 + (rand() % (SCREEN_WIDTH - 80));
+                for (int x = 12; x < SCREEN_WIDTH - 10; x += 22) {
+                    if (x > gap && x < gap + 48) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 12), 0, TO_FIXED(3) + 20, false);
                 }
             }
-            if ((b->phase_timer % 40) == 0) sb_shoot_at_player(cx, cy + 14, TO_FIXED(6), 1);
+            if (b->stage >= 2 && (b->phase_timer % 70) == 35) {
+                g_game.player.x = TO_FIXED(SCREEN_WIDTH) - g_game.player.x;
+                g_game.shake_timer = 10;
+            }
             if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 20; }
             break;
         default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; break;
@@ -2272,10 +2302,62 @@ static void sb_empress(Boss* b) {
 static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
     if (g_game.mode != GAME_MODE_STORY) return dmg;
 
-    /* Ironmaw's clamp window: a missed bite leaves the jaws straining and
-     * the hull takes DOUBLE damage until it recovers (see sb_ironmaw). */
-    if (b->story_id == SBOSS_IRONMAW && b->charge)
-        return dmg * 2;
+    if (b->story_id == SBOSS_IRONMAW) {
+        if (b->charge) return dmg * 2;
+        int chip = dmg / 3;
+        return chip > 0 ? chip : 1;
+    }
+
+    if (b->story_id == SBOSS_INFERNO) {
+        int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+        int best = -1, best_d = 0;
+        for (int i = 0; i < 3; i++) {
+            if (b->node_hp[i] <= 0) continue;
+            int ang = b->spin + i * 21845;
+            int nx = cx + ((lu_cos(ang) * 26) >> 12);
+            int ny = cy + ((lu_sin(ang) * 20) >> 12);
+            int d = (hit_x - nx) * (hit_x - nx) + (hit_y - ny) * (hit_y - ny);
+            if (best < 0 || d < best_d) { best = i; best_d = d; }
+        }
+        if (best >= 0) {
+            b->node_hp[best] -= dmg;
+            if (b->node_hp[best] <= 0) {
+                b->node_hp[best] = 0;
+                trigger_explosion(hit_x, hit_y);
+                g_game.shake_timer = 14;
+            }
+            b->flash_timer = 4;
+            return 0;
+        }
+        return dmg;
+    }
+
+    if (b->story_id == SBOSS_EMPRESS) {
+        if (b->stage == 0) {
+            int face = (b->charge & 3);
+            int hit_face = ((hit_x - FROM_FIXED(b->x)) > 0) ? 1 : 0;
+            if ((hit_y - FROM_FIXED(b->y)) > 0) hit_face += 2;
+            if (hit_face == face) return dmg;
+            int chip = dmg / 4;
+            return chip > 0 ? chip : 1;
+        }
+        if (b->stage == 1) {
+            int best = -1;
+            for (int i = 0; i < 4; i++) if (b->node_hp[i] > 0) { best = i; break; }
+            if (best >= 0) {
+                b->node_hp[best] -= dmg;
+                if (b->node_hp[best] <= 0) {
+                    b->node_hp[best] = 0;
+                    trigger_explosion(hit_x, hit_y);
+                    g_game.shake_timer = 16;
+                }
+                b->flash_timer = 4;
+                return 0;
+            }
+            return dmg;
+        }
+        return dmg;
+    }
 
     if (b->story_id == SBOSS_AEGIS) {
         int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
@@ -2311,7 +2393,7 @@ static int story_boss_absorb(Boss* b, int dmg, int hit_x, int hit_y) {
                     trigger_explosion(hit_x, hit_y);
                     g_game.shake_timer = 14;
                 }
-                return dmg / 4;         /* plates bleed most of the hit */
+                return 0;               /* no hull HP until every plate is gone */
             }
         }
         return dmg;
@@ -3722,7 +3804,15 @@ static void game_update_tick(void) {
                 int tick = (b->hp_max << 8) / denom;
                 if (tick < 1) tick = 1;
                 b->hp_frac += tick;
-                while (b->hp_frac >= 256) { b->hp_frac -= 256; b->hp--; }
+                while (b->hp_frac >= 256) {
+                    b->hp_frac -= 256;
+                    int dmg = 1;
+                    if (g_game.mode == GAME_MODE_STORY)
+                        dmg = story_boss_absorb(b, 1, pbx, boss_cy);
+                    else
+                        dmg = arcade_boss_scale_damage(b, 1);
+                    b->hp -= dmg;
+                }
                 b->flash_timer = 4;
                 if (b->hp <= 0) defeat_boss(b, boss_cx, boss_cy);
             }
@@ -3731,7 +3821,15 @@ static void game_update_tick(void) {
             int pbx = FROM_FIXED(g_game.player.x);
             if (boss_cx + boss_r >= pbx - 6 && boss_cx - boss_r <= pbx + 6) {
                 b->hp_frac += primary_beam_tick_damage(g_game.primary_beam_ramp);
-                while (b->hp_frac >= 256) { b->hp_frac -= 256; b->hp--; }
+                while (b->hp_frac >= 256) {
+                    b->hp_frac -= 256;
+                    int dmg = 1;
+                    if (g_game.mode == GAME_MODE_STORY)
+                        dmg = story_boss_absorb(b, 1, pbx, boss_cy);
+                    else
+                        dmg = arcade_boss_scale_damage(b, 1);
+                    b->hp -= dmg;
+                }
                 b->flash_timer = 4;
                 if (b->hp <= 0) defeat_boss(b, boss_cx, boss_cy);
             }
@@ -4432,16 +4530,29 @@ void game_draw(void) {
                 gfx_draw_boss_ship(qx, qy, BOSS_SPR_GEMINI, 1,
                                    sb->flash_timer > 0, s_game_frame);
             }
-            if (sb->story_id == SBOSS_AEGIS || sb->story_id == SBOSS_JUGGERNAUT) {
-                for (int i = 0; i < 4; i++) {
+            if (sb->story_id == SBOSS_AEGIS || sb->story_id == SBOSS_JUGGERNAUT ||
+                sb->story_id == SBOSS_INFERNO || sb->story_id == SBOSS_EMPRESS) {
+                int n = (sb->story_id == SBOSS_INFERNO) ? 3 : 4;
+                for (int i = 0; i < n; i++) {
+                    if (sb->story_id == SBOSS_EMPRESS && sb->stage != 1) continue;
                     if (sb->node_hp[i] <= 0) continue;
-                    int ang = sb->spin + i * 16384;
-                    int nx = bxi + ((lu_cos(ang) * 30) >> 12);
+                    int ang = sb->spin + i * (65536 / n);
+                    int rad = (sb->story_id == SBOSS_INFERNO) ? 26 : 30;
+                    int nx = bxi + ((lu_cos(ang) * rad) >> 12);
                     int ny = byi + ((lu_sin(ang) * 22) >> 12);
-                    u8 col = (sb->story_id == SBOSS_AEGIS) ? PAL_TEXT_CYAN : PAL_TEXT_GOLD;
+                    u8 col = (sb->story_id == SBOSS_AEGIS) ? PAL_TEXT_CYAN :
+                             (sb->story_id == SBOSS_INFERNO) ? PAL_TEXT_RED :
+                             (sb->story_id == SBOSS_EMPRESS) ? PAL_TEXT_VIOLET : PAL_TEXT_GOLD;
                     gfx_fill_rect(nx - 4, ny - 4, 8, 8, col);
                     gfx_fill_rect(nx - 2, ny - 2, 4, 4, PAL_TEXT_WHITE);
                 }
+            }
+            if (sb->story_id == SBOSS_EMPRESS && sb->stage == 0) {
+                int face = sb->charge & 3;
+                int ox = (face & 1) ? 10 : -10;
+                int oy = (face & 2) ? 8 : -6;
+                u8 col = ((s_game_frame >> 3) & 1) ? PAL_TEXT_GOLD : PAL_TEXT_VIOLET;
+                gfx_fill_rect(bxi + ox - 3, byi + oy - 3, 6, 6, col);
             }
         }
 
@@ -4462,6 +4573,19 @@ void game_draw(void) {
 #endif
         if (hp_w < 0) hp_w = 0;
         if (hp_w > bar_w) hp_w = bar_w;
+        /* Some story bosses are not health-bar fights until a part falls. */
+        if (g_game.mode == GAME_MODE_STORY) {
+            int sid0 = g_game.boss.story_id;
+            int parts = 0;
+            if (sid0 == SBOSS_AEGIS || sid0 == SBOSS_JUGGERNAUT ||
+                (sid0 == SBOSS_EMPRESS && g_game.boss.stage == 1)) {
+                for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) parts++;
+                if (parts > 0) hp_w = 0;
+            } else if (sid0 == SBOSS_INFERNO) {
+                for (int i = 0; i < 3; i++) if (g_game.boss.node_hp[i] > 0) parts++;
+                if (parts > 0) hp_w = 0;
+            }
+        }
         gfx_fill_rect(bar_x, bar_y, hp_w, 5, PAL_TEXT_RED);
         if (g_game.mode == GAME_MODE_STORY) {
             int sid = g_game.boss.story_id;
@@ -4495,6 +4619,34 @@ void game_draw(void) {
                 siprintf(nbuf, "ENGINES ICING %d%%", (s_frost_ice * 100) / 256);
                 gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf,
                                        s_frost_ice > 192 ? PAL_TEXT_RED : PAL_TEXT_CYAN);
+            } else if (sid == SBOSS_GEMINI && g_game.boss.clone_active) {
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                       "TWIN HULLS - SHARE THE POOL", PAL_TEXT_CYAN);
+            } else if (sid == SBOSS_INFERNO) {
+                int cores = 0;
+                for (int i = 0; i < 3; i++) if (g_game.boss.node_hp[i] > 0) cores++;
+                if (cores > 0) {
+                    char nbuf[28];
+                    siprintf(nbuf, "SEALED - %d CORES", cores);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_RED);
+                } else {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "FURNACE OPEN", PAL_TEXT_GOLD);
+                }
+            } else if (sid == SBOSS_EMPRESS) {
+                if (g_game.boss.stage == 0) {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "SHOOT THE OPEN FACE", PAL_TEXT_VIOLET);
+                } else if (g_game.boss.stage == 1) {
+                    int pyl = 0;
+                    for (int i = 0; i < 4; i++) if (g_game.boss.node_hp[i] > 0) pyl++;
+                    char nbuf[28];
+                    siprintf(nbuf, "PYLONS %d/4", pyl);
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_GOLD);
+                } else {
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
+                                           "CORE EXPOSED - FOLDING", PAL_TEXT_RED);
+                }
             }
         } else {
             gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,

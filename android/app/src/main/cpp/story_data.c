@@ -274,7 +274,7 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "Hunt the anchors holding it open.",
       OBJ_HUNT, 38, 8, 75, 190, 356, 1950, MOD_SWARM },
     { "ROYAL GUARD",
-      "The Void Empress sends her best.",
+      "The Cube Queen sends her best.",
       "The Chubbs call Jack onward.",
       OBJ_SURVIVE, 38, 8, 65, 190, 360, 2000, MOD_SHARDS },
     { "BROKEN SKY",
@@ -286,14 +286,14 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "Clear their road to the throne.",
       OBJ_CLEAR, 22, 8, 0, 190, 368, 2100, MOD_BOULDERS },
     { "THRONE ROAD",
-      "The Empress' last defense arrives.",
+      "The Cube Queen's last defense arrives.",
       "Jack punches through the line.",
       OBJ_HUNT, 38, 7, 70, 190, 372, 2150, MOD_SNIPERS },
     { "REALITY GATE",
       "The throne room waits beyond.",
       "Jack, settle the old score.",
       OBJ_SURVIVE, 38, 8, 75, 190, 376, 2200, MOD_STORM },
-    { "THE VOID EMPRESS",
+    { "THE CUBE QUEEN",
       "Jack. Your revenge ends here.",
       "Victory or oblivion.",
       OBJ_BOSS, 0, 0, 0, 190, 380, 2500, MOD_NONE },
@@ -339,7 +339,7 @@ static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
     "Juggernaut",
     "Inferno",
     "Aegis",
-    "The Void Empress"
+    "The Cube Queen"
 };
 
 /* Nobody's face is ever shown - the radio voices guide you,
@@ -351,7 +351,7 @@ static const char* const s_boss_taunts[STORY_SECTOR_COUNT] = {
     "JACK WILL BE PRESSED INTO PLATE.",
     "YOUR LITTLE SHIP WILL BURN.",
     "THE SHIELD DOES NOT BREAK.",
-    "JACK ARKEY. COME BE UNMADE."
+    "JACK ARKEY. FOLD, OR BE FOLDED."
 };
 
 const char* story_sector_name(int sector) {
@@ -391,31 +391,31 @@ const char* const g_story_intro[STORY_INTRO_PAGES][2] = {
     { "Once upon a time,",
       "in another universe..." },
     { "Aliens invaded the planet",
-      "The of the Chubbs." },
-    { "The Chubbs tried to fight back.",
-      "back against the Reality King." },
-    { "They threw everything they had at them",
-      "everthing." },
+      "of the Chubbs." },
+    { "The Chubbs tried to fight back",
+      "against the Reality King." },
+    { "They threw everything they had",
+      "at him." },
     { "But he was too strong.",
       "Way too strong." },
     { "A wise person once said:",
-      "if you can't beat em, join em." },
-    { "So the Chubbs decided to do something wierd",
+      "if you can't beat 'em, join 'em." },
+    { "So the Chubbs did something weird:",
       "they befriended the Reality King." },
     { "They called him Jack RK.",
-      "Jack Arkey," },
-    { "He knew a lot about tech",
+      "Jack Arkey." },
+    { "He knew a lot about tech.",
       "He built a bunch on his last planet." },
-    { ".",
-      "." },
+    { "He could not let it go.",
+      "Not this time." },
     { "He wanted *revenge*.",
       "He wanted it badly." },
     { "So he built a ship.",
       "one that can defeat the ones that invaded." },
-    { "one that can defeat",
+    { "one that can defeat...",
       "!one that can kill!" },
-    { "he set aflight,",
-      "..." }
+    { "He set it ready for flight,",
+      "and headed for the stars." }
 };
 
 /* Strip the *bold* / !faint! markers out of a story line.

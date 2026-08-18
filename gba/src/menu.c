@@ -81,6 +81,7 @@ static void render_story_shop(void);
 static void render_story_result(void);
 static void story_enter_result(void);
 #endif
+static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx);
 
 void menu_request_full_redraw(void) {
     menu_static_invalidate();
@@ -840,9 +841,9 @@ static void update_options(void) {
 /* ── Intro speech ─────────────────────────────────────────────────────────
  * The opening cinematic: 14 pages of two lines each, typed out one character
  * at a time over the starfield with Story Mode's own track (story_mode.mp3)
- * underneath.  A page holds for a beat once it finishes typing, then moves on
- * by itself; a tap fills the current page instantly, and the SKIP target in
- * the corner drops straight into the level map.
+ * underneath.  A tap fills the current page instantly; a second tap turns
+ * the page. Pages NEVER advance on their own. The SKIP target in the corner
+ * drops straight into the level map.
  *
  * It plays once, on the very first launch of the campaign: menu_go_back(),
  * SKIP and the final page all call story_mark_intro_seen(), which sets
@@ -850,10 +851,6 @@ static void update_options(void) {
 
 /* One character every N frames (the host ticks at 90Hz, so ~45 chars/s). */
 #define INTRO_TYPE_FRAMES 2
-/* How long a finished page waits before it turns itself over. */
-#define INTRO_PAGE_HOLD   150
-/* Shorter hold when the player filled the page with a tap. */
-#define INTRO_FILL_HOLD   45
 
 static int s_intro_page = 0;
 static int s_intro_chars = 0;    /* plain characters revealed on this page */
@@ -890,7 +887,7 @@ static void intro_advance(void) {
     if (s_intro_chars < intro_page_len(s_intro_page)) {
         /* Tapping mid-type reveals the rest of the page instantly. */
         s_intro_chars = intro_page_len(s_intro_page);
-        s_intro_hold = INTRO_FILL_HOLD;
+        s_intro_hold = 0;
         return;
     }
     s_intro_page++;
@@ -908,11 +905,7 @@ static void update_story_intro(void) {
         if (++s_intro_tick >= INTRO_TYPE_FRAMES) {
             s_intro_tick = 0;
             s_intro_chars++;
-            if (s_intro_chars >= len) s_intro_hold = INTRO_PAGE_HOLD;
         }
-    } else if (s_intro_hold > 0) {
-        /* Fully typed: wait for a tap, or turn the page on the timer. */
-        if (--s_intro_hold == 0) { intro_advance(); return; }
     }
 
     int tx, ty;
@@ -1326,6 +1319,17 @@ static int s_shopz_gift = 0;        /* frames left on the "free life" banner */
 static int s_shopz_flash = 0;       /* purchase flash on the selected row */
 /* Where LEAVE goes: 0 = back to the map, 1 = straight into the next level. */
 static int s_shopz_next_level = 1;
+/* 0 = travelling STOCK (chubbcoin), 1 = GARAGE (free loadout swap). */
+static int s_shopz_tab = 0;
+static int s_gar_cat = 0;       /* 0 lasers, 1 weapons, 2 paints, 3 trails */
+static int s_gar_sel = 0;
+static int s_gar_scroll = 0;
+#define GAR_CAT_COUNT 4
+/* Garage cosmetics: a slice of the hangar, not the million-credit rainbows. */
+static const u8 s_gar_paints[] = { 0, 1, 2, 3, 4 };
+static const u8 s_gar_trails[] = { 0, 1, 2, 3 };
+#define GAR_PAINT_COUNT ((int)(sizeof(s_gar_paints) / sizeof(s_gar_paints[0])))
+#define GAR_TRAIL_COUNT ((int)(sizeof(s_gar_trails) / sizeof(s_gar_trails[0])))
 
 static void shopz_msg(const char* m, u8 col, int timer) {
     strncpy(s_shopz_msg, m, sizeof(s_shopz_msg) - 1);
@@ -1334,9 +1338,134 @@ static void shopz_msg(const char* m, u8 col, int timer) {
     s_shopz_msg_timer = timer;
 }
 
+static int garage_cat_count(int cat) {
+    switch (cat) {
+        case 0: return NUM_LASERS;
+        case 1: return NUM_RIGS;
+        case 2: return GAR_PAINT_COUNT;
+        case 3: return GAR_TRAIL_COUNT;
+        default: return 0;
+    }
+}
+
+static int garage_item_id(int cat, int idx) {
+    if (idx < 0) return 0;
+    switch (cat) {
+        case 2: return (idx < GAR_PAINT_COUNT) ? s_gar_paints[idx] : 0;
+        case 3: return (idx < GAR_TRAIL_COUNT) ? s_gar_trails[idx] : 0;
+        default: return idx;
+    }
+}
+
+static bool garage_owned(int cat, int idx) {
+    int id = garage_item_id(cat, idx);
+    switch (cat) {
+        case 0: return shop_is_laser_owned(id);
+        case 1: return shop_is_rig_owned((WeaponRig)id);
+        case 2: return shop_is_accent_owned(id);
+        case 3: return shop_is_trail_owned(id);
+        default: return false;
+    }
+}
+
+static bool garage_equipped(int cat, int idx) {
+    int id = garage_item_id(cat, idx);
+    switch (cat) {
+        case 0: return g_settings.laser_index == id;
+        case 1: return g_settings.weapon_rig == id;
+        case 2: return g_settings.accent_index == id;
+        case 3: return g_settings.trail_index == id;
+        default: return false;
+    }
+}
+
+static const char* garage_item_name(int cat, int idx) {
+    int id = garage_item_id(cat, idx);
+    switch (cat) {
+        case 0: return gfx_get_laser_name(id);
+        case 1: return gfx_get_weapon_name((WeaponRig)id);
+        case 2: return gfx_get_accent_name(id);
+        case 3: return gfx_get_trail_name(id);
+        default: return "";
+    }
+}
+
+static const char* garage_item_desc(int cat, int idx) {
+    int id = garage_item_id(cat, idx);
+    switch (cat) {
+        case 0: return gfx_get_laser_desc(id);
+        case 1: return gfx_get_weapon_desc((WeaponRig)id);
+        case 2: return gfx_get_accent_desc(id);
+        case 3: return gfx_get_trail_desc(id);
+        default: return "";
+    }
+}
+
+static const char* garage_cat_name(int cat) {
+    switch (cat) {
+        case 0: return "LASERS";
+        case 1: return "WEAPONS";
+        case 2: return "PAINTS";
+        case 3: return "TRAILS";
+        default: return "";
+    }
+}
+
+static int garage_icon_kind(int cat) {
+    switch (cat) {
+        case 0: return SSTOCK_LASER;
+        case 1: return SSTOCK_WEAPON;
+        case 2: return SSTOCK_PAINT;
+        case 3: return SSTOCK_TRAIL;
+        default: return SSTOCK_EMPTY;
+    }
+}
+
+static void garage_ensure_visible(void) {
+    int count = garage_cat_count(s_gar_cat);
+    if (s_gar_sel < 0) s_gar_sel = 0;
+    if (s_gar_sel >= count) s_gar_sel = count > 0 ? count - 1 : 0;
+    if (s_gar_sel < s_gar_scroll) s_gar_scroll = s_gar_sel;
+    if (s_gar_sel >= s_gar_scroll + SHOPZ_VISIBLE_ROWS)
+        s_gar_scroll = s_gar_sel - SHOPZ_VISIBLE_ROWS + 1;
+    if (s_gar_scroll < 0) s_gar_scroll = 0;
+}
+
+static void garage_set_cat(int cat) {
+    if (cat < 0) cat = GAR_CAT_COUNT - 1;
+    if (cat >= GAR_CAT_COUNT) cat = 0;
+    s_gar_cat = cat;
+    s_gar_sel = 0;
+    s_gar_scroll = 0;
+}
+
+static void garage_equip(void) {
+    if (!garage_owned(s_gar_cat, s_gar_sel)) {
+        shopz_msg("NOT IN THE BAY", PAL_TEXT_RED, 110);
+        return;
+    }
+    int id = garage_item_id(s_gar_cat, s_gar_sel);
+    switch (s_gar_cat) {
+        case 0: shop_equip_laser(id); break;
+        case 1: shop_equip_rig((WeaponRig)id); break;
+        case 2: shop_equip_accent(id); break;
+        case 3: shop_equip_trail(id); break;
+        default: break;
+    }
+    shopz_msg("EQUIPPED.", PAL_TEXT_GREEN, 90);
+    s_shopz_flash = 20;
+    audio_play_sfx(SFX_PICKUP);
+}
+
+static int shopz_tab_w(void) { return (SCREEN_WIDTH - 12) / 2; }
+
 static void story_shop_reset_ui(void) {
     s_shopz_sel = 0;
     s_shopz_scroll = 0;
+    s_shopz_tab = 0;
+    s_gar_cat = 0;
+    s_gar_sel = 0;
+    s_gar_scroll = 0;
     s_shopz_msg_timer = 0;
     s_shopz_flash = 0;
     /* Boss docks: Mr Chubbs talks you up and hands over a life, free. */
@@ -1414,8 +1543,40 @@ static void update_story_shop(void) {
     if (s_shopz_msg_timer > 0) s_shopz_msg_timer--;
     if (s_shopz_gift > 0) s_shopz_gift--;
     if (s_shopz_flash > 0) s_shopz_flash--;
+    int tw = shopz_tab_w();
     int tx, ty;
     if (consume_tap(&tx, &ty)) {
+        /* STOCK / GARAGE tabs sit where the hangar keeps its category strip. */
+        if (ty >= 17 && ty < 31) {
+            int tab = (tx >= 6 + tw) ? 1 : 0;
+            if (tab != s_shopz_tab) {
+                s_shopz_tab = tab;
+                s_shopz_flash = 0;
+            }
+            return;
+        }
+        if (s_shopz_tab == 1) {
+            int count = garage_cat_count(s_gar_cat);
+            for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
+                int i = s_gar_scroll + row;
+                if (i >= count) break;
+                if (in_rect(tx, ty, shopz_row_x(), shopz_row_y(row), shopz_row_w(), SHOPZ_ROW_H)) {
+                    if (s_gar_sel == i) garage_equip();
+                    else {
+                        s_gar_sel = i; s_shopz_flash = 0;
+                        if (row == SHOPZ_VISIBLE_ROWS - 1 &&
+                            s_gar_scroll + SHOPZ_VISIBLE_ROWS < count) s_gar_scroll++;
+                        else if (row == 0 && s_gar_scroll > 0) s_gar_scroll--;
+                    }
+                    return;
+                }
+            }
+            if (in_rect(tx, ty, shopz_right_x() + 4, shopz_btn_y(),
+                        shopz_right_w() - 8, SHOPZ_BTN_H)) { garage_equip(); return; }
+            if (in_rect(tx, ty, shopz_row_x(), shopz_leave_y(),
+                        shopz_row_w(), shopz_leave_h())) { shopz_leave(); return; }
+            return;
+        }
         for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
             int i = s_shopz_scroll + row;
             if (i >= STORY_SHOP_SLOTS) break;
@@ -1438,6 +1599,36 @@ static void update_story_shop(void) {
                     shopz_right_w() - 8, SHOPZ_BTN_H)) { shopz_buy(s_shopz_sel); return; }
         if (in_rect(tx, ty, shopz_row_x(), shopz_leave_y(),
                     shopz_row_w(), shopz_leave_h())) { shopz_leave(); return; }
+        return;
+    }
+    if (key_hit(KEY_SELECT)) {
+        s_shopz_tab = 1 - s_shopz_tab;
+        s_shopz_flash = 0;
+        return;
+    }
+    if (s_shopz_tab == 1 && (key_hit(KEY_L) || key_hit(KEY_LEFT))) {
+        garage_set_cat(s_gar_cat - 1);
+        return;
+    }
+    if (s_shopz_tab == 1 && (key_hit(KEY_R) || key_hit(KEY_RIGHT))) {
+        garage_set_cat(s_gar_cat + 1);
+        return;
+    }
+    if (s_shopz_tab == 1) {
+        int count = garage_cat_count(s_gar_cat);
+        if (count < 1) count = 1;
+        if (key_hit(KEY_UP)) {
+            s_gar_sel = (s_gar_sel + count - 1) % count;
+            garage_ensure_visible();
+            s_shopz_flash = 0;
+        }
+        if (key_hit(KEY_DOWN)) {
+            s_gar_sel = (s_gar_sel + 1) % count;
+            garage_ensure_visible();
+            s_shopz_flash = 0;
+        }
+        if (key_hit(KEY_A)) garage_equip();
+        if (key_hit(KEY_B) || key_hit(KEY_START)) shopz_leave();
         return;
     }
     if (key_hit(KEY_UP)) {
@@ -1556,18 +1747,123 @@ static void render_story_shop(void) {
     gfx_draw_text(SCREEN_WIDTH - 6 - (int)strlen(buf) * 6, 4, buf, PAL_TEXT_GOLD);
     gfx_fill_rect(4, 15, SCREEN_WIDTH - 8, 1, 20);
 
-    /* ── Radio line (where the hangar keeps its tab strip) ── */
-    gfx_draw_glass_card(4, 17, SCREEN_WIDTH - 8, 13,
-                        boss_dock ? PAL_TEXT_RED : 20, PAL_BTN_BG);
-    gfx_draw_text(9, 19, story_shop_line1(), boss_dock ? PAL_TEXT_GOLD : PAL_TEXT_WHITE);
+    /* ── STOCK / GARAGE tabs (same strip the hangar uses for categories) ── */
     {
-        siprintf(buf, "LIVES %d", story_lives());
-        gfx_draw_text(SCREEN_WIDTH - 9 - (int)strlen(buf) * 6, 19, buf, PAL_TEXT_GREEN);
+        int tw = shopz_tab_w();
+        for (int t = 0; t < 2; t++) {
+            int tx = 4 + t * (tw + 4);
+            bool on = (s_shopz_tab == t);
+            gfx_draw_glass_card(tx, 17, tw, 13,
+                                on ? PAL_TEXT_CYAN : 20,
+                                on ? PAL_BTN_HOVER : PAL_BTN_BG);
+            gfx_draw_text_centered(tx, 19, tw, t ? "GARAGE" : "STOCK",
+                                   on ? PAL_TEXT_WHITE : PAL_TEXT_CYAN);
+        }
     }
 
     /* ── The two panels ── */
     gfx_draw_glass_card(4, SHOPZ_PANEL_Y, list_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
     gfx_draw_glass_card(right_x, SHOPZ_PANEL_Y, right_w, SHOPZ_PANEL_H, PAL_BTN_BORDER, 14);
+
+    if (s_shopz_tab == 1) {
+        int count = garage_cat_count(s_gar_cat);
+        for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
+            int i = s_gar_scroll + row;
+            if (i >= count) break;
+            int y = shopz_row_y(row);
+            int rx = shopz_row_x(), rw = shopz_row_w();
+            bool sel = (s_gar_sel == i);
+            bool own = garage_owned(s_gar_cat, i);
+            bool eq = garage_equipped(s_gar_cat, i);
+            u8 border = sel ? (((s_anim_frame >> 4) & 1) ? PAL_TEXT_WHITE : PAL_TEXT_CYAN) : (u8)20;
+            u8 bg = (sel && s_shopz_flash > 0 && ((s_shopz_flash >> 2) & 1)) ? PAL_TEXT_GREEN
+                  : (sel ? PAL_BTN_HOVER : PAL_BTN_BG);
+            gfx_draw_glass_card(rx, y, rw, SHOPZ_ROW_H - 2, border, bg);
+            shopz_draw_icon(rx + 4, y + 4, garage_icon_kind(s_gar_cat), !own);
+            char name_buf[13] = {0};
+            strncpy(name_buf, garage_item_name(s_gar_cat, i), 12);
+            if (sel) {
+                gfx_draw_char(rx + 15, y + 6, '>', PAL_TEXT_CYAN);
+                gfx_draw_text(rx + 22, y + 6, name_buf, own ? PAL_TEXT_WHITE : (u8)18);
+            } else {
+                gfx_draw_text(rx + 16, y + 6, name_buf, own ? PAL_TEXT_CYAN : (u8)18);
+            }
+            const char* badge = eq ? "[EQ]" : (own ? "OWN" : "LOCK");
+            u8 badge_col = eq ? PAL_TEXT_GREEN : (own ? PAL_TEXT_CYAN : (u8)18);
+            gfx_draw_text(rx + rw - 5 - (int)strlen(badge) * 6, y + 6, badge, badge_col);
+        }
+
+        gfx_draw_glass_card(right_x + 2, SHOPZ_PANEL_Y + 2, right_w - 4, 35, 20, PAL_SPACE_BLACK);
+        {
+            int ship_x = right_x + (right_w - 20) / 2;
+            int ship_y = SHOPZ_PANEL_Y + 10;
+            int preview_paint = (s_gar_cat == 2) ? garage_item_id(2, s_gar_sel) : g_settings.accent_index;
+            int preview_trail = (s_gar_cat == 3) ? garage_item_id(3, s_gar_sel) : g_settings.trail_index;
+            if (preview_paint < 0 || preview_paint >= NUM_ACCENTS) preview_paint = 1;
+            gfx_draw_ship_styled(ship_x, ship_y, preview_paint, s_anim_frame, g_settings.ship_index);
+            draw_preview_engine_trail(ship_x, ship_y, preview_trail);
+            if (s_gar_cat == 0 || s_gar_cat == 1) {
+                int preview_laser = (s_gar_cat == 0) ? garage_item_id(0, s_gar_sel) : g_settings.laser_index;
+                int travel = (s_anim_frame * 2) % 18;
+                int ly = ship_y - 2 - travel;
+                if (ly >= SHOPZ_PANEL_Y + 4)
+                    gfx_draw_laser(ship_x + 10, ly, false, preview_laser, s_anim_frame, false);
+            }
+        }
+        gfx_fill_rect(right_x + 4, 70, right_w - 8, 1, 20);
+
+        {
+            bool own = garage_owned(s_gar_cat, s_gar_sel);
+            bool eq = garage_equipped(s_gar_cat, s_gar_sel);
+            gfx_draw_text_centered(right_x, 73, right_w, garage_item_name(s_gar_cat, s_gar_sel),
+                                   own ? PAL_TEXT_WHITE : (u8)18);
+            gfx_draw_text_centered(right_x, 82, right_w,
+                                   eq ? "[EQUIPPED]" : (own ? "[OWNED]" : "[LOCKED]"),
+                                   eq ? PAL_TEXT_GREEN : (own ? PAL_TEXT_CYAN : PAL_TEXT_RED));
+            char l1[24], l2[24];
+            shopz_wrap(garage_item_desc(s_gar_cat, s_gar_sel), (right_w - 8) / 6, l1, l2,
+                       (int)sizeof(l1));
+            gfx_draw_text_centered(right_x, 91, right_w, l1, own ? PAL_TEXT_CYAN : (u8)18);
+            gfx_draw_text_centered(right_x, 99, right_w, l2, own ? PAL_TEXT_CYAN : (u8)18);
+            siprintf(buf, "BAY  %s", garage_cat_name(s_gar_cat));
+            gfx_draw_text_centered(right_x, 107, right_w, buf, 17);
+        }
+
+        if (s_shopz_fly_on) {
+            siprintf(buf, "FLY ON  LV %d", s_shopz_next_level);
+            gfx_draw_button(shopz_row_x(), shopz_leave_y(), shopz_row_w(),
+                            shopz_leave_h(), buf, false);
+        } else {
+            gfx_draw_button(shopz_row_x(), shopz_leave_y(), shopz_row_w(),
+                            shopz_leave_h(), "LEAVE DOCK", false);
+        }
+        {
+            bool own = garage_owned(s_gar_cat, s_gar_sel);
+            bool eq = garage_equipped(s_gar_cat, s_gar_sel);
+            int btn_x = right_x + 4;
+            int btn_w = right_w - 8;
+            if (eq) {
+                gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, PAL_TEXT_GREEN, PAL_BTN_HOVER);
+                gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, "EQUIPPED", PAL_TEXT_GREEN);
+            } else if (own) {
+                gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, PAL_TEXT_CYAN, PAL_BTN_HOVER);
+                gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, "[A] EQUIP", PAL_TEXT_WHITE);
+            } else {
+                gfx_draw_glass_card(btn_x, shopz_btn_y(), btn_w, SHOPZ_BTN_H, 20, PAL_BTN_BG);
+                gfx_draw_text_centered(btn_x, shopz_btn_y() + 7, btn_w, "LOCKED", 18);
+            }
+        }
+        if (s_shopz_msg_timer > 0) {
+            int w = (int)strlen(s_shopz_msg) * 6 + 12;
+            int x = (SCREEN_WIDTH - w) / 2;
+            gfx_draw_glass_card(x, 146, w, 12, s_shopz_msg_col, 15);
+            gfx_draw_text_centered(x, 148, w, s_shopz_msg, s_shopz_msg_col);
+        } else {
+            gfx_draw_text_centered(0, 148, SCREEN_WIDTH,
+                                   "L/R BAY   TAP EQUIP   NO COINS", 20);
+        }
+        return;
+    }
 
     /* ── Left panel: four visible rows from the larger travelling shelf ── */
     for (int row = 0; row < SHOPZ_VISIBLE_ROWS; row++) {
@@ -1850,7 +2146,7 @@ static void render_story_result(void) {
     gfx_draw_glass_card(20, 24, card_w, 72, s_result_win ? PAL_TEXT_GOLD : PAL_TEXT_RED, 15);
 
     if (s_result_finale) {
-        gfx_draw_text_centered(20, 30, card_w, "THE REALITY QUEEN FALLS", PAL_TEXT_GOLD);
+        gfx_draw_text_centered(20, 30, card_w, "THE CUBE QUEEN FALLS", PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 42, card_w, "Revenge, finally.", PAL_TEXT_WHITE);
         gfx_draw_text_centered(20, 54, card_w, "Everything is unlocked.", PAL_TEXT_CYAN);
         siprintf(buf, "+%d CHUBBCOIN", s_result_earned);

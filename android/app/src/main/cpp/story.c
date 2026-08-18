@@ -566,7 +566,7 @@ static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
     "JUGGERNAUT IS HUGE. FIND A GAP.",
     "INFERNO BURNS HOT. STAY COOL.",
     "AEGIS NEVER BLINKS. BLIND IT.",
-    "THIS IS IT, JACK. THE VOID EMPRESS."
+    "THIS IS IT, JACK. THE CUBE QUEEN."
 };
 static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. NO CHARGE. GO.",
