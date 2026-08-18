@@ -36,18 +36,37 @@ int main(void){
         }
         if(L->objective==OBJ_PUZZLE){
             puzzle_count++;
-            CHK(L->modifier >= MOD_PZ_SALVO && L->modifier < MOD_COUNT,
+            CHK(L->modifier >= MOD_PZ_FIRST && L->modifier <= MOD_PZ_LAST,
                 "puzzle has a named variant");
             puzzle_variants[L->modifier]++;
             CHK(story_modifier_name(L->modifier)[0], "puzzle variant has a label");
         }
     }
     CHK(puzzle_count >= (STORY_LEVEL_COUNT + 1) / 2, "at least half the campaign is puzzles");
-    for(int i=MOD_PZ_SALVO;i<MOD_COUNT;i++)
+    /* The variety contract.  These are the numbers the campaign promises the
+     * player: lots of rules, none of them worn out, and the "radar lit a
+     * rock" family kept to a strict minimum. */
+    int distinct = 0, radar_levels = 0, no_gun_rules = 0;
+    for(int i=MOD_PZ_FIRST;i<=MOD_PZ_LAST;i++){
         CHK(puzzle_variants[i] <= 2, "no puzzle rule repeats more than twice");
+        if(puzzle_variants[i]) distinct++;
+        if(story_mod_is_no_guns(i) && puzzle_variants[i]) no_gun_rules++;
+    }
+    radar_levels = puzzle_variants[MOD_PZ_ORDER] + puzzle_variants[MOD_PZ_GHOST];
+    printf("puzzles=%d distinct rules=%d no-gun rules=%d radar levels=%d\n",
+           puzzle_count, distinct, no_gun_rules, radar_levels);
+    CHK(distinct >= 30, "the campaign runs at least 30 different puzzle rules");
+    CHK(radar_levels <= 2, "at most two scanner-target levels in the campaign");
+    CHK(no_gun_rules >= 8, "plenty of puzzles never ask for the trigger");
+    for(int i=MOD_PZ_FIRST;i<=MOD_PZ_LAST;i++)
+        CHK(story_modifier_name(i)[0], "every puzzle rule has a label");
     CHK(!strcmp(story_boss_name(0), "Alien"), "first boss is named Alien");
     CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Reality Queen"),
         "final boss is named Reality Queen");
+    /* All seven bosses must be different names - no reskins. */
+    for(int i=0;i<STORY_SECTOR_COUNT;i++)
+      for(int j=i+1;j<STORY_SECTOR_COUNT;j++)
+        CHK(strcmp(story_boss_name(i), story_boss_name(j)), "boss names are unique");
     CHK(!strcmp(g_story_levels[9].name, "ALIEN"), "level 10 uses the Alien name");
     CHK(!strcmp(g_story_levels[69].name, "REALITY QUEEN"),
         "level 70 uses the Reality Queen name");

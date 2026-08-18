@@ -143,14 +143,14 @@ typedef struct {
      * Only meaningful while g_game.mode == GAME_MODE_STORY. Each of the
      * seven story bosses reads these differently (see story_boss_ai). */
     int  story_id;       // StoryBossId, -1 for the arcade boss
-    int  stage;          // phase-change counter (Empress has 3, Gemini 2, ...)
+    int  stage;          // phase-change counter (the Queen has 3, Splinter 2, ...)
     int  attack_timer;   // generic per-attack countdown
-    int  spin;           // rotating attack angle (Inferno whips, Empress ring)
+    int  spin;           // rotating attack angle (Wildfire cores, Queen ring)
     int  anchor_x;       // 8.8 - home position for attacks that return
     int  charge;         // wind-up accumulator
-    int  shield;         // Aegis node shield (damage blocked while >0)
-    int  node_hp[4];     // Aegis turret nodes / Juggernaut armour plates
-    int  clone_x;        // 8.8 - Gemini's second half
+    int  shield;         // Bulwark node shield (damage blocked while >0)
+    int  node_hp[4];     // Bulwark turret nodes / Sledge armour plates
+    int  clone_x;        // 8.8 - Splinter's second hull
     int  clone_y;
     int  clone_hp;
     bool clone_active;
@@ -257,10 +257,18 @@ int  game_story_waiting_for_start(void);
 void game_story_continue(void);
 /* 0 = still flying, 1 = level cleared, 2 = failed. */
 int  game_story_outcome(void);
-/* Target puzzles: asteroid slot carrying the scanner mark (-1 none).
- * TWIN LOCK exposes its second lit slot separately. */
+/* Scanner rules: asteroid slot carrying the mark (-1 none). */
 int  game_story_puzzle_mark(void);
 int  game_story_puzzle_twin_mark(void);
+/* Generic puzzle telemetry, shared by the HUD and the headless pilot. */
+int  game_story_puzzle_progress(void);   /* cells, gates, tonnes, docks    */
+int  game_story_puzzle_anchor_x(void);   /* gate / dock / probe / well, px */
+int  game_story_puzzle_anchor_y(void);
+int  game_story_puzzle_polarity(void);   /* POLARITY: 0 = red, 1 = blue    */
+int  game_story_puzzle_side(void);       /* TIDE LOCK: 0 = port, 1 = stbd  */
+int  game_story_puzzle_cargo_x(void);    /* TUG OF WAR pod, screen px      */
+int  game_story_puzzle_cargo_y(void);
+int  game_story_puzzle_open_side(int idx); /* OPEN SIDE: -1 left, +1 right */
 /* Chubbcoin banked by the level that just ended. */
 int  game_story_earned(void);
 

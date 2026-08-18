@@ -11,9 +11,20 @@ learns the puzzle reticles, handles the drone-only board, and holds fire only
 where the puzzle permits it. Proves every level terminates (no
 unwinnable/stalling level) and reports how long each takes.
 
-The campaign intentionally has **35 puzzle levels**. Their **31 named puzzle
-rules** appear once wherever possible and never more than twice, so this
-harness also makes it easy to audit the variety in the `TWIST` column.
+The campaign intentionally has **35 puzzle levels** running **33 different
+rules** - collection runs, gate runs, tug-of-war, scans, escorts, arithmetic,
+memory, fuses, chain detonations, polarity swaps, gravity, stealth and only
+two scanner-target levels in the whole game. A rule appears once wherever
+possible and never more than twice, so the `TWIST` column is the quickest
+audit of that variety.
+
+The pilot plays each rule rather than mashing the trigger: it flies to gates,
+scoops cells, shoves the cargo pod toward its dock, holds a scan, watches the
+tonnage on EXACT LOAD, alternates sides on TIDE LOCK, flanks plated rocks on
+OPEN SIDE, swaps polarity to match incoming fire, and never fires on any of
+the fifteen no-trigger rules. If a rule cannot be flown by this pilot, the
+campaign has a level that cannot be finished - which is what `stalls=0` is
+there to prove.
 
 ```bash
 gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
@@ -37,7 +48,8 @@ so it deliberately stalls on the late kill-quota and boss levels (the baseline
 did too). Treat it as a stress probe for relative regressions, not a pass/fail
 gate.
 
-Boss fights currently land at ~47-108 s each on a mid-progression loadout.
+Boss fights currently land at ~30-115 s each on a mid-progression loadout;
+the tutorial Alien on level 10 is deliberately the shortest of them.
 
 ## UI screenshots
 

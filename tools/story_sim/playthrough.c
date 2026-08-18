@@ -9,70 +9,127 @@
 
 extern void platform_set_keys(u16 k);
 
-/* Simple dodge AI: slide away from the nearest incoming threat, keep firing.
- * On puzzle levels the trigger is disciplined instead of held: exact-ammo and
- * target puzzles line up with the live reticle, the drone code hunts fighters,
- * and the seven deterministic dodge variants never press the trigger. */
+/* ── The probe pilot ─────────────────────────────────────────────────────
+ * A competent-but-not-perfect pilot: it slides away from the nearest threat
+ * and keeps firing.  On puzzle levels it plays each RULE rather than mashing
+ * the trigger - it flies to gates, scoops cells, shoves the cargo pod, holds
+ * a scan, watches the tonnage, alternates sides, flanks plated rocks, swaps
+ * polarity to match incoming fire, and never fires on a no-trigger level.
+ * If a rule cannot be flown by this pilot, the campaign has a level that
+ * cannot be finished, which is exactly what the harness is here to catch. */
 static u16 pilot_input(void) {
     u16 k = KEY_A;                 /* hold fire */
     int px = g_game.player.x >> 8;
     int py = g_game.player.y >> 8;
     int best_d = 1<<30, threat_x = -1, threat_y = -1;
+    int W = host_screen_width();
 
     const StoryLevel* PL = (game_get_mode() == GAME_MODE_STORY)
         ? &g_story_levels[game_story_level() - 1] : 0;
     int puzzle_aim_x = -1;
+    int goto_x = -1, goto_y = -1;   /* a point the rule wants us at */
+    int ignore_threats = 0;
+
     if (PL && PL->objective == OBJ_PUZZLE) {
+        int mod = PL->modifier;
         k = 0;                     /* trigger discipline */
-        int no_fire = PL->modifier == MOD_PZ_GAUNTLET ||
-                      PL->modifier == MOD_PZ_RINGS ||
-                      PL->modifier == MOD_PZ_WALLS ||
-                      PL->modifier == MOD_PZ_SCISSOR ||
-                      PL->modifier == MOD_PZ_SPIRAL ||
-                      PL->modifier == MOD_PZ_ZIGZAG ||
-                      PL->modifier == MOD_PZ_PACIFIST;
-        if (!no_fire && PL->modifier == MOD_PZ_DRONECODE) {
+
+        /* Rules that own a point in the world: fly to it. */
+        if (mod == MOD_PZ_GATES || mod == MOD_PZ_SCAN) {
+            goto_x = game_story_puzzle_anchor_x();
+            goto_y = game_story_puzzle_anchor_y();
+        } else if (mod == MOD_PZ_GRAVITY) {
+            /* Stay off the well: aim for the far side of the field. */
+            int wx = game_story_puzzle_anchor_x();
+            int wy = game_story_puzzle_anchor_y();
+            goto_x = (wx > W / 2) ? 24 : W - 24;
+            goto_y = (wy > 90) ? 40 : 140;
+        } else if (mod == MOD_PZ_STEALTH) {
+            int bx = game_story_puzzle_anchor_x();
+            goto_x = (bx > W / 2) ? 20 : W - 20;
+            goto_y = 130;
+        } else if (mod == MOD_PZ_COLLECT) {
+            int bd = 1<<30;
+            for (int i = 0; i < MAX_ASTEROIDS; i++) {
+                if (!g_game.asteroids[i].active) continue;
+                int ax = g_game.asteroids[i].x >> 8, ay = g_game.asteroids[i].y >> 8;
+                int d = (ax-px)*(ax-px) + (ay-py)*(ay-py);
+                if (d < bd) { bd = d; goto_x = ax; goto_y = ay; }
+            }
+            ignore_threats = 1;    /* the cells are the goal, not a hazard */
+        } else if (mod == MOD_PZ_HERD) {
+            /* Line up on the far side of the pod from the dock and shove. */
+            int cx = game_story_puzzle_cargo_x(), cy = game_story_puzzle_cargo_y();
+            int dx = game_story_puzzle_anchor_x(), dy = game_story_puzzle_anchor_y();
+            int vx = cx - dx, vy = cy - dy;      /* dock -> pod direction */
+            int mag = abs(vx) + abs(vy); if (mag < 1) mag = 1;
+            goto_x = cx + (vx * 15) / mag;
+            goto_y = cy + (vy * 15) / mag;
+        } else if (mod == MOD_PZ_POLARITY) {
+            /* Wear the colour of the nearest bolt that is about to arrive. */
+            int bd = 1<<30, want = game_story_puzzle_polarity();
+            for (int i = 0; i < MAX_BOSS_BULLETS; i++) {
+                if (!g_game.boss_bullets[i].active) continue;
+                int ax = g_game.boss_bullets[i].x >> 8, ay = g_game.boss_bullets[i].y >> 8;
+                if (ay > py) continue;
+                int d = (ax-px)*(ax-px) + (ay-py)*(ay-py);
+                if (d < bd) { bd = d; want = g_game.boss_bullets[i].heavy ? 1 : 0; }
+            }
+            if (want != game_story_puzzle_polarity()) k |= KEY_A;   /* swap */
+            ignore_threats = 1;    /* eat the matching fire on purpose */
+        } else if (mod == MOD_PZ_DRONECODE) {
             int td = 1<<30;
             for (int i = 0; i < MAX_DRONES; i++) {
                 if (!g_game.drones[i].active) continue;
-                int ax = g_game.drones[i].x >> 8;
-                int ay = g_game.drones[i].y >> 8;
+                int ax = g_game.drones[i].x >> 8, ay = g_game.drones[i].y >> 8;
                 if (ay > py - 6) continue;
                 int d = abs(ax - px);
                 if (d < td) { td = d; puzzle_aim_x = ax; }
             }
-        } else if (!no_fire) {
+        } else if (!story_mod_is_no_guns(mod)) {
+            /* A shooting rule: choose the legal target for THIS rule. */
             int td = 1<<30;
             int mark = game_story_puzzle_mark();
-            int twin = game_story_puzzle_twin_mark();
-            bool targeted = PL->modifier == MOD_PZ_SIGNAL ||
-                            PL->modifier == MOD_PZ_ORDER ||
-                            PL->modifier == MOD_PZ_COLOR ||
-                            PL->modifier == MOD_PZ_ANCHOR ||
-                            PL->modifier == MOD_PZ_GHOST ||
-                            PL->modifier == MOD_PZ_CHAIN ||
-                            PL->modifier == MOD_PZ_LOCKSTEP ||
-                            PL->modifier == MOD_PZ_SWEEP ||
-                            PL->modifier == MOD_PZ_SPLIT ||
-                            PL->modifier == MOD_PZ_SIEVE ||
-                            PL->modifier == MOD_PZ_HEAVY ||
-                            PL->modifier == MOD_PZ_BOMB ||
-                            PL->modifier == MOD_PZ_TWIN;
+            int targeted = (mod == MOD_PZ_ORDER || mod == MOD_PZ_GHOST ||
+                            mod == MOD_PZ_COLOR || mod == MOD_PZ_SIEVE);
+            int need = (int)PL->quota - game_story_puzzle_progress();
+            int want_side = game_story_puzzle_side();
             for (int i = 0; i < MAX_ASTEROIDS; i++) {
                 if (!g_game.asteroids[i].active) continue;
-                if (targeted && i != mark && i != twin) continue;
+                if (targeted && i != mark) continue;
                 int ax = g_game.asteroids[i].x >> 8;
                 int ay = g_game.asteroids[i].y >> 8;
                 if (ay > py - 6) continue;      /* only shoot what's above */
-                int d = abs(ax - px);
-                if (d < td) { td = d; puzzle_aim_x = ax; }
+                int aim = ax;
+                if (mod == MOD_PZ_EXACT) {
+                    int t = g_game.asteroids[i].type;
+                    int val = (t == AST_LARGE) ? 5 : (t == AST_MED_A || t == AST_MED_B) ? 3
+                            : (t == AST_SMALL) ? 2 : 1;
+                    if (val > need) continue;   /* would overload the scale */
+                } else if (mod == MOD_PZ_ALTERNATE) {
+                    if (((ax >= W / 2) ? 1 : 0) != want_side) continue;
+                } else if (mod == MOD_PZ_SHIELDARC) {
+                    /* Shoot into the half the plate has left open. */
+                    aim = ax + game_story_puzzle_open_side(i) * 6;
+                } else if (mod == MOD_PZ_FUSE) {
+                    if (mark >= 0 && i != mark) continue;   /* beat the fuse */
+                }
+                int d = abs(aim - px);
+                if (d < td) { td = d; puzzle_aim_x = aim; }
             }
         }
-        if (puzzle_aim_x >= 0) {
+
+        if (goto_x >= 0) {
+            if (goto_x > px + 3) k |= KEY_RIGHT;
+            else if (goto_x < px - 3) k |= KEY_LEFT;
+            if (goto_y > py + 3) k |= KEY_DOWN;
+            else if (goto_y < py - 3) k |= KEY_UP;
+        } else if (puzzle_aim_x >= 0) {
             if (puzzle_aim_x > px + 3) k |= KEY_RIGHT;
             else if (puzzle_aim_x < px - 3) k |= KEY_LEFT;
             else k |= KEY_A;                 /* lined up: take the shot */
         }
+        if (goto_x >= 0 || ignore_threats) return k;
     }
 
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
@@ -95,7 +152,6 @@ static u16 pilot_input(void) {
         if (d < best_d) { best_d = d; threat_x = ax; threat_y = ay; }
     }
 
-    int W = host_screen_width();
     if (threat_x >= 0 && best_d < 60*60) {
         if (threat_x < px && px < W - 20) k |= KEY_RIGHT;
         else if (px > 20) k |= KEY_LEFT;
