@@ -1,36 +1,38 @@
-name: Build & Release (GBA ROM + Multiplayer Android APK)
+name: Build & Verify Space Unlimited
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
-    inputs:
-      custom_tag:
-        description: 'Optional custom release tag (leave empty for auto-increment spaceshooter-vX)'
-        required: false
-        default: ''
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: space-unlimited-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-release:
-    name: Build GBA ROM & Multiplayer APK, Publish Release
+  build-and-verify:
+    name: Build GBA ROM & Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
+      # ── 1. CHECKOUT ──────────────────────────────────────────────────
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # ── 1. GBA ROM BUILD ──
-      - name: Set up Node.js 22
+      # ── 2. NODE / PYTHON ─────────────────────────────────────────────
+      - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+          cache: npm
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -38,85 +40,86 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci
 
-      - name: Validate GBA source assets
+      # ── 3. RELEASE VERIFICATION ──────────────────────────────────────
+      - name: Validate source assets
         run: python3 tools/validate-assets.py
 
-      - name: Generate GBA audio and graphics data
+      - name: Generate GBA assets
         run: npm run generate-assets
 
-      - name: Compile GBA ROM
-        run: node tools/build_gba.js
+      - name: Verify campaign, saves, menus, and web shell
+        run: npm test
 
-      - name: Verify GBA ROM artifact
+      # ── 4. GBA + WEB BUILD ───────────────────────────────────────────
+      - name: Build GBA ROM and browser player
+        run: npm run build
+
+      - name: Verify GBA ROM
         run: |
           test -f SpaceUnlimited.gba
-          echo "GBA ROM size: $(wc -c < SpaceUnlimited.gba) bytes"
 
-      # ── 2. RELEASE AND APK VERSION ──
-      - name: Determine release and APK versions
-        id: versioning
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          CUSTOM_TAG="${{ github.event.inputs.custom_tag }}"
+          ROM_SIZE="$(wc -c < SpaceUnlimited.gba)"
 
-          if [ -n "$CUSTOM_TAG" ]; then
-            TAG_NAME="$CUSTOM_TAG"
-          else
-            RELEASES=$(gh release list --limit 100 --json tagName -q '.[].tagName' || true)
-            HIGHEST_NUM=0
-
-            for tag in $RELEASES; do
-              if [[ $tag =~ (spaceshooter|game)-v([0-9]+) ]]; then
-                NUM="${BASH_REMATCH[2]}"
-                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
-                  HIGHEST_NUM="$NUM"
-                fi
-              elif [[ $tag =~ v([0-9]+) ]]; then
-                NUM="${BASH_REMATCH[1]}"
-                if [ "$NUM" -gt "$HIGHEST_NUM" ]; then
-                  HIGHEST_NUM="$NUM"
-                fi
-              fi
-            done
-
-            NEXT_NUM=$((HIGHEST_NUM + 1))
-            TAG_NAME="spaceshooter-v${NEXT_NUM}"
-          fi
-
-          VERSION_CODE=$((2000000000 + GITHUB_RUN_NUMBER))
-          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
-
-          if [ "$VERSION_CODE" -gt 2100000000 ]; then
-            echo "Android versionCode limit exceeded: $VERSION_CODE" >&2
+          if [ "$ROM_SIZE" -le 0 ]; then
+            echo "GBA ROM is empty."
             exit 1
           fi
 
-          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "GBA ROM size: $ROM_SIZE bytes"
 
-          echo "Release tag: $TAG_NAME"
-          echo "Android version: $VERSION_NAME"
-          echo "Android versionCode: $VERSION_CODE"
+      - name: Boot ROM in headless mGBA
+        run: node tools/smoke_gba.mjs --frames 3600
 
-      # ── 3. ANDROID APK BUILD ──
+      - name: Verify browser distribution
+        run: |
+          test -f web/dist/emulator-bundle.js
+          test -f web/dist/mgba_libretro.wasm
+          test -f web/dist/SpaceUnlimited.gba
+
+          node --check server.js
+          node --check web/src/emulator-client.js
+          node --check web/sw.js
+
+      # ── 5. ANDROID TOOLCHAIN ─────────────────────────────────────────
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: zulu
+          java-version: "17"
           cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build multiplayer Android APK
+      - name: Calculate Android version
+        shell: bash
+        run: |
+          VERSION_CODE=$(
+            (
+              2000000000
+              + GITHUB_RUN_NUMBER * 10
+              + GITHUB_RUN_ATTEMPT
+            )
+          )
+
+          VERSION_NAME="2.0.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          if [ "$VERSION_CODE" -gt 2100000000 ]; then
+            echo "Android versionCode limit exceeded: $VERSION_CODE"
+            exit 1
+          fi
+
+          echo "ANDROID_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "ANDROID_VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+
+          echo "Android version: $VERSION_NAME"
+          echo "Android versionCode: $VERSION_CODE"
+
+      # ── 6. ANDROID RELEASE APK ───────────────────────────────────────
+      - name: Build signed Android release APK
         env:
-          ANDROID_VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
-          ANDROID_VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
           EOS_PRODUCT_ID: ${{ secrets.EOS_PRODUCT_ID }}
           EOS_SANDBOX_ID: ${{ secrets.EOS_SANDBOX_ID }}
           EOS_DEPLOYMENT_ID: ${{ secrets.EOS_DEPLOYMENT_ID }}
@@ -124,24 +127,44 @@ jobs:
           EOS_CLIENT_SECRET: ${{ secrets.EOS_CLIENT_SECRET }}
         run: |
           cd android
+
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../SpaceUnlimited-Multiplayer.apk
 
-      - name: Verify Android APK artifact
-        run: |
-          test -f SpaceUnlimited-Multiplayer.apk
-          echo "Android APK version: ${{ steps.versioning.outputs.version_name }}"
-          echo "Android APK versionCode: ${{ steps.versioning.outputs.version_code }}"
-          echo "Android APK size: $(wc -c < SpaceUnlimited-Multiplayer.apk) bytes"
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            assembleRelease
 
-      # ── 4. GITHUB RELEASE ──
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Collect Android APK
         run: |
-          gh release create "${{ steps.versioning.outputs.tag_name }}" \
-            SpaceUnlimited.gba \
-            SpaceUnlimited-Multiplayer.apk \
-            --title "${{ steps.versioning.outputs.tag_name }} (Android ${{ steps.versioning.outputs.version_name }})" \
-            --generate-notes
+          APK_SOURCE="android/app/build/outputs/apk/release/app-release.apk"
+          APK_OUTPUT="SpaceUnlimited-Multiplayer.apk"
+
+          test -f "$APK_SOURCE"
+
+          cp "$APK_SOURCE" "$APK_OUTPUT"
+
+          APK_SIZE="$(wc -c < "$APK_OUTPUT")"
+
+          if [ "$APK_SIZE" -le 0 ]; then
+            echo "Android APK is empty."
+            exit 1
+          fi
+
+          echo "Android APK version: $ANDROID_VERSION_NAME"
+          echo "Android APK versionCode: $ANDROID_VERSION_CODE"
+          echo "Android APK size: $APK_SIZE bytes"
+
+      # ── 7. TEMPORARY ACTIONS ARTIFACT ────────────────────────────────
+      # This does NOT create a GitHub Release or tag.
+      # The files are available only from this workflow run.
+      - name: Upload verified builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceUnlimited-2.0-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          path: |
+            SpaceUnlimited.gba
+            SpaceUnlimited-Multiplayer.apk
