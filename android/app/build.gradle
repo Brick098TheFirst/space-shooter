@@ -58,7 +58,7 @@ def javaString = { String value -> '"' + value.replace('\\', '\\\\').replace('"'
  * CI builds newer than the old versionCode 1 APK and than ordinary local
  * builds, while still staying below Android's 2,100,000,000 limit. */
 def appVersionCode = (System.getenv('ANDROID_VERSION_CODE') ?: '2000000000') as int
-def appVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '1.0.local'
+def appVersionName = System.getenv('ANDROID_VERSION_NAME') ?: '2.0.local'
 
 android {
     namespace 'com.brick.spaceshooter'
@@ -66,8 +66,9 @@ android {
 
     /* CI runners otherwise create a different ~/.android/debug.keystore each
      * time, making Android reject the next APK even with a higher versionCode.
-     * This repository-owned DEBUG identity is intentionally public and gives
-     * all downloadable debug builds the same update-compatible signature. */
+     * This repository-owned COMMUNITY identity is intentionally public and
+     * gives downloadable builds one update-compatible signature. It is not a
+     * Play Store production key; store distributors can inject their own. */
     signingConfigs {
         debug {
             storeFile file('space-unlimited-debug.p12')
@@ -112,6 +113,10 @@ android {
 
     buildTypes {
         release {
+            // GitHub Releases ship a non-debuggable, installable APK signed by
+            // the stable community key above. Official stores should replace
+            // this with their private signing configuration.
+            signingConfig signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

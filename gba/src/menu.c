@@ -11,7 +11,7 @@
  * the FIND MATCH / LEAVE buttons drive matchmaking from the menu itself. */
 #include "eos_online.h"
 #include "coop.h"
-/* Story Mode: the 70-level campaign, 35 puzzle nodes, its map, and Mr Chubbs' shop. */
+/* Story Mode: the 80-level campaign, 40 puzzle nodes, its map, and Mr Chubbs' shop. */
 #include "story.h"
 #endif
 
@@ -986,7 +986,7 @@ static void render_story_intro(void) {
  * whichever node you pick and A launches the level. */
 
 static int   s_map_sector = 0;      /* page being viewed */
-static int   s_map_cursor = 1;      /* level under the ship (1..70) */
+static int   s_map_cursor = 1;      /* level under the ship (1..80) */
 static float s_map_ship_x = 0;      /* smooth ship position, game px */
 static float s_map_ship_y = 0;
 static int   s_map_msg_timer = 0;
@@ -2242,7 +2242,7 @@ static void render_story_result(void) {
 #ifdef PLATFORM_HOST
 static const char* s_mode_titles[PLAY_CARD_COUNT] = { "STORY", "WAVES", "ENDLESS" };
 static const char* s_mode_lines[PLAY_CARD_COUNT] = {
-    "70 levels. Jack RK's revenge.",
+    "80 levels. Jack RK's last flight.",
     "Clear waves. Classic run.",
     "No waves. Endless hunters."
 };

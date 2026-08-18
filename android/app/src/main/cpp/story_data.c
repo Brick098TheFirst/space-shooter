@@ -1,18 +1,8 @@
 #include "story.h"
 
-/* ── The 70 levels ────────────────────────────────────────────────────────
+/* ── The 80 levels ────────────────────────────────────────────────────────
  * Difficulty rises monotonically and every tenth level is a boss. Five nodes
- * in every sector are deliberately puzzles, making 35/70 levels puzzle
- * levels overall. The puzzle rules are hand-picked so the same rule appears
- * at most twice: target order, type locks, paired signals, a drone-only code,
- * shot-path tricks, moving safe zones, fragile cargo and seven different
- * learnable no-guns patterns all get their own nodes.
- *
- * Field sizes stay inside the engine's MAX_ASTEROIDS / MAX_DRONES budgets,
- * and tools/story_sim proves every level still has a terminating objective. */
-/* ── The 70 levels ────────────────────────────────────────────────────────
- * Difficulty rises monotonically and every tenth level is a boss.  Five nodes
- * in every sector are puzzles, so 35 of the 70 levels are puzzle levels - and
+ * in every sector are puzzles, so 40 of the 80 levels are puzzle levels - and
  * they run on 33 DIFFERENT rules, not a handful of rules wearing 33 names.
  *
  * The rule of the campaign: a rule is used once wherever possible and never
@@ -21,7 +11,7 @@
  * L52).  Everything else asks for something genuinely different - collecting,
  * gate flying, pushing, scanning, escorting, arithmetic, memory, stealth,
  * polarity, gravity, fuses, chain detonations or plain evasion - and fifteen
- * of the rules never let the player pull the trigger at all.
+ * missions never let the player pull the trigger at all.
  *
  * Field sizes stay inside the engine's MAX_ASTEROIDS / MAX_DRONES budgets,
  * and tools/story_sim proves every level still has a terminating objective. */
@@ -306,6 +296,52 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "The Reality Queen waits beyond the fold.",
       "Jack. End the old invasion.",
       OBJ_BOSS, 0, 0, 0, 190, 380, 2500, MOD_NONE },
+
+    /* ── NULL HORIZON: Director's Cut epilogue sector ──────────────────
+     * Destroying the Queen did not close the fold. It exposed the machine
+     * that had been rewriting her kingdom from outside ordinary time. Five
+     * puzzle nodes return familiar rules in harder combinations; each rule
+     * still appears no more than twice across the complete campaign. */
+    { "AFTER THE CROWN",
+      "The Queen falls. The stars do not return.",
+      "Something behind reality is still running.",
+      OBJ_CLEAR, 40, 8, 0, 190, 388, 2350, MOD_STORM },
+    { "DEAD AIR",
+      "A black scanner erases whatever it sees.",
+      "No guns. Stay between its silent sweeps.",
+      OBJ_PUZZLE, 0, 0, 55, 190, 396, 2400, MOD_PZ_STEALTH },
+    { "ECHO WRECKAGE",
+      "Wrecks arrive before their impact is heard.",
+      "Clear the doubled field before it repeats.",
+      OBJ_TIMED, 44, 8, 110, 190, 404, 2450, MOD_TOUGH },
+    { "HORIZON PACK",
+      "Hunters with no shadows pour from the seam.",
+      "Break their formation before it doubles.",
+      OBJ_HUNT, 34, 8, 82, 190, 412, 2500, MOD_SNIPERS },
+    { "BORROWED COLOUR",
+      "The horizon fires yesterday's red and blue.",
+      "No guns. Match the bolt that has not fired yet.",
+      OBJ_PUZZLE, 0, 0, 55, 190, 420, 2550, MOD_PZ_POLARITY },
+    { "TIME DEBT",
+      "Every second Jack stole is coming due.",
+      "Outfly the longest storm in the campaign.",
+      OBJ_SURVIVE, 40, 8, 85, 190, 428, 2600, MOD_SWIFT },
+    { "THE LAST SIGNAL",
+      "One Chubb probe crossed the end of time.",
+      "No guns. Hold its echo in the lens.",
+      OBJ_PUZZLE, 8, 0, 15, 190, 436, 2700, MOD_PZ_SCAN },
+    { "RETURN VECTOR",
+      "The seam sends every laser home backwards.",
+      "Clear the field through the mirrored path.",
+      OBJ_PUZZLE, 20, 0, 14, 190, 444, 2800, MOD_PZ_MIRROR },
+    { "ZERO HOUR",
+      "The engine notices Jack at last.",
+      "One hit resets the final approach.",
+      OBJ_PUZZLE, 10, 0, 0, 190, 452, 3000, MOD_PZ_PERFECT },
+    { "PARADOX ENGINE",
+      "The machine behind the invasion wakes.",
+      "Keep moving. It remembers where you were.",
+      OBJ_BOSS, 0, 0, 0, 190, 460, 4000, MOD_NONE },
 };
 
 /* Modifier labels for the level banner and the map card. Kept short so they
@@ -368,7 +404,8 @@ static const char* const s_sector_names[STORY_SECTOR_COUNT] = {
     "The Scrapline",
     "Ember Reach",
     "The Cold Vault",
-    "The Reality kingdom"
+    "The Reality kingdom",
+    "Null Horizon"
 };
 
 static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
@@ -378,7 +415,8 @@ static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
     "Sledge",
     "Wildfire",
     "Bulwark",
-    "Reality Queen"
+    "Reality Queen",
+    "Paradox Engine"
 };
 
 /* Nobody's face is ever shown - the radio voices guide you,
@@ -390,7 +428,8 @@ static const char* const s_boss_taunts[STORY_SECTOR_COUNT] = {
     "PLATE BY PLATE, JACK. GOOD LUCK.",
     "I BURN. THEN I VENT. TRY TO COUNT.",
     "THE SEAL DOES NOT BREAK. THE NODES MIGHT.",
-    "JACK ARKEY. THIS IS THE REALITY QUEEN."
+    "JACK ARKEY. THIS IS THE REALITY QUEEN.",
+    "I REMEMBER EVERYWHERE YOU HAVE EVER BEEN."
 };
 
 const char* story_sector_name(int sector) {

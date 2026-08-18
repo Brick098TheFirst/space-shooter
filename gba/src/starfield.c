@@ -42,8 +42,9 @@ typedef enum {
     MOTE_SLEET,    /* fast pale streaks, steep angle        */
     MOTE_EMBER,    /* glowing flecks RISING against gravity */
     MOTE_FLECK,    /* tumbling rust chips                   */
-    MOTE_SPARK,    /* vault: rare cold sparks, near-still   */
-    MOTE_FOLD      /* reality: violet shards, sideways slip */
+    MOTE_SPARK,    /* vault: rare cold sparks, near-still    */
+    MOTE_FOLD,     /* reality: violet shards, sideways slip  */
+    MOTE_ECHO      /* horizon: paired motes cross in reverse */
 } MoteKind;
 
 typedef struct {
@@ -89,6 +90,10 @@ static const SfTheme s_themes[SF_THEME_COUNT] = {
 
     /* SF_THEME_REALITY - the Reality Gate: folded violet space. */
     { 112, 80, 126, 6, 20, 24,  45, 115, 192,  MOTE_FOLD,  20, 123 },
+
+    /* SF_THEME_HORIZON - beyond the Queen: near-black teal space where
+     * paired time motes run sideways against the ordinary star scroll. */
+    {  96, 97, 113, 4, 24, 18,  22,  53, 201,  MOTE_ECHO,  24,  58 },
 };
 
 EWRAM_BSS static Star s_stars[NUM_STARS];
@@ -187,6 +192,15 @@ static void seed_mote(Mote* m, bool anywhere) {
             m->vx = (rand() & 1) ? (140 + (rand() % 90)) : -(140 + (rand() % 90));
             m->vy = 40 + (rand() % 60);
             m->size = 2;
+            break;
+        case MOTE_ECHO:
+            /* Alternate direction by scanline so the sky looks like two
+             * moments sliding through one another. */
+            m->x = (rand() % SCREEN_WIDTH) << 8;
+            m->y = (rand() % SCREEN_HEIGHT) << 8;
+            m->vx = ((m->y >> 11) & 1) ? (220 + rand() % 100) : -(220 + rand() % 100);
+            m->vy = (rand() % 25) - 12;
+            m->size = (rand() & 1) ? 1 : 2;
             break;
         default:
             m->x = m->y = m->vx = m->vy = 0;
