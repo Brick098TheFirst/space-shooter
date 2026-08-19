@@ -122,7 +122,20 @@ static int s_finale_state = 0;
 static int s_finale_checkpoint = 0;
 static int s_finale_timer = 0;
 static int s_finale_quote = 0;
+/* Rewinds return to the last crown break, not the beginning of a long duel.
+ * Failure teaches the current act without erasing already-proven mastery. */
+static int s_finale_ship_act = 0;
+static int s_finale_ground_act = 0;
 static int s_jack_aim_x = 120;
+/* The Queen encounters are authored as set pieces rather than ordinary HP
+ * sponges.  This timer drives the phase-name card after every crown break;
+ * keeping it outside Boss preserves the save/network layout. */
+static int s_queen_phase_card = 0;
+
+static void clear_boss_projectiles(void) {
+    for (int i = 0; i < MAX_BOSS_BULLETS; i++)
+        g_game.boss_bullets[i].active = false;
+}
 
 static bool story_is_elite_gauntlet(void) {
     return g_game.mode == GAME_MODE_STORY && s_story_level >= 71 && s_story_level <= 79;
@@ -1497,7 +1510,11 @@ static bool story_spawn_hunter(void) {
              * roughly 3x the silhouette, much faster, and durable enough to
              * have an attack cycle instead of evaporating in one volley. */
             int tier = s_story_level - 70;
-            hp = 650 + tier * 135;
+            /* This kingdom is the Queen's royal guard, not nine normal drones
+             * inflated for one volley.  Give each silhouette time to complete
+             * several readable attack cycles (roughly 8-18 seconds for the
+             * late-campaign rigs the player owns here). */
+            hp = 4200 + tier * 700;
             if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
             else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
             g_game.drones[i].vy = (g_game.drones[i].vy * 5) / 4;
@@ -2558,6 +2575,9 @@ static int story_boss_hp(int boss_id) {
     };
     int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
     int hp = base[id];
+    /* Last Stand has two complete health bars. Keep each act brisk enough to
+     * learn on rewind rather than turning the finale into an endurance tax. */
+    if (id == SBOSS_PARADOX_ENGINE && story_is_finale()) hp = 15000;
     if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
     else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
     return hp;
@@ -2596,8 +2616,12 @@ static void story_spawn_boss(int boss_id) {
         b->charge = 0;
         b->shield = 0;
     }
-    if (boss_id == SBOSS_REALITY_QUEEN) b->charge = 1;
+    if (boss_id == SBOSS_REALITY_QUEEN) {
+        b->charge = 1;
+        s_queen_phase_card = 100;
+    }
     if (boss_id == SBOSS_PARADOX_ENGINE) {
+        if (story_is_finale()) s_queen_phase_card = 100;
         /* Legacy saves still encode boss slot seven with this enum value.
          * The revised story uses that slot for the Queen's surviving royal
          * craft, so only non-finale debug encounters keep the old echo. */
@@ -2632,15 +2656,27 @@ static void story_restart_finale_checkpoint(void) {
     s_jack_aim_x = SCREEN_WIDTH / 2;
 
     story_spawn_boss(SBOSS_PARADOX_ENGINE);
+    if (!s_finale_checkpoint && s_finale_ship_act > 0) {
+        g_game.boss.stage = s_finale_ship_act;
+        g_game.boss.hp = (g_game.boss.hp_max *
+                         (s_finale_ship_act == 1 ? 72 : 36)) / 100;
+        g_game.boss.phase = SB_IDLE;
+        g_game.boss.phase_timer = 65;
+        g_game.boss.y = TO_FIXED(32);
+        s_queen_phase_card = 90;
+    }
     if (s_finale_checkpoint) {
         /* Ground checkpoint: Jack's hand weapon is weaker than his ship, so
          * the landed royal craft uses a shorter, purpose-built health pool. */
-        g_game.boss.hp_max = 9000;
-        if (g_settings.difficulty == DIFF_CADET) g_game.boss.hp_max = 7000;
-        else if (g_settings.difficulty == DIFF_ACE) g_game.boss.hp_max = 11500;
+        g_game.boss.hp_max = 14000;
+        if (g_settings.difficulty == DIFF_CADET) g_game.boss.hp_max = 10500;
+        else if (g_settings.difficulty == DIFF_ACE) g_game.boss.hp_max = 18000;
         g_game.boss.hp = g_game.boss.hp_max;
-        g_game.boss.stage = 2;
+        g_game.boss.stage = s_finale_ground_act;
+        if (s_finale_ground_act > 0)
+            g_game.boss.hp = (g_game.boss.hp_max * 55) / 100;
         g_game.boss.clone_active = false;
+        s_queen_phase_card = 100;
         g_game.boss.y = TO_FIXED(35);
         g_game.boss.phase = SB_IDLE;
         g_game.boss.phase_timer = 70;
@@ -3177,105 +3213,240 @@ static void sb_bulwark(Boss* b) {
 static void sb_reality_queen(Boss* b) {
     int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
     int pct = sb_hp_pct(b);
+    int first_break = (story_is_finale() && s_finale_state == 0) ? 72 : 66;
+    int last_break = (story_is_finale() && s_finale_state == 0) ? 36 : 30;
 
-    if (b->stage == 0 && pct <= 66) {
-        b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 110;
-        g_game.shake_timer = 30;
-    } else if (b->stage == 1 && pct <= 30) {
-        b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 110;
-        g_game.shake_timer = 40;
-    }
-
-    b->spin += 600 + b->stage * 350;
-    /* The open face turns on a clock, twice as fast once she starts folding. */
-    if (b->stage < 2 && (s_game_frame % (b->stage ? 100 : 180)) == 0)
+    /* Crown breaks are true punctuation: erase the old pattern, grant a short
+     * recovery/burst window, change the arena language and announce it. */
+    if (b->stage == 0 && pct <= first_break) {
+        b->stage = 1; b->phase = SB_STAGGER; b->phase_timer = 105;
+        if (story_is_finale() && s_finale_state == 0) s_finale_ship_act = 1;
         b->charge = (b->charge + 1) & 3;
+        s_queen_phase_card = 105;
+        clear_boss_projectiles();
+        g_game.shake_timer = 30;
+    } else if (b->stage == 1 && pct <= last_break) {
+        b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 105;
+        s_queen_phase_card = 105;
+        clear_boss_projectiles();
+        g_game.shake_timer = 42;
+    }
+    if (s_queen_phase_card > 0) s_queen_phase_card--;
+    b->spin += 520 + b->stage * 300;
 
     switch (b->phase) {
         case SB_STAGGER:
+            /* A vulnerable recovery beat rewards mastering the previous act.
+             * It is spectacle and an attack window, never surprise damage. */
             sb_hover(b, 30, TO_FIXED(1));
             if ((b->phase_timer & 3) == 0) {
                 trigger_explosion(cx + (rand() % 40) - 20, cy + (rand() % 20) - 10);
                 spawn_particle(b->x, b->y, (rand() & 255) - 128, (rand() & 255) - 128,
-                               PAL_TEXT_VIOLET, 12);
+                               b->stage == 2 ? PAL_TEXT_RED : PAL_TEXT_VIOLET, 12);
             }
             if (b->phase_timer <= 0) {
-                for (int k = 0; k < 8; k++) {
-                    int ang = k * 8192;
-                    add_boss_bullet(b->x, b->y,
-                                    (lu_cos(ang) * TO_FIXED(3)) >> 12,
-                                    (lu_sin(ang) * TO_FIXED(3)) >> 12, k & 1);
-                }
-                b->phase = SB_IDLE; b->phase_timer = 60; b->cooldown = 20;
+                b->phase = SB_IDLE; b->phase_timer = 54; b->cooldown = 28;
             }
             break;
+
         case SB_IDLE:
             sb_hover(b, 30, TO_FIXED(1) + 40);
-            sb_drift(b, TO_FIXED(1) + 80);
+            sb_drift(b, TO_FIXED(1) + 55 + b->stage * 20);
+            /* Light pressure between set pieces; the recognizable three-prong
+             * crown shot teaches a rhythm instead of filling every pixel. */
             if (--b->cooldown <= 0) {
-                add_boss_bullet(b->x, b->y, 0, TO_FIXED(4), true);
-                add_boss_bullet(b->x, b->y, TO_FIXED(3), 0, false);
-                add_boss_bullet(b->x, b->y, -TO_FIXED(3), 0, false);
-                b->cooldown = 36 - b->stage * 6;
+                sb_fan(cx, cy + 13, 3 + b->stage * 2,
+                       TO_FIXED(3) + 80 + b->stage * 35, 7000 + b->stage * 1800);
+                b->cooldown = 46 - b->stage * 7;
             }
             if (b->phase_timer <= 0) {
                 b->phase = sb_next_attack(b, b->stage >= 1 ? 3 : 2);
-                b->phase_timer = 160;
+                b->phase_timer = (b->phase == SB_ATTACK_B) ? 155 : 175;
+                /* Snapshot one intentional safe lane / fold destination. */
+                b->beam_x = ai_target_ship()->x;
+                if (b->phase == SB_ATTACK_C) {
+                    int gap = FROM_FIXED(b->beam_x);
+                    if (gap < 34) gap = 34;
+                    if (gap > SCREEN_WIDTH - 34) gap = SCREEN_WIDTH - 34;
+                    b->beam_x = TO_FIXED(gap);
+                }
+            }
+            break;
+
+        case SB_ATTACK_A: { /* ROYAL DECREE: preview the grid, then execute it. */
+            sb_hover(b, 26, TO_FIXED(1));
+            int gap = FROM_FIXED(b->beam_x);
+            if (b->phase_timer > 125) {
+                /* Forty-plus ticks of gold lane markers: enough to read while
+                 * still moving and firing, including on a phone display. */
+                if ((b->phase_timer & 3) == 0) {
+                    for (int y = 45; y < SCREEN_HEIGHT; y += 13)
+                        spawn_particle(TO_FIXED(gap), TO_FIXED(y), 0, 0,
+                                       PAL_TEXT_GOLD, 7);
+                }
+            } else if ((b->phase_timer % (24 - b->stage * 3)) == 0) {
+                int shifted_gap = gap + (((b->phase_timer / 20) & 1) ? 22 : -22);
+                if (shifted_gap < 28) shifted_gap = 28;
+                if (shifted_gap > SCREEN_WIDTH - 28) shifted_gap = SCREEN_WIDTH - 28;
+                for (int x = 10; x < SCREEN_WIDTH - 8; x += 18) {
+                    if (abs(x - shifted_gap) < 22) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 12), 0,
+                                    TO_FIXED(3) + b->stage * 45, false);
+                }
+            }
+            if (b->phase_timer <= 0) {
+                b->charge = (b->charge + 1) & 3; /* face turns between moves */
+                b->phase = SB_IDLE; b->phase_timer = 58; b->cooldown = 28;
+            }
+            break;
+        }
+
+        case SB_ATTACK_B: { /* THE FOLD: show both positions, then mirror once. */
+            int px = FROM_FIXED(g_game.player.x);
+            int dest = SCREEN_WIDTH - px;
+            if (b->phase_timer > 92) {
+                if ((b->phase_timer & 2) == 0) {
+                    spawn_particle(TO_FIXED(px + (rand() & 7) - 4), g_game.player.y,
+                                   0, -55, PAL_TEXT_VIOLET, 9);
+                    spawn_particle(TO_FIXED(dest + (rand() & 7) - 4), g_game.player.y,
+                                   0, -55, PAL_TEXT_GOLD, 9);
+                }
+            } else if (b->phase_timer == 92) {
+                g_game.player.x = TO_FIXED(SCREEN_WIDTH) - g_game.player.x;
+                g_game.player.invulnerable_timer = 22;
+                g_game.shake_timer = 18;
+                audio_play_sfx(SFX_EXPLOSION);
+            } else if ((b->phase_timer % (14 - b->stage * 2)) == 0) {
+                /* Paired curtains move outward from the throne.  After being
+                 * folded the answer is movement, not guessing where you are. */
+                int spread = 1 + (92 - b->phase_timer) / 18;
+                add_boss_bullet(b->x - TO_FIXED(8), b->y + TO_FIXED(12),
+                                -TO_FIXED(spread), TO_FIXED(3) + 40, false);
+                add_boss_bullet(b->x + TO_FIXED(8), b->y + TO_FIXED(12),
+                                 TO_FIXED(spread), TO_FIXED(3) + 40, false);
+            }
+            if (b->phase_timer <= 0) {
+                b->charge = (b->charge + 1) & 3;
+                b->phase = SB_IDLE; b->phase_timer = 62; b->cooldown = 28;
+            }
+            break;
+        }
+
+        case SB_ATTACK_C: { /* CROWN COLLAPSE: stable promised gap, rising tempo. */
+            int gap = FROM_FIXED(b->beam_x);
+            sb_hover(b, 28, TO_FIXED(1));
+            if (b->phase_timer > 125) {
+                if ((b->phase_timer & 3) == 0)
+                    spawn_particle(TO_FIXED(gap), TO_FIXED(48 + rand() % 90),
+                                   0, 20, PAL_TEXT_CYAN, 8);
+            } else if ((b->phase_timer % (22 - b->stage * 3)) == 0) {
+                for (int x = 12; x < SCREEN_WIDTH - 10; x += 20) {
+                    if (abs(x - gap) < 28) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 8), 0,
+                                    TO_FIXED(3) + 100, false);
+                }
+                /* A slow aimed royal bolt prevents sleeping in the gap while
+                 * leaving ample room to dodge and return. */
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(2) + 80, 1);
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 52; b->cooldown = 22;
+            }
+            break;
+        }
+        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; break;
+    }
+}
+
+/* The landed half of Last Stand is deliberately a different verb set. Jack
+ * is small, grounded and must alternate MOVE with HOLD-B/AIM + A/FIRE, so the
+ * Queen uses horizon sweeps and slow, learnable lanes instead of recycling
+ * the orbital bullet patterns. */
+static void sb_reality_queen_planetfall(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    int pct = sb_hp_pct(b);
+    if (b->stage == 0 && pct <= 55) {
+        b->stage = 1;
+        b->phase = SB_STAGGER;
+        b->phase_timer = 100;
+        s_queen_phase_card = 100;
+        clear_boss_projectiles();
+        g_game.shake_timer = 38;
+    }
+    if (s_queen_phase_card > 0) s_queen_phase_card--;
+    b->spin += 760 + b->stage * 300;
+
+    switch (b->phase) {
+        case SB_STAGGER:
+            if ((b->phase_timer & 3) == 0)
+                spawn_particle(b->x + ((rand() % 31) - 15) * 256, b->y,
+                               (rand() & 127) - 64, 80, PAL_TEXT_RED, 11);
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 55; b->cooldown = 25;
+            }
+            break;
+        case SB_IDLE:
+            sb_drift(b, TO_FIXED(1) + 70 + b->stage * 25);
+            sb_hover(b, 38, TO_FIXED(1));
+            if (--b->cooldown <= 0) {
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(2) + 90, 1);
+                b->cooldown = 48 - b->stage * 8;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = sb_next_attack(b, 3);
+                b->phase_timer = 165;
                 b->beam_x = ai_target_ship()->x;
             }
             break;
-        case SB_ATTACK_A:
-            sb_hover(b, 26, TO_FIXED(1));
-            if ((b->phase_timer % 18) == 0) {
-                int step = 36;
-                int ox = (b->phase_timer / 6) % step;
-                for (int x = 10 + ox; x < SCREEN_WIDTH - 8; x += step)
-                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 10), 0, TO_FIXED(3), false);
-                for (int y = 20; y < SCREEN_HEIGHT - 20; y += step)
-                    add_boss_bullet(TO_FIXED(cx), TO_FIXED(y),
-                                    (b->sweep_dir > 0) ? TO_FIXED(2) : -TO_FIXED(2), 0, false);
-            }
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 24; }
-            break;
-        case SB_ATTACK_B: {
-            if (b->phase_timer > 80) {
-                int px = FROM_FIXED(g_game.player.x);
-                int dest = SCREEN_WIDTH - px;
-                if ((b->phase_timer & 2) == 0) {
-                    spawn_particle(TO_FIXED(px + (rand() & 7) - 4), g_game.player.y,
-                                   0, -80, PAL_TEXT_VIOLET, 8);
-                    spawn_particle(TO_FIXED(dest + (rand() & 7) - 4), g_game.player.y,
-                                   0, -80, PAL_TEXT_GOLD, 8);
+        case SB_ATTACK_A: { /* HORIZON CUT: marked lane, then three sweeps. */
+            int lane = FROM_FIXED(b->beam_x);
+            if (b->phase_timer > 115) {
+                if ((b->phase_timer & 3) == 0)
+                    spawn_particle(TO_FIXED(lane), TO_FIXED(65 + rand() % 75),
+                                   0, 15, PAL_TEXT_GOLD, 8);
+            } else if ((b->phase_timer % 28) == 0) {
+                for (int x = 10; x < SCREEN_WIDTH - 8; x += 18) {
+                    if (abs(x - lane) < 25) continue;
+                    add_boss_bullet(TO_FIXED(x), TO_FIXED(60), 0,
+                                    TO_FIXED(2) + 110 + b->stage * 35, false);
                 }
-            } else if (b->phase_timer == 80) {
-                g_game.player.x = TO_FIXED(SCREEN_WIDTH) - g_game.player.x;
-                g_game.shake_timer = 16;
-                audio_play_sfx(SFX_EXPLOSION);
-            } else {
-                if ((b->phase_timer % 10) == 0)
-                    add_boss_bullet(b->x - TO_FIXED(16), b->y, 0, TO_FIXED(3) + 40, false);
-                if ((b->phase_timer % 10) == 5)
-                    add_boss_bullet(b->x + TO_FIXED(16), b->y, 0, TO_FIXED(3) + 40, false);
+                lane = SCREEN_WIDTH - lane;
+                b->beam_x = TO_FIXED(lane);
             }
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 80; b->cooldown = 24; }
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 58; b->cooldown = 28;
+            }
             break;
         }
-        case SB_ATTACK_C:
-            sb_hover(b, 28, TO_FIXED(1));
-            if ((b->phase_timer % 20) == 0) {
-                int gap = 28 + (rand() % (SCREEN_WIDTH - 80));
-                for (int x = 12; x < SCREEN_WIDTH - 10; x += 22) {
-                    if (x > gap && x < gap + 48) continue;
-                    add_boss_bullet(TO_FIXED(x), TO_FIXED(cy + 12), 0, TO_FIXED(3) + 20, false);
+        case SB_ATTACK_B: /* THRONE SALVO: sparse rings descend from horizon. */
+            if (b->phase_timer > 120) {
+                if ((b->phase_timer & 3) == 0) {
+                    int ang = b->spin + b->phase_timer * 900;
+                    spawn_particle(b->x + lu_cos(ang) * 6,
+                                   b->y + lu_sin(ang) * 6,
+                                   0, 25, PAL_TEXT_VIOLET, 8);
                 }
+            } else if ((b->phase_timer % (30 - b->stage * 5)) == 0) {
+                sb_ring(cx, cy, 7 + b->stage * 2, TO_FIXED(2) + 100, b->spin, 3);
             }
-            if (b->stage >= 2 && (b->phase_timer % 70) == 35) {
-                g_game.player.x = TO_FIXED(SCREEN_WIDTH) - g_game.player.x;
-                g_game.shake_timer = 10;
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 62; b->cooldown = 26;
             }
-            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 20; }
             break;
-        default: b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; break;
+        case SB_ATTACK_C: { /* LAST WORD: alternating cannons with a clear tell. */
+            int side = ((b->phase_timer / 30) & 1) ? 28 : SCREEN_WIDTH - 28;
+            if ((b->phase_timer % 30) > 20) {
+                spawn_particle(TO_FIXED(side), TO_FIXED(62), 0, 30,
+                               PAL_TEXT_RED, 7);
+            } else if ((b->phase_timer % 30) == 20) {
+                sb_fan(side, 62, 5 + b->stage * 2, TO_FIXED(3), 11000);
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = SB_IDLE; b->phase_timer = 54; b->cooldown = 24;
+            }
+            break;
+        }
+        default: b->phase = SB_IDLE; b->phase_timer = 60; b->cooldown = 28; break;
     }
 }
 
@@ -4029,6 +4200,8 @@ void game_start(void) {
             s_finale_checkpoint = 0;
             s_finale_timer = 0;
             s_finale_quote = 0;
+            s_finale_ship_act = 0;
+            s_finale_ground_act = 0;
             s_jack_aim_x = SCREEN_WIDTH / 2;
             /* Level 80 does not consume the campaign life pool. */
             g_game.player.lives = 1;
@@ -4434,6 +4607,13 @@ static void game_update_tick(void) {
         if (s_jack_aim_x < 10) s_jack_aim_x = 10;
         if (s_jack_aim_x > SCREEN_WIDTH - 10) s_jack_aim_x = SCREEN_WIDTH - 10;
         mx = my = 0;
+    } else if (story_is_finale() && s_finale_state == 2 && g_game.boss_active) {
+        /* Soft lock keeps run-and-gun viable on touch/gamepad; planting with B
+         * remains the faster precision option for leading the moving craft. */
+        int target = FROM_FIXED(g_game.boss.x);
+        if (s_jack_aim_x < target - 3) s_jack_aim_x += 3;
+        else if (s_jack_aim_x > target + 3) s_jack_aim_x -= 3;
+        else s_jack_aim_x = target;
     }
 
     // ── Engine speed with 2x cap logic ───────────────────────────────
@@ -4638,6 +4818,30 @@ static void game_update_tick(void) {
         }
         if (((s_game_frame + i) & 2) == 0) emit_enemy_engine_particle(drone);
         if (drone->y <= TO_FIXED(20)) continue;
+
+        if (story_is_elite_gauntlet()) {
+            /* Each royal guard gets a real signature beat in addition to its
+             * normal cannon burst. A 30-tick muzzle tell precedes every move,
+             * so multi-elite rooms stay demanding without becoming noise. */
+            int beat = (s_game_frame + i * 37) % 180;
+            if (beat > 150 && (beat & 3) == 0) {
+                spawn_particle(drone->x, drone->y + TO_FIXED(13),
+                               0, 45, beat & 4 ? PAL_TEXT_GOLD : PAL_TEXT_RED, 8);
+            } else if (beat == 150) {
+                int dx = FROM_FIXED(drone->x), dy = FROM_FIXED(drone->y) + 13;
+                int guard = (s_story_level - 71) % 3;
+                if (guard == 0) {          /* TALON: a wide, walkable fan */
+                    sb_fan(dx, dy, 7, TO_FIXED(3) + 80, 15000);
+                } else if (guard == 1) {   /* LANCER: one fast aimed threat */
+                    sb_shoot_at_player(dx, dy, TO_FIXED(6), 1);
+                } else {                   /* FANG: mirrored crossing shots */
+                    add_boss_bullet(TO_FIXED(dx - 10), TO_FIXED(dy),
+                                    TO_FIXED(2), TO_FIXED(3), false);
+                    add_boss_bullet(TO_FIXED(dx + 10), TO_FIXED(dy),
+                                    -TO_FIXED(2), TO_FIXED(3), false);
+                }
+            }
+        }
 
         if (drone->burst_shots > 0) {
             drone->burst_timer--;
@@ -5703,7 +5907,7 @@ void game_draw(void) {
                                        g_game.drones[i].style, scale);
             if (elite) {
                 /* Every target gets its own compact mini-boss life bar. */
-                int max_hp = 650 + (s_story_level - 70) * 135;
+                int max_hp = 4200 + (s_story_level - 70) * 700;
                 if (g_settings.difficulty == DIFF_CADET) max_hp = (max_hp * 3) / 4;
                 else if (g_settings.difficulty == DIFF_ACE) max_hp = (max_hp * 13) / 10;
                 int w = (36 * g_game.drones[i].hp) / (max_hp > 0 ? max_hp : 1);
@@ -6154,12 +6358,24 @@ void game_draw(void) {
                 }
                 if (sb->shield) pz_draw_ring(bxi, byi, 34, PAL_TEXT_GOLD);
             }
-            if (sb->story_id == SBOSS_REALITY_QUEEN && sb->stage < 2) {
+            bool queen_orbit = sb->story_id == SBOSS_REALITY_QUEEN ||
+                               (sb->story_id == SBOSS_PARADOX_ENGINE &&
+                                story_is_finale() && s_finale_state == 0);
+            if (queen_orbit && sb->stage < 2) {
+                /* The weak face is a full reticle, not a tiny mystery pixel.
+                 * Its quadrant remains stable for an attack and turns only
+                 * during recovery, so players can intentionally line up. */
                 int face = sb->charge & 3;
-                int ox = (face & 1) ? 10 : -10;
-                int oy = (face & 2) ? 8 : -6;
+                int fx = bxi + ((face & 1) ? 11 : -11);
+                int fy = byi + ((face & 2) ? 8 : -7);
                 u8 col = ((s_game_frame >> 3) & 1) ? PAL_TEXT_GOLD : PAL_TEXT_VIOLET;
-                gfx_fill_rect(bxi + ox - 3, byi + oy - 3, 6, 6, col);
+                gfx_fill_rect(fx - 4, fy - 4, 8, 8, col);
+                gfx_fill_rect(fx - 1, fy - 1, 2, 2, PAL_TEXT_WHITE);
+                pz_draw_ring(fx, fy, 7 + ((s_game_frame >> 3) & 1), PAL_TEXT_GOLD);
+            }
+            if (queen_orbit && sb->stage == 2) {
+                pz_draw_ring(bxi, byi, 22 + ((s_game_frame >> 2) & 3), PAL_TEXT_RED);
+                pz_draw_ring(bxi, byi, 27, PAL_TEXT_VIOLET);
             }
         }
 
@@ -6238,23 +6454,23 @@ void game_draw(void) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_RED);
                 }
             } else if (sid == SBOSS_REALITY_QUEEN) {
-                if (g_game.boss.stage == 0) {
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "SHOOT THE OPEN FACE", PAL_TEXT_VIOLET);
-                } else if (g_game.boss.stage == 1) {
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "SHE IS FOLDING THE ARENA", PAL_TEXT_GOLD);
-                } else {
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "CORE EXPOSED - FINISH HER", PAL_TEXT_RED);
-                }
+                const char* qline = g_game.boss.stage == 0 ? "ACT I: THE MASK - HIT THE CROWN" :
+                                    g_game.boss.stage == 1 ? "ACT II: THE FOLD - WATCH BOTH SIDES" :
+                                                           "ACT III: CHECKMATE - CORE EXPOSED";
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, qline,
+                                       g_game.boss.stage == 2 ? PAL_TEXT_RED : PAL_TEXT_GOLD);
             } else if (sid == SBOSS_PARADOX_ENGINE) {
                 if (story_is_finale() && s_finale_state == 2) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "MOVE  HOLD B+AIM  A FIRE", PAL_TEXT_GOLD);
+                        g_game.boss.stage ? "LAST ACT: NO MORE REWINDS"
+                                          : "PLANETFALL: HOLD B TO AIM - A FIRE",
+                        g_game.boss.stage ? PAL_TEXT_RED : PAL_TEXT_GOLD);
                 } else if (story_is_finale()) {
-                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
-                                           "THE QUEEN SURVIVED - BREAK HER SHIP", PAL_TEXT_VIOLET);
+                    const char* qline = g_game.boss.stage == 0 ? "REPRISE: BREAK THE CROWN" :
+                                        g_game.boss.stage == 1 ? "THE LAST FOLD" :
+                                                               "HER CORE IS OPEN";
+                    gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, qline,
+                                           g_game.boss.stage == 2 ? PAL_TEXT_RED : PAL_TEXT_VIOLET);
                 } else {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "LEAVE YOUR OLD LANE", PAL_TEXT_CYAN);
@@ -6273,6 +6489,48 @@ void game_draw(void) {
                                        open_decks ? "DECKS OPEN - FULL DAMAGE"
                                                   : "DECKS SEALED",
                                        open_decks ? PAL_TEXT_GREEN : PAL_TEXT_CYAN);
+            }
+        }
+
+        /* Queen health is a three-act timeline. The notches make progress and
+         * the next escalation visible before it happens. */
+        if (g_game.mode == GAME_MODE_STORY &&
+            (g_game.boss.story_id == SBOSS_REALITY_QUEEN ||
+             (g_game.boss.story_id == SBOSS_PARADOX_ENGINE && story_is_finale()))) {
+            if (!(story_is_finale() && s_finale_state == 2)) {
+                int qfirst = story_is_finale() ? 72 : 66;
+                int qlast = story_is_finale() ? 36 : 30;
+                gfx_fill_rect(bar_x + (bar_w * qfirst) / 100, bar_y - 1, 2, 7, PAL_TEXT_WHITE);
+                gfx_fill_rect(bar_x + (bar_w * qlast) / 100, bar_y - 1, 2, 7, PAL_TEXT_WHITE);
+            } else {
+                gfx_fill_rect(bar_x + (bar_w * 55) / 100, bar_y - 1, 2, 7, PAL_TEXT_WHITE);
+            }
+
+            const char* move = "";
+            if (g_game.boss.phase == SB_ATTACK_A)
+                move = (story_is_finale() && s_finale_state == 2) ? "HORIZON CUT" : "ROYAL DECREE";
+            else if (g_game.boss.phase == SB_ATTACK_B)
+                move = (story_is_finale() && s_finale_state == 2) ? "THRONE SALVO" : "THE FOLD";
+            else if (g_game.boss.phase == SB_ATTACK_C)
+                move = (story_is_finale() && s_finale_state == 2) ? "LAST WORD" : "CROWN COLLAPSE";
+            if (move[0] && g_game.boss.phase_timer > 115)
+                gfx_draw_text_centered(0, 43, SCREEN_WIDTH, move, PAL_TEXT_GOLD);
+
+            if (s_queen_phase_card > 0) {
+                int cw = 174, cx0 = (SCREEN_WIDTH - cw) / 2;
+                gfx_draw_glass_card(cx0, 68, cw, 28,
+                                   g_game.boss.stage >= 2 ? PAL_TEXT_RED : PAL_TEXT_VIOLET, 15);
+                const char* act = (story_is_finale() && s_finale_state == 2)
+                    ? (g_game.boss.stage ? "FINAL ACT - QUEEN UNMADE"
+                                         : "PLANETFALL - JACK STANDS")
+                    : (g_game.boss.stage == 0 ? "ACT I - THE ROYAL MASK"
+                      : g_game.boss.stage == 1 ? "ACT II - REALITY FOLDS"
+                                               : "ACT III - CHECKMATE");
+                gfx_draw_text_centered(cx0, 74, cw, act, PAL_TEXT_WHITE);
+                gfx_draw_text_centered(cx0, 85, cw,
+                    g_game.boss.stage >= 2 ? "NO ARMOUR. NO ESCAPE."
+                                           : "READ THE TELL. BREAK THE CROWN.",
+                    g_game.boss.stage >= 2 ? PAL_TEXT_RED : PAL_TEXT_GOLD);
             }
         }
     }
@@ -6294,8 +6552,20 @@ void game_draw(void) {
                 gfx_fill_rect(bx - 1, by - 1, 2, 2, PAL_TEXT_WHITE);
                 continue;
             }
-            int c = (s_game_frame + i) % NUM_LASERS;
-            gfx_draw_laser(bx, by, heavy, c, s_game_frame, true);
+            bool queen_fire = g_game.mode == GAME_MODE_STORY &&
+                              (g_game.boss.story_id == SBOSS_REALITY_QUEEN ||
+                               (g_game.boss.story_id == SBOSS_PARADOX_ENGINE && story_is_finale()));
+            if (queen_fire) {
+                /* Gold means aimed/heavy; violet means pattern. Consistent
+                 * semantics are more readable than cycling every laser skin. */
+                u8 qc = heavy ? PAL_TEXT_GOLD : PAL_TEXT_VIOLET;
+                gfx_fill_rect(bx - (heavy ? 3 : 2), by - (heavy ? 3 : 2),
+                              heavy ? 6 : 4, heavy ? 6 : 4, qc);
+                gfx_fill_rect(bx - 1, by - 1, 2, 2, PAL_TEXT_WHITE);
+            } else {
+                int c = (s_game_frame + i) % NUM_LASERS;
+                gfx_draw_laser(bx, by, heavy, c, s_game_frame, true);
+            }
         }
     }
 
@@ -7036,6 +7306,10 @@ void game_coop_advance_render(void) {
 
 void game_coop_get_p2_pos(int* fx, int* fy) {
     *fx = g_game.player2.x;
+    *fy = g_game.player2.y;
+}
+#endif /* PLATFORM_HOST */
+= g_game.player2.x;
     *fy = g_game.player2.y;
 }
 #endif /* PLATFORM_HOST */
