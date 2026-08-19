@@ -200,16 +200,27 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **Reality Queen** *(THE FOLD)* — the apparent level-70 climax. Only her
-    **glowing open face** takes real damage; she turns it away, folds the arena
-    and flips Jack's ship across the screen. The throne ship breaks—but the
-    Queen escapes through one last gate.
-  - **Reality Queen: Last Stand** *(INFINITE REWIND)* — after nine giant-drone
-    mini-bosses and no asteroid cover, Jack catches her over a planet. Death
-    cuts to black with the Queen's threat and restarts the current phase with
-    infinite attempts. Breaking phase one's royal craft triggers a ship-fall
-    cutscene; phase two becomes a pseudo-3D, third-person pixel-art duel where
-    Jack moves on foot, aims his gun and dodges fire from the Queen's ship.
+  - **Reality Queen** *(THE FOLD)* — the apparent level-70 climax is a fully
+    staged three-act duel: **The Royal Mask**, **Reality Folds**, and
+    **Checkmate**. Her crown-face reticle is the only full-damage target until
+    the core breaks open. Named attacks preview a promised safe lane before
+    Royal Decree grids, mirror Jack only after a long two-position tell, and
+    collapse the crown around a stable gap. Crown breaks clear old bullets,
+    open a punish window, mark the segmented health bar, and announce the new
+    act before the throne ship breaks and the Queen escapes.
+  - **Reality Queen: Last Stand** *(INFINITE REWIND)* — after nine durable
+    royal-guard mini-bosses—each now surviving long enough to use its own
+    telegraphed signature attack—Jack catches her over a planet. The orbital
+    reprise retains the readable crown rule; death cuts to black with rotating
+    Queen threats and rewinds to the latest completed **act**, not the start of
+    the whole fight. The orbital duel uses the player's normal upgraded lives
+    and shields; after the crash, planetfall begins with exactly **three lives**.
+    Breaking the royal craft triggers a ship-fall sequence, then an entirely
+    separate pseudo-3D moveset: Horizon Cut safe
+    lanes, Throne Salvos and alternating Last Word cannons. Jack moves on foot
+    while the **FIRE** button automatically targets the Queen—no precision-aim
+    chord or tapping the ship required—and has a second crown-break rewind
+    checkpoint before the final kill.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated

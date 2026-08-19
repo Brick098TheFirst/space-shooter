@@ -340,8 +340,8 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "Past it waits the Queen's surviving ship.",
       OBJ_HUNT, 0, 1, 1, 244, 470, 3000, MOD_SNIPERS },
     { "REALITY QUEEN: LAST STAND",
-      "The Queen waits above a world she already bent.",
-      "Destroy her ship. If Jack falls, begin again.",
+      "Orbital reprise. Shipfall. Then Jack fights on foot.",
+      "Each broken act is a rewind checkpoint. Finish this.",
       OBJ_BOSS, 0, 0, 0, 250, 480, 4000, MOD_NONE },
 };
 
