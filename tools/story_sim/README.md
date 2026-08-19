@@ -6,7 +6,7 @@ Story Mode can be tested on a normal machine without an Android device.
 
 ## Playthrough simulator
 
-Flies all 70 story levels with a scripted pilot that dodges the nearest threat,
+Flies all 80 story levels with a scripted pilot that dodges the nearest threat,
 learns the puzzle reticles, handles the drone-only board, and holds fire only
 where the puzzle permits it. Proves every level terminates (no
 unwinnable/stalling level) and reports how long each takes.
@@ -40,10 +40,10 @@ gcc -O2 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 \
 `stalls=0` at `tier=1` is the property that matters: it means no level can ever
 soft-lock for a player who buys from Mr Chubbs as intended. The report's `TWIST`
 column shows each level's objective and field modifier, which is the quickest
-way to confirm the campaign is still varied rather than 70 rounds of the same
-level. A tier-1 godmode run should report `stalls=0` across all 70 levels.
+way to confirm the campaign is still varied rather than 80 rounds of the same
+level. A tier-1 godmode run should report `stalls=0` across all 80 levels.
 
-`tier=0` models a player who never spends a single chubbcoin for all 70 levels,
+`tier=0` models a player who never spends a single chubbcoin for all 80 levels,
 so it deliberately stalls on the late kill-quota and boss levels (the baseline
 did too). Treat it as a stress probe for relative regressions, not a pass/fail
 gate.

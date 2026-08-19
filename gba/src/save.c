@@ -23,6 +23,7 @@ GameSettings g_settings;
 #define SAVE_MAGIC_V9 0x5355474A // 'SUGJ' Android only: STORY MODE campaign block
 #define SAVE_MAGIC_V10 0x5355474B // 'SUGK' Android only: Mr Chubbs' one-time docks
 #define SAVE_MAGIC_V11 0x5355474C // 'SUGL' Android only: the repair-yard clock
+#define SAVE_MAGIC_V12 0x5355474D // 'SUGM' Android only: 80-level campaign (kingdom 8)
 
 // Legacy layout V1 (20 bytes)
 typedef struct {
@@ -349,10 +350,64 @@ typedef struct {
     u32 checksum;
 } SaveDataV11;
 
+/* V12 (Android) = V11 + the eighth kingdom.  The campaign grew from 70 to
+ * 80 levels (kingdom 8 is the drone attack that replaced the old finale
+ * sequence), so the cleared bitmask widens from 9 bytes to 10.  Every other
+ * field keeps its V11 offset, which makes the migration a straight copy. */
+typedef struct {
+    u32 magic;
+    u8  difficulty;
+    u8  music_volume;
+    u8  sfx_volume;
+    u8  screen_shake;
+    u8  accent_index;
+    u8  trail_index;
+    u8  weapon_rig;
+    u8  laser_index;
+    u32 high_score;
+    u32 coins_lo;
+    u32 coins_hi;
+    u16 owned_accents;
+    u16 owned_trails;
+    u16 owned_rigs;
+    u16 owned_lasers_lo;
+    u8  upgrade_levels[NUM_UPGRADES];
+    u8  tilt_steer;
+    u8  haptics;
+    u16 owned_lasers_hi;
+    u8  ship_index;
+    u8  owned_ships_lo;
+    u8  pad0;
+    u8  pad1;
+    /* ── Story Mode ── */
+    u8  story_level;
+    u8  story_unlocked;
+    u8  story_lives;
+    u8  story_cleared_count;
+    u8  story_cleared[10];    /* 80-level bitmask */
+    u8  story_intro_seen;
+    u8  story_freed;
+    u8  story_boss_gifts;
+    u32 story_chubbcoin;
+    u16 story_docks_used;     /* 16 docks now fill the whole u16 */
+    u16 story_pad;
+    u32 story_repair_until;   /* epoch second the ship comes back, 0 = ready */
+    u32 checksum;
+} SaveDataV12;
+
 static u32 calc_checksum_v11(const SaveDataV11* data) {
     u32 sum = 0x12345678;
     const u8* bytes = (const u8*)data;
     for (u32 i = 0; i < sizeof(SaveDataV11) - sizeof(u32); i++) {
+        sum = (sum * 33) ^ bytes[i];
+    }
+    return sum;
+}
+
+static u32 calc_checksum_v12(const SaveDataV12* data) {
+    u32 sum = 0x12345678;
+    const u8* bytes = (const u8*)data;
+    for (u32 i = 0; i < sizeof(SaveDataV12) - sizeof(u32); i++) {
         sum = (sum * 33) ^ bytes[i];
     }
     return sum;
@@ -511,8 +566,60 @@ void save_load(void) {
     /* Pull coins/loot/settings from filesDir/saves/save.sav if present. */
     platform_restore_save();
 
-    /* Android current format: V10 (V9 + Mr Chubbs' spent-dock mask). */
-    /* Current Android format: V11 (V10 + the repair-yard deadline). */
+    /* Android current format: V12 (V11 + the 80-level campaign). */
+    SaveDataV12 d12;
+    u8* dest12 = (u8*)&d12;
+    for (u32 i = 0; i < sizeof(SaveDataV12); i++) dest12[i] = SRAM_BASE[i];
+    if (d12.magic == SAVE_MAGIC_V12 && d12.checksum == calc_checksum_v12(&d12)) {
+        if (d12.difficulty <= 2) g_settings.difficulty = (Difficulty)d12.difficulty;
+        g_settings.music_volume = d12.music_volume <= 100 ? d12.music_volume : 80;
+        g_settings.sfx_volume = d12.sfx_volume <= 100 ? d12.sfx_volume : 80;
+        g_settings.screen_shake = (d12.screen_shake != 0);
+        g_settings.tilt_steer = false;
+        g_settings.haptics = (d12.haptics != 0);
+        if (d12.accent_index < NUM_ACCENTS) g_settings.accent_index = d12.accent_index;
+        if (d12.trail_index < NUM_TRAILS) g_settings.trail_index = d12.trail_index;
+        if (d12.weapon_rig < NUM_RIGS) g_settings.weapon_rig = (WeaponRig)d12.weapon_rig;
+        if (d12.laser_index < NUM_LASERS) g_settings.laser_index = d12.laser_index;
+        g_settings.high_score = d12.high_score;
+        g_settings.coins = ((coin_t)d12.coins_hi << 32) | (coin_t)d12.coins_lo;
+        if (g_settings.coins > COINS_MAX) g_settings.coins = COINS_MAX;
+        g_settings.owned_accents = d12.owned_accents ? d12.owned_accents : (1<<1);
+        g_settings.owned_trails  = d12.owned_trails  ? d12.owned_trails  : (1<<1);
+        g_settings.owned_rigs    = d12.owned_rigs    ? d12.owned_rigs    : (1<<WEAPON_SINGLE);
+        g_settings.owned_lasers  = ((u32)d12.owned_lasers_hi << 16) | (u32)d12.owned_lasers_lo;
+        if (g_settings.owned_lasers == 0) g_settings.owned_lasers = (1u << 0);
+        g_settings.ship_index    = d12.ship_index;
+        g_settings.owned_ships   = d12.owned_ships_lo ? d12.owned_ships_lo : (1<<SHIP_STYLE_CLASSIC);
+        for (int i = 0; i < NUM_UPGRADES; i++) {
+            int lv = d12.upgrade_levels[i];
+            if (lv < 0) lv = 0;
+            if (lv > UPG_MAX_LEVEL) lv = UPG_MAX_LEVEL;
+            g_settings.upgrade_levels[i] = lv;
+        }
+        if (!(g_settings.owned_accents & (1 << g_settings.accent_index))) g_settings.accent_index = 1;
+        if (!(g_settings.owned_trails & (1 << g_settings.trail_index))) g_settings.trail_index = 1;
+        if (!(g_settings.owned_rigs & (1 << g_settings.weapon_rig))) g_settings.weapon_rig = WEAPON_SINGLE;
+        if (!(g_settings.owned_lasers & (1u << g_settings.laser_index))) g_settings.laser_index = 0;
+
+        g_story.level = d12.story_level;
+        g_story.unlocked = d12.story_unlocked;
+        g_story.lives = d12.story_lives;
+        g_story.cleared_count = d12.story_cleared_count;
+        memcpy(g_story.cleared, d12.story_cleared, sizeof(d12.story_cleared));
+        g_story.intro_seen = d12.story_intro_seen;
+        g_story.freed = d12.story_freed;
+        g_story.boss_gifts = d12.story_boss_gifts;
+        g_story.chubbcoin = d12.story_chubbcoin;
+        g_story.docks_used = d12.story_docks_used;
+        g_story.repair_until = d12.story_repair_until;
+        story_init();
+
+        repair_ship_loadout();
+        return;
+    }
+
+    /* Previous format: V11 (70-level campaign, repair-yard clock). */
     SaveDataV11 d11;
     u8* dest11 = (u8*)&d11;
     for (u32 i = 0; i < sizeof(SaveDataV11); i++) dest11[i] = SRAM_BASE[i];
@@ -552,7 +659,9 @@ void save_load(void) {
         g_story.unlocked = d11.story_unlocked;
         g_story.lives = d11.story_lives;
         g_story.cleared_count = d11.story_cleared_count;
-        memcpy(g_story.cleared, d11.story_cleared, sizeof(g_story.cleared));
+        /* The old mask covers 70 levels; the extra kingdom-8 bits start
+         * clear.  Copy the 9 stored bytes, never the wider runtime array. */
+        memcpy(g_story.cleared, d11.story_cleared, sizeof(d11.story_cleared));
         g_story.intro_seen = d11.story_intro_seen;
         g_story.freed = d11.story_freed;
         g_story.boss_gifts = d11.story_boss_gifts;
@@ -562,6 +671,7 @@ void save_load(void) {
         story_init();
 
         repair_ship_loadout();
+        save_write();          /* migrate the blob up to V12 */
         return;
     }
 
@@ -605,7 +715,7 @@ void save_load(void) {
         g_story.unlocked = d10.story_unlocked;
         g_story.lives = d10.story_lives;
         g_story.cleared_count = d10.story_cleared_count;
-        memcpy(g_story.cleared, d10.story_cleared, sizeof(g_story.cleared));
+        memcpy(g_story.cleared, d10.story_cleared, sizeof(d10.story_cleared));
         g_story.intro_seen = d10.story_intro_seen;
         g_story.freed = d10.story_freed;
         g_story.boss_gifts = d10.story_boss_gifts;
@@ -616,7 +726,7 @@ void save_load(void) {
         story_init();
 
         repair_ship_loadout();
-        save_write();          /* migrate the blob up to V11 */
+        save_write();          /* migrate the blob up to V12 */
         return;
     }
 
@@ -660,7 +770,7 @@ void save_load(void) {
         g_story.unlocked = d9.story_unlocked;
         g_story.lives = d9.story_lives;
         g_story.cleared_count = d9.story_cleared_count;
-        memcpy(g_story.cleared, d9.story_cleared, sizeof(g_story.cleared));
+        memcpy(g_story.cleared, d9.story_cleared, sizeof(d9.story_cleared));
         g_story.intro_seen = d9.story_intro_seen;
         g_story.freed = d9.story_freed;
         g_story.boss_gifts = d9.story_boss_gifts;
@@ -671,7 +781,7 @@ void save_load(void) {
         story_init();
 
         repair_ship_loadout();
-        save_write();          /* migrate the blob up to V11 */
+        save_write();          /* migrate the blob up to V12 */
         return;
     }
 
@@ -993,12 +1103,12 @@ void save_load(void) {
 void save_write(void) {
     repair_ship_loadout();
 #ifdef PLATFORM_HOST
-    // Android: V11 = V8 (64-bit coins, 32-bit laser mask, hull styles) plus
-    // the Story Mode campaign block, Mr Chubbs' spent-dock mask and the
-    // repair-yard deadline.
-    SaveDataV11 data;
-    memset(&data, 0, sizeof(SaveDataV11));
-    data.magic = SAVE_MAGIC_V11;
+    // Android: V12 = V8 (64-bit coins, 32-bit laser mask, hull styles) plus
+    // the Story Mode campaign block (80 levels), Mr Chubbs' spent-dock mask
+    // and the repair-yard deadline.
+    SaveDataV12 data;
+    memset(&data, 0, sizeof(SaveDataV12));
+    data.magic = SAVE_MAGIC_V12;
     data.difficulty = (u8)g_settings.difficulty;
     data.music_volume = (u8)g_settings.music_volume;
     data.sfx_volume = (u8)g_settings.sfx_volume;
@@ -1035,10 +1145,10 @@ void save_write(void) {
     data.story_docks_used = g_story.docks_used;
     data.story_repair_until = g_story.repair_until;
 
-    data.checksum = calc_checksum_v11(&data);
+    data.checksum = calc_checksum_v12(&data);
 
     const u8* src = (const u8*)&data;
-    for (u32 i = 0; i < sizeof(SaveDataV11); i++) {
+    for (u32 i = 0; i < sizeof(SaveDataV12); i++) {
         SRAM_BASE[i] = src[i];
     }
     platform_persist_save();

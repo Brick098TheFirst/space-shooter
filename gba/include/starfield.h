@@ -4,11 +4,12 @@
 #include "platform.h"
 
 /* ── Backdrop themes ──────────────────────────────────────────────────────
- * Story Mode's seven kingdoms each fly over their own sky: the nebula
- * colours, their density, the star palette and an extra per-theme drifting
- * layer (dust, sleet, embers, rust motes...) all change.  Theme 0 is the
- * original arcade starfield, so Waves/Endless/Overdrive look exactly as they
- * always did. */
+ * Story Mode's kingdoms each fly over their own sky: the nebula colours,
+ * their density, the star palette and an extra per-theme drifting layer
+ * (dust, sleet, embers, rust motes...) all change.  The eighth kingdom (the
+ * Drone Skies) wraps back to the Chubb Belt sky - the flight home.  Theme 0
+ * is the original arcade starfield, so Waves/Endless/Overdrive look exactly
+ * as they always did. */
 #define SF_THEME_ARCADE   0   /* deep space blue-black (arcade default)   */
 #define SF_THEME_BELT     1   /* THE CHUBB BELT   - dusty warm gold       */
 #define SF_THEME_RUST     2   /* THE RUST YARDS   - orange iron haze      */

@@ -28,21 +28,43 @@ int main(void){
             CHK(lv%10==0, "boss only on 10s");
             CHK(story_boss_for_level(lv)>=0, "boss id resolves");
         } else {
-            CHK(lv%10!=0, "non-boss off the 10s");
+            /* Kingdom 8's finale (level 80) is a drone attack on a 10-level,
+             * not a boss, so the off-the-10s rule only binds the classic
+             * kingdoms. */
+            if(lv <= STORY_CLASSIC_LEVELS) CHK(lv%10!=0, "non-boss off the 10s");
             CHK(L->rocks<=MAX_ASTEROIDS && L->drones<=MAX_DRONES,
                 "field within engine budget");
             if(L->objective==OBJ_HUNT) CHK(L->quota>0 && L->quota<=90,"hunt quota sane");
             if(L->objective==OBJ_SURVIVE) CHK(L->quota>=15 && L->quota<=90,"survive secs sane");
+            if(L->objective==OBJ_DRONES){
+                CHK(L->rocks==0,"drone skies have no rocks");
+                CHK(L->quota>=10 && L->quota<=100,"drone quota 10..100");
+            }
         }
         if(L->objective==OBJ_PUZZLE){
             puzzle_count++;
+            CHK(lv <= STORY_CLASSIC_LEVELS, "puzzles stay in the classic kingdoms");
             CHK(L->modifier >= MOD_PZ_FIRST && L->modifier <= MOD_PZ_LAST,
                 "puzzle has a named variant");
             puzzle_variants[L->modifier]++;
             CHK(story_modifier_name(L->modifier)[0], "puzzle variant has a label");
         }
     }
-    CHK(puzzle_count >= (STORY_LEVEL_COUNT + 1) / 2, "at least half the campaign is puzzles");
+    /* The puzzle half of the campaign lives in the seven classic kingdoms;
+     * kingdom 8 is a straight drone attack and adds no puzzles. */
+    CHK(puzzle_count == STORY_PUZZLE_COUNT, "the campaign keeps its 35 puzzles");
+    CHK(puzzle_count >= (STORY_CLASSIC_LEVELS + 1) / 2, "half the classic campaign is puzzles");
+    /* Kingdom 8: ten drone attacks, quota climbing by ten to one hundred,
+     * and no boss anywhere in the last kingdom. */
+    for(int k=0;k<10;k++){
+        int lv = STORY_CLASSIC_LEVELS + k + 1;
+        const StoryLevel* D=&g_story_levels[lv-1];
+        CHK(D->objective==OBJ_DRONES,"kingdom 8 level is a drone attack");
+        CHK(D->quota==(k+1)*10,"drone quota climbs 10,20,..,100");
+        CHK(story_boss_for_level(lv)<0,"no boss in kingdom 8");
+    }
+    CHK(!strcmp(g_story_levels[STORY_LEVEL_COUNT-1].name,"ONE HUNDRED"),
+        "the last sky is ONE HUNDRED");
     /* The variety contract.  These are the numbers the campaign promises the
      * player: lots of rules, none of them worn out, and the "radar lit a
      * rock" family kept to a strict minimum. */
@@ -61,9 +83,13 @@ int main(void){
     for(int i=MOD_PZ_FIRST;i<=MOD_PZ_LAST;i++)
         CHK(story_modifier_name(i)[0], "every puzzle rule has a label");
     CHK(!strcmp(story_boss_name(0), "Alien"), "first boss is named Alien");
-    CHK(!strcmp(story_boss_name(STORY_SECTOR_COUNT - 1), "Reality Queen"),
-        "final boss is named Reality Queen");
-    /* All seven bosses must be different names - no reskins. */
+    /* The Reality Queen is the FINAL boss: she falls in kingdom 7 (level 70)
+     * and kingdom 8 has no boss at all, only the mid-level Big Drone. */
+    CHK(!strcmp(story_boss_name(SBOSS_REALITY_QUEEN), "Reality Queen"),
+        "the Reality Queen is still named");
+    CHK(!strcmp(story_boss_name(SBOSS_DRONE_OVERLORD), "Big Drone"),
+        "the kingdom 8 big drone is named");
+    /* Every boss name must be different - no reskins. */
     for(int i=0;i<STORY_SECTOR_COUNT;i++)
       for(int j=i+1;j<STORY_SECTOR_COUNT;j++)
         CHK(strcmp(story_boss_name(i), story_boss_name(j)), "boss names are unique");
@@ -200,12 +226,17 @@ int main(void){
     for(int lv=1; lv<=STORY_LEVEL_COUNT; lv++)
         CHK(story_shop_at(lv) == ((lv % 5) == 4), "dock only every fifth level");
     CHK(story_shop_at(4) && story_shop_at(9) && story_shop_at(69), "docks at 4/9/69");
+    CHK(story_shop_at(74) && story_shop_at(79), "kingdom 8 gets docks too");
     CHK(!story_shop_at(5) && !story_shop_at(10) && !story_shop_at(70), "no dock off the fives");
-    /* Every dock sits immediately before a boss on the tenth levels. */
-    CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(70),"boss docks on the 10s");
+    CHK(!story_shop_at(80), "no dock after the last level");
+    /* Every dock sits immediately before a boss on the tenth levels.  Level
+     * 80 keeps the pre-run pep dock even though it is a drone attack. */
+    CHK(story_boss_dock(10) && story_boss_dock(20) && story_boss_dock(70) &&
+        story_boss_dock(80),"boss docks on the 10s");
     CHK(!story_boss_dock(9) && !story_boss_dock(11),"no boss dock off the 10s");
-    CHK(story_dock_index(4)==0 && story_dock_index(9)==1 && story_dock_index(69)==13,
-        "dock indices run 0..13");
+    CHK(story_dock_index(4)==0 && story_dock_index(9)==1 && story_dock_index(69)==13 &&
+        story_dock_index(74)==14 && story_dock_index(79)==15,
+        "dock indices run 0..15");
     CHK(story_dock_index(7)<0, "non-dock levels have no index");
 
     story_shop_open(9);
@@ -298,6 +329,21 @@ int main(void){
         CHK(!strcmp(plain,"one that can kill"), "faint markers vanish too");
         CHK(sp[0]==STORY_MK_FAINT, "the faint span is marked");
     }
+    /* ── The outro ──────────────────────────────────────────────────────
+     * Two pages: "YOU DID IT, JACK." and then "WELCOME HOME."  The slow
+     * fade to white and the trip back to the main menu belong to menu.c. */
+    CHK(STORY_OUTRO_PAGES == 2, "the outro is two pages");
+    CHK(!strcmp(g_story_outro[0][0], "YOU DID IT, JACK."), "the outro tells Jack he did it");
+    CHK(!strcmp(g_story_outro[1][0], "WELCOME HOME."), "the outro welcomes Jack home");
+    for(int i=0;i<STORY_OUTRO_PAGES;i++){
+        char plain[STORY_INTRO_LINE_MAX]; u8 sp[STORY_INTRO_LINE_MAX];
+        for(int l=0;l<2;l++){
+            int n = story_intro_markup(g_story_outro[i][l], plain, sp, sizeof plain);
+            CHK(n == story_intro_len(g_story_outro[i][l]), "outro markup length matches");
+            CHK(n < STORY_INTRO_LINE_MAX, "outro line fits the draw buffer");
+        }
+    }
+
     /* It plays once and once only. */
     g_story.intro_seen = 0;
     CHK(!story_intro_seen(), "a fresh save has not seen the intro");

@@ -11,7 +11,8 @@
  * the FIND MATCH / LEAVE buttons drive matchmaking from the menu itself. */
 #include "eos_online.h"
 #include "coop.h"
-/* Story Mode: the 70-level campaign, 35 puzzle nodes, its map, and Mr Chubbs' shop. */
+/* Story Mode: the 80-level campaign (8 kingdoms), 35 puzzle nodes, its map,
+ * and Mr Chubbs' shop. */
 #include "story.h"
 #endif
 
@@ -69,16 +70,19 @@ static void menu_static_invalidate(void);
 /* Story Mode screens live further down this file; menu_open() and the
  * update/draw dispatchers need them early. */
 static void intro_reset(void);
+static void outro_reset(void);
 static void map_focus_current(void);
 static void story_shop_reset_ui(void);
 static void update_story_intro(void);
 static void update_story_map(void);
 static void update_story_shop(void);
 static void update_story_result(void);
+static void update_story_outro(void);
 static void render_story_intro(void);
 static void render_story_map(void);
 static void render_story_shop(void);
 static void render_story_result(void);
+static void render_story_outro(void);
 static void story_enter_result(void);
 #endif
 static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx);
@@ -187,7 +191,8 @@ void menu_open(GameScreen screen) {
      * dock and the result cards, so Story Mode never sounds like the arcade
      * front end. */
     if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_MAP ||
-        screen == SCREEN_STORY_SHOP  || screen == SCREEN_STORY_RESULT) {
+        screen == SCREEN_STORY_SHOP  || screen == SCREEN_STORY_RESULT ||
+        screen == SCREEN_STORY_OUTRO) {
         audio_play_bgm(BGM_STORY);
     } else
 #endif
@@ -198,11 +203,13 @@ void menu_open(GameScreen screen) {
     }
 #ifdef PLATFORM_HOST
     if (screen == SCREEN_STORY_INTRO) intro_reset();
+    if (screen == SCREEN_STORY_OUTRO) outro_reset();
     if (screen == SCREEN_STORY_MAP)   map_focus_current();
     if (screen == SCREEN_STORY_SHOP)  story_shop_reset_ui();
     /* Each kingdom flies over its own sky; the campaign menus preview the
-     * sector the cursor is parked in. */
-    if (screen == SCREEN_STORY_INTRO) {
+     * sector the cursor is parked in.  The outro flies the same arcade sky
+     * as the intro - the story that opened over it closes over it. */
+    if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_OUTRO) {
         starfield_set_theme(SF_THEME_ARCADE);
     } else if (screen == SCREEN_STORY_MAP || screen == SCREEN_STORY_SHOP ||
                screen == SCREEN_STORY_RESULT) {
@@ -248,6 +255,11 @@ void menu_go_back(void) {
         case SCREEN_STORY_INTRO:
             story_mark_intro_seen();
             menu_open(SCREEN_STORY_MAP);
+            break;
+        case SCREEN_STORY_OUTRO:
+            /* Backing out of the ending simply goes home. */
+            save_write();
+            menu_open(SCREEN_MAIN_MENU);
             break;
         case SCREEN_STORY_SHOP:
             /* Backing out of the dock is still leaving it: one visit only. */
@@ -980,6 +992,111 @@ static void render_story_intro(void) {
                     "SKIP", false);
 }
 
+/* ── Outro speech ─────────────────────────────────────────────────────────
+ * The ending cinematic.  It plays ONCE, the moment the final level (80) is
+ * cleared for the first time - replays of level 80 just show the normal
+ * result card.  Same staging as the opening speech: story_mode.mp3 keeps
+ * playing underneath and the same typewriter types two short pages over the
+ * starfield: "YOU DID IT, JACK." and then "WELCOME HOME."  After the last
+ * word lands, the screen fades slowly to white and the main menu returns.
+ * There is no final boss and no escape sequence after the Reality Queen -
+ * the drone attack is the last kingdom and this is the whole ending. */
+
+#define OUTRO_TYPE_FRAMES 2
+#define OUTRO_HOLD_FRAMES 120   /* beat after the last line finishes typing */
+#define OUTRO_FADE_FRAMES 270   /* ~3 s of slow white fade at 90 Hz */
+
+static int s_outro_page = 0;
+static int s_outro_chars = 0;   /* plain characters revealed on this page */
+static int s_outro_tick = 0;    /* frame counter driving the typewriter */
+static int s_outro_hold = 0;    /* frames held once the last page is typed */
+static int s_outro_fade = 0;    /* >0 while the screen fades to white */
+
+static int outro_page_len(int page) {
+    if (page < 0 || page >= STORY_OUTRO_PAGES) return 0;
+    return story_intro_len(g_story_outro[page][0]) +
+           story_intro_len(g_story_outro[page][1]);
+}
+
+static void outro_reset(void) {
+    s_outro_page = 0;
+    s_outro_chars = 0;
+    s_outro_tick = 0;
+    s_outro_hold = 0;
+    s_outro_fade = 0;
+}
+
+static void outro_finish(void) {
+    save_write();
+    menu_open(SCREEN_MAIN_MENU);
+}
+
+/* A tap fills the current page, then turns it; on the last page (or once
+ * the fade has started) it takes Jack home. */
+static void outro_advance(void) {
+    if (s_outro_fade > 0) { outro_finish(); return; }
+    if (s_outro_chars < outro_page_len(s_outro_page)) {
+        s_outro_chars = outro_page_len(s_outro_page);
+        return;
+    }
+    if (s_outro_page >= STORY_OUTRO_PAGES - 1) { s_outro_fade = 1; return; }
+    s_outro_page++;
+    s_outro_chars = 0;
+    s_outro_tick = 0;
+    s_outro_hold = 0;
+}
+
+static void update_story_outro(void) {
+    if (s_outro_fade > 0) {
+        if (++s_outro_fade > OUTRO_FADE_FRAMES) { outro_finish(); return; }
+        int tx, ty;
+        if (consume_tap(&tx, &ty)) { outro_finish(); return; }
+        if (key_hit(KEY_A) || key_hit(KEY_START)) { outro_finish(); return; }
+        return;
+    }
+
+    int len = outro_page_len(s_outro_page);
+    if (s_outro_chars < len) {
+        if (++s_outro_tick >= OUTRO_TYPE_FRAMES) {
+            s_outro_tick = 0;
+            s_outro_chars++;
+        }
+    } else if (s_outro_page >= STORY_OUTRO_PAGES - 1) {
+        /* The last word is typed: hold for a beat, then fade to white. */
+        if (++s_outro_hold >= OUTRO_HOLD_FRAMES) s_outro_fade = 1;
+    }
+
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) { outro_advance(); return; }
+    if (key_hit(KEY_A) || key_hit(KEY_START)) { outro_advance(); return; }
+    if (key_hit(KEY_B) || key_hit(KEY_SELECT)) { outro_finish(); return; }
+}
+
+static void render_story_outro(void) {
+    starfield_draw_base(0, 0);
+    starfield_draw_stars(0, 0);
+
+    const char* a = g_story_outro[s_outro_page][0];
+    const char* b = g_story_outro[s_outro_page][1];
+    int alen = story_intro_len(a);
+    int shown = s_outro_chars;
+
+    /* Same placement and colours as the opening speech. */
+    intro_draw_line(56, a, shown, PAL_TEXT_WHITE);
+    intro_draw_line(70, b, shown - alen, PAL_TEXT_CYAN);
+
+    if (s_outro_chars >= outro_page_len(s_outro_page) &&
+        s_outro_page < STORY_OUTRO_PAGES - 1 && ((s_anim_frame >> 4) & 1))
+        gfx_draw_text(SCREEN_WIDTH / 2 - 3, 84, ">", PAL_TEXT_GOLD);
+
+    gfx_draw_text(8, SCREEN_HEIGHT - 14, "TAP TO CONTINUE", PAL_TEXT_WHITE);
+
+    if (s_outro_fade > 0) {
+        int amount = (s_outro_fade * 16) / OUTRO_FADE_FRAMES;
+        gfx_fade_white(amount);
+    }
+}
+
 /* ── Level map ────────────────────────────────────────────────────────────
  * One sector page at a time: ten nodes on a gentle wave, and a little ship
  * you fly between them. Simpler than Mario's overworld - the ship glides to
@@ -1255,6 +1372,7 @@ static void render_story_map(void) {
         case OBJ_SURVIVE: goal = "SURVIVE THE FIELD"; break;
         case OBJ_BIGGAME: goal = "CRACK THE BIG ONES"; break;
         case OBJ_TIMED:   goal = "CLEAR IT ON THE CLOCK"; break;
+        case OBJ_DRONES:  goal = "DRONE ATTACK"; break;
         case OBJ_PUZZLE:
             /* Every puzzle has its own named rule now; do not collapse the
              * 31-variant rotation into the old three-label fallback. */
@@ -2015,7 +2133,6 @@ static bool s_result_lost_run = false;
  * the repair countdown. Filled in when the failure card opens. */
 static int  s_result_relocked = 0;
 static int  s_result_bill = 0;
-static bool s_result_finale = false;
 static int  s_result_auto = 0;      /* frames until the card moves on itself */
 /* Mr Chubbs only catches up every fifth level, so a clear either ends at his
  * dock or flies straight on. Decided once when the card opens. */
@@ -2030,7 +2147,6 @@ static void story_enter_result(void) {
     s_result_earned = game_story_earned();
     s_result_sel = 0;
     s_result_lost_run = false;
-    s_result_finale = false;
     s_result_auto = 0;
 
     s_result_dock = false;
@@ -2041,14 +2157,22 @@ static void story_enter_result(void) {
         s_result_resume = story_current_level();
         s_result_next = s_result_level + 1;
         if (s_result_next > STORY_LEVEL_COUNT) s_result_next = STORY_LEVEL_COUNT;
+        /* Finishing the campaign (level 80) for the FIRST time skips the
+         * result card entirely and plays the outro cinematic: "YOU DID IT,
+         * JACK." ... "WELCOME HOME." ... a slow fade to white, then the main
+         * menu.  Replays of the last level get the ordinary card. */
+        if (s_result_level >= STORY_LEVEL_COUNT && !story_last_clear_was_replay()) {
+            save_write();
+            menu_open(SCREEN_STORY_OUTRO);
+            return;
+        }
         /* Does Mr Chubbs catch up on this clear? Only every fifth level, and
          * only if that dock has not already been spent. */
         s_result_dock = story_shop_can_open(s_result_level);
         s_result_fly_on = (s_result_next != s_result_level) &&
                           story_is_unlocked(s_result_next) && story_lives() > 0 &&
                           !story_is_grounded();
-        if (s_result_level >= STORY_LEVEL_COUNT) s_result_finale = true;
-        else s_result_auto = 200;   /* ~2.2s to read the card, then move on */
+        s_result_auto = 200;   /* ~2.2s to read the card, then move on */
     } else {
         int before = story_lives();
         s_result_resume = story_lose_life();
@@ -2112,7 +2236,7 @@ static void update_story_result(void) {
     /* The card holds for a beat so the payout is readable, then it moves on
      * by itself: into Mr Chubbs' dock on the every-fifth-level clears, and
      * back to the map otherwise. */
-    if (s_result_win && s_result_auto > 0 && !s_result_finale) {
+    if (s_result_win && s_result_auto > 0) {
         if (--s_result_auto == 0) {
             if (!(s_result_dock && story_open_dock(s_result_level)))
                 menu_open(SCREEN_STORY_MAP);
@@ -2146,14 +2270,7 @@ static void render_story_result(void) {
     int card_w = SCREEN_WIDTH - 40;
     gfx_draw_glass_card(20, 24, card_w, 72, s_result_win ? PAL_TEXT_GOLD : PAL_TEXT_RED, 15);
 
-    if (s_result_finale) {
-        gfx_draw_text_centered(20, 30, card_w, "REALITY QUEEN FALLS", PAL_TEXT_GOLD);
-        gfx_draw_text_centered(20, 42, card_w, "Revenge, finally.", PAL_TEXT_WHITE);
-        gfx_draw_text_centered(20, 54, card_w, "Everything is unlocked.", PAL_TEXT_CYAN);
-        siprintf(buf, "+%d CHUBBCOIN", s_result_earned);
-        gfx_draw_text_centered(20, 68, card_w, buf, PAL_TEXT_GOLD);
-        gfx_draw_text_centered(20, 82, card_w, "SHOP, MULTIPLAYER, ALL MODES", 17);
-    } else if (s_result_win) {
+    if (s_result_win) {
         siprintf(buf, "LEVEL %d CLEARED", s_result_level);
         gfx_draw_text_centered(20, 32, card_w, buf, PAL_TEXT_GOLD);
         gfx_draw_text_centered(20, 46, card_w, g_story_levels[s_result_level - 1].name, PAL_TEXT_WHITE);
@@ -2242,7 +2359,7 @@ static void render_story_result(void) {
 #ifdef PLATFORM_HOST
 static const char* s_mode_titles[PLAY_CARD_COUNT] = { "STORY", "WAVES", "ENDLESS" };
 static const char* s_mode_lines[PLAY_CARD_COUNT] = {
-    "70 levels. Jack RK's revenge.",
+    "80 levels. Jack RK's revenge.",
     "Clear waves. Classic run.",
     "No waves. Endless hunters."
 };
@@ -2600,6 +2717,7 @@ void menu_update(void) {
         case SCREEN_STORY_MAP:    starfield_update(); update_story_map(); break;
         case SCREEN_STORY_SHOP:   starfield_update(); update_story_shop(); break;
         case SCREEN_STORY_RESULT: starfield_update(); update_story_result(); break;
+        case SCREEN_STORY_OUTRO:  starfield_update(); update_story_outro(); break;
 #endif
         case SCREEN_PLAYING:
 #ifdef PLATFORM_HOST
@@ -3309,6 +3427,7 @@ void menu_draw(void) {
         case SCREEN_STORY_MAP:    render_story_map(); break;
         case SCREEN_STORY_SHOP:   render_story_shop(); break;
         case SCREEN_STORY_RESULT: render_story_result(); break;
+        case SCREEN_STORY_OUTRO:  render_story_outro(); break;
 #endif
         case SCREEN_PLAYING: game_draw(); break;
         case SCREEN_PAUSED: render_paused(); break;

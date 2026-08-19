@@ -276,6 +276,108 @@ int main(int argc, char** argv) {
     host_set_screen_width(HOST_SCREEN_W_DEFAULT);
     menu_request_full_redraw();
 
+    /* ── Kingdom 8, the drone attack and the outro ────────────────────────
+     * Beat the whole campaign for real except the last level, then fly
+     * level 80 (one hundred drones + the big drone) with an undying probe
+     * pilot.  Clearing it must open the OUTRO - not the result card - and
+     * the outro must end back on the main menu.  A replay afterwards goes
+     * to the ordinary result card instead. */
+    save_init_defaults();
+    story_init();
+    for (int lv = 1; lv < STORY_LEVEL_COUNT; lv++) story_complete_level(lv, NULL);
+    /* Model the mid-campaign loadout Jack has earned by the last sky. */
+    g_settings.weapon_rig = WEAPON_NOVA;
+    g_settings.owned_rigs |= (u16)(1u << WEAPON_NOVA);
+    g_settings.laser_index = 3;
+    g_settings.owned_lasers |= (1u << 3);
+    g_settings.upgrade_levels[UPG_DAMAGE] = 5;
+    g_settings.upgrade_levels[UPG_FIRE_RATE] = 5;
+
+    /* The map, parked in kingdom 8: ten drone nodes over the gold home sky. */
+    menu_open(SCREEN_STORY_MAP);
+    pump(20);
+    dump(dir, "15_map_kingdom8");
+
+    /* A drone level's opening card. */
+    game_story_set_level(STORY_CLASSIC_LEVELS + 1);
+    story_set_current_level(STORY_CLASSIC_LEVELS + 1);
+    game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
+    game_start();
+    pump(30);
+    if (!game_story_waiting_for_start()) {
+        fprintf(stderr, "drone level brief did not hold\n");
+        return 1;
+    }
+    dump(dir, "16_drone_brief");
+
+    /* Fly the final level to its end. */
+    game_story_set_level(STORY_LEVEL_COUNT);
+    story_set_current_level(STORY_LEVEL_COUNT);
+    game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
+    game_start();
+    pump(2);
+    menu_queue_tap(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+    pump(1);
+    {
+        int guard = 0;
+        while (menu_current_screen() != SCREEN_STORY_OUTRO && guard++ < 90 * 420) {
+            platform_set_keys((u16)(KEY_A | (((guard / 30) & 1) ? KEY_LEFT : KEY_RIGHT)));
+            g_game.player.lives = 5;               /* undying probe pilot */
+            g_game.player.invulnerable_timer = 60;
+            g_game.is_game_over = false;
+            pump(1);
+        }
+        platform_set_keys(0);
+        if (menu_current_screen() != SCREEN_STORY_OUTRO) {
+            fprintf(stderr, "clearing level 80 did not open the outro\n");
+            return 1;
+        }
+    }
+
+    /* The outro itself: first page typed, then WELCOME HOME, then the slow
+     * fade to white, and finally the main menu. */
+    pump(120);
+    dump(dir, "17_outro_you_did_it");
+    menu_queue_tap(4, 4); pump(2);
+    menu_queue_tap(4, 4); pump(2);
+    pump(110);
+    dump(dir, "18_outro_welcome_home");
+    pump(120);
+    dump(dir, "19_outro_fading_white");
+    pump(220);
+    if (menu_current_screen() != SCREEN_MAIN_MENU) {
+        fprintf(stderr, "the outro did not fade back to the main menu\n");
+        return 1;
+    }
+
+    /* The ending plays once: replaying level 80 gets the ordinary card. */
+    game_story_set_level(STORY_LEVEL_COUNT);
+    story_set_current_level(STORY_LEVEL_COUNT);
+    game_set_mode(GAME_MODE_STORY);
+    menu_open(SCREEN_PLAYING);
+    game_start();
+    pump(2);
+    menu_queue_tap(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+    pump(1);
+    {
+        int guard = 0;
+        while (menu_current_screen() != SCREEN_STORY_RESULT && guard++ < 90 * 420) {
+            platform_set_keys((u16)(KEY_A | (((guard / 30) & 1) ? KEY_LEFT : KEY_RIGHT)));
+            g_game.player.lives = 5;
+            g_game.player.invulnerable_timer = 60;
+            g_game.is_game_over = false;
+            pump(1);
+        }
+        platform_set_keys(0);
+        if (menu_current_screen() != SCREEN_STORY_RESULT) {
+            fprintf(stderr, "replaying level 80 did not open the result card\n");
+            return 1;
+        }
+    }
+    dump(dir, "20_replay_result_card");
+
     printf("done\n");
     return 0;
 }

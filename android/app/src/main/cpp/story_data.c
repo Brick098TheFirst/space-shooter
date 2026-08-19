@@ -1,19 +1,21 @@
 #include "story.h"
 
-/* ── The 70 levels ────────────────────────────────────────────────────────
- * Difficulty rises monotonically and every tenth level is a boss. Five nodes
- * in every sector are deliberately puzzles, making 35/70 levels puzzle
- * levels overall. The puzzle rules are hand-picked so the same rule appears
- * at most twice: target order, type locks, paired signals, a drone-only code,
- * shot-path tricks, moving safe zones, fragile cargo and seven different
- * learnable no-guns patterns all get their own nodes.
+/* ── The 80 levels ────────────────────────────────────────────────────────
+ * Difficulty rises monotonically and every tenth level of the seven classic
+ * kingdoms is a boss. Five nodes in every classic sector are deliberately
+ * puzzles, making 35/70 of those levels puzzle levels overall. The puzzle
+ * rules are hand-picked so the same rule appears at most twice: target order,
+ * type locks, paired signals, a drone-only code, shot-path tricks, moving
+ * safe zones, fragile cargo and seven different learnable no-guns patterns
+ * all get their own nodes.  Levels 71..80 are kingdom 8's drone attack.
  *
  * Field sizes stay inside the engine's MAX_ASTEROIDS / MAX_DRONES budgets,
  * and tools/story_sim proves every level still has a terminating objective. */
-/* ── The 70 levels ────────────────────────────────────────────────────────
- * Difficulty rises monotonically and every tenth level is a boss.  Five nodes
- * in every sector are puzzles, so 35 of the 70 levels are puzzle levels - and
- * they run on 33 DIFFERENT rules, not a handful of rules wearing 33 names.
+/* ── The 80 levels ────────────────────────────────────────────────────────
+ * Difficulty rises monotonically and every tenth level of the classic
+ * kingdoms is a boss.  Five nodes in every classic sector are puzzles, so 35
+ * of the first 70 levels are puzzle levels - and they run on 33 DIFFERENT
+ * rules, not a handful of rules wearing 33 names.
  *
  * The rule of the campaign: a rule is used once wherever possible and never
  * more than twice, and the "the radar lit a rock, go shoot it" family is
@@ -306,6 +308,54 @@ const StoryLevel g_story_levels[STORY_LEVEL_COUNT] = {
       "The Reality Queen waits beyond the fold.",
       "Jack. End the old invasion.",
       OBJ_BOSS, 0, 0, 0, 190, 380, 2500, MOD_NONE },
+
+    /* ── KINGDOM 8 - THE DRONE SKIES (levels 71..80) ─────────────────────
+     * The finale sequence is gone: no last boss, no escape.  The Reality
+     * Queen fell in kingdom 7 and the last kingdom is a pure drone attack.
+     * Every level runs the same shape - waves of ten drones, a BIG DRONE
+     * boss dropping in after the first waves, then more tens - and the
+     * total climbs by ten each level until one hundred fill the last sky.
+     * `quota` is the total drone body count for the level. */
+    { "FIRST SWARM",
+      "The last kingdom answers in drones.",
+      "Ten first. Then more.",
+      OBJ_DRONES, 0, 8, 10, 190, 382, 2600, MOD_NONE },
+    { "DOUBLE WAVE",
+      "They always arrive ten at a time.",
+      "Twenty fall this time.",
+      OBJ_DRONES, 0, 8, 20, 190, 384, 2750, MOD_NONE },
+    { "DRONE RAIN",
+      "Thirty hulls rain down the lane.",
+      "The big one joins in.",
+      OBJ_DRONES, 0, 8, 30, 190, 386, 2900, MOD_NONE },
+    { "HUNTER WALL",
+      "Forty drones wall off the sky.",
+      "Break the wall, Jack.",
+      OBJ_DRONES, 0, 8, 40, 190, 388, 3050, MOD_NONE },
+    { "THE LONG SIEGE",
+      "Fifty wings. No pause. No pity.",
+      "Outlast the swarm.",
+      OBJ_DRONES, 0, 8, 50, 190, 390, 3200, MOD_NONE },
+    { "IRON STORM",
+      "Sixty engines scream overhead.",
+      "Their overlord is coming.",
+      OBJ_DRONES, 0, 8, 60, 190, 392, 3400, MOD_NONE },
+    { "ENDLESS WINGS",
+      "Seventy hulls blot out the stars.",
+      "Trust your guns, Jack.",
+      OBJ_DRONES, 0, 8, 70, 190, 394, 3600, MOD_NONE },
+    { "STEEL HORIZON",
+      "Eighty drones. The sky goes dark.",
+      "Cut them down in tens.",
+      OBJ_DRONES, 0, 8, 80, 190, 396, 3800, MOD_NONE },
+    { "HOME RUN",
+      "Ninety drones guard the way home.",
+      "Almost there, Jack.",
+      OBJ_DRONES, 0, 8, 90, 190, 398, 3950, MOD_NONE },
+    { "ONE HUNDRED",
+      "A hundred drones. The last sky.",
+      "Clear it and go home, Jack.",
+      OBJ_DRONES, 0, 8, 100, 190, 400, 4200, MOD_NONE },
 };
 
 /* Modifier labels for the level banner and the map card. Kept short so they
@@ -368,7 +418,8 @@ static const char* const s_sector_names[STORY_SECTOR_COUNT] = {
     "The Scrapline",
     "Ember Reach",
     "The Cold Vault",
-    "The Reality kingdom"
+    "The Reality kingdom",
+    "The Drone Skies"
 };
 
 static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
@@ -378,7 +429,8 @@ static const char* const s_boss_names[STORY_SECTOR_COUNT] = {
     "Sledge",
     "Wildfire",
     "Bulwark",
-    "Reality Queen"
+    "Reality Queen",
+    "Big Drone"      /* kingdom 8's mid-level boss; never a level-10 boss */
 };
 
 /* Nobody's face is ever shown - the radio voices guide you,
@@ -390,7 +442,8 @@ static const char* const s_boss_taunts[STORY_SECTOR_COUNT] = {
     "PLATE BY PLATE, JACK. GOOD LUCK.",
     "I BURN. THEN I VENT. TRY TO COUNT.",
     "THE SEAL DOES NOT BREAK. THE NODES MIGHT.",
-    "JACK ARKEY. THIS IS THE REALITY QUEEN."
+    "JACK ARKEY. THIS IS THE REALITY QUEEN.",
+    "TEN AT A TIME, JACK. I BRING MORE."
 };
 
 const char* story_sector_name(int sector) {
@@ -408,9 +461,13 @@ const char* story_boss_taunt(int boss_id) {
     return s_boss_taunts[boss_id];
 }
 
+/* Boss levels are decided by the table, not by the level number: every
+ * OBJ_BOSS entry is still on a tenth level (10..70), but kingdom 8's final
+ * level 80 is a drone attack, NOT a boss fight, so it must never report
+ * one. */
 int story_boss_for_level(int level) {
     if (level <= 0 || level > STORY_LEVEL_COUNT) return -1;
-    if ((level % STORY_SECTOR_LEVELS) != 0) return -1;
+    if (g_story_levels[level - 1].objective != OBJ_BOSS) return -1;
     return (level / STORY_SECTOR_LEVELS) - 1;
 }
 
@@ -455,6 +512,20 @@ const char* const g_story_intro[STORY_INTRO_PAGES][2] = {
       "!one that can kill!" },
     { "He set it ready for flight,",
       "and headed for the stars." }
+};
+
+/* ── The outro ────────────────────────────────────────────────────────────
+ * Plays once, the moment level 80 falls for the first time.  Staged exactly
+ * like the opening speech (same typewriter, same two-line pages, and
+ * story_mode.mp3 keeps playing underneath), then the screen fades slowly to
+ * white and the main menu comes back.  There is no final boss and no escape
+ * sequence after the Reality Queen: the drone attack IS the last kingdom,
+ * and these two pages are the whole ending. */
+const char* const g_story_outro[STORY_OUTRO_PAGES][2] = {
+    { "YOU DID IT, JACK.",
+      "YOU REALLY DID IT." },
+    { "WELCOME HOME.",
+      "" }
 };
 
 /* Strip the *bold* / !faint! markers out of a story line.
