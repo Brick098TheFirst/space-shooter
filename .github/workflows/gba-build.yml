@@ -3,7 +3,7 @@ name: Build & Release (GBA ROM + Multiplayer Android APK)
 on:
   push:
     branches:
-      - overhall-test
+      - main
   workflow_dispatch:
     inputs:
       custom_tag:
