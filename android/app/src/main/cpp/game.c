@@ -756,27 +756,6 @@ static void damage_player(void) {
     int py = FROM_FIXED(g_game.player.y);
     platform_queue_haptic(HAPTIC_HIT);
 
-    /* The Queen promised to repeat this forever. Level 80 therefore has
-     * infinite attempts and checkpoint rewinds, not campaign-life damage. */
-    if (story_is_finale() && (s_finale_state == 0 || s_finale_state == 2)) {
-        trigger_explosion(px, py);
-        g_game.player.dead = true;
-        g_game.player.lives = 1;
-        g_game.player.invulnerable_timer = 999;
-        /* Rewind the danger, not the player's earned damage. This guarantees
-         * every tap advances the final battle even on a difficult touchscreen
-         * attempt, while crown breaks remain the visible checkpoints. */
-        if (g_game.boss_active && g_game.boss.hp > 0)
-            s_finale_saved_hp = g_game.boss.hp;
-        s_finale_state = 3;
-        s_finale_timer = 170;
-        s_finale_quote = (s_finale_quote + 1) % 3;
-        for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
-        for (int i = 0; i < MAX_BOSS_BULLETS; i++) g_game.boss_bullets[i].active = false;
-        audio_play_sfx(SFX_EXPLOSION);
-        return;
-    }
-
     if (g_game.player.shield_charges > 0) {
         g_game.player.shield_charges--;
         g_game.player.invulnerable_timer = 60;
@@ -789,7 +768,20 @@ static void damage_player(void) {
         g_game.player.y = TO_FIXED(SCREEN_HEIGHT - 20);
         trigger_explosion(px, py);
         if (g_game.player.lives <= 0) {
-            if (s_coop_guest_active) {
+            if (story_is_finale() && (s_finale_state == 0 || s_finale_state == 2)) {
+                /* Only an exhausted life stock triggers the Queen's rewind.
+                 * Individual hits now behave like the rest of the campaign. */
+                g_game.player.dead = true;
+                g_game.player.invulnerable_timer = 999;
+                if (g_game.boss_active && g_game.boss.hp > 0)
+                    s_finale_saved_hp = g_game.boss.hp;
+                s_finale_state = 3;
+                s_finale_timer = 170;
+                s_finale_quote = (s_finale_quote + 1) % 3;
+                for (int i = 0; i < MAX_BULLETS; i++) g_game.bullets[i].active = false;
+                clear_boss_projectiles();
+                audio_play_sfx(SFX_EXPLOSION);
+            } else if (s_coop_guest_active) {
                 /* Co-op: losing your last life doesn't end the run. Your ship
                  * goes down, you SPECTATE your partner, and the run only ends
                  * when both ships are down. */
@@ -2650,8 +2642,18 @@ static void story_restart_finale_checkpoint(void) {
     for (int i = 0; i < MAX_EXPLOSIONS; i++) g_game.explosions[i].active = false;
     g_game.is_game_over = false;
     g_game.player.dead = false;
-    g_game.player.lives = 1;
-    g_game.player.shield_charges = 0;
+    int restart_lives = get_max_lives();
+    if (g_settings.difficulty == DIFF_CADET) restart_lives++;
+    if (g_settings.difficulty == DIFF_ACE && restart_lives > 2) restart_lives--;
+    /* The orbital duel uses the player's normal upgraded stock. Once Jack's
+     * ship crashes, the on-foot checkpoint always starts with three lives. */
+    g_game.player.lives = s_finale_checkpoint ? 3 : restart_lives;
+    g_game.player.shield_charges = s_finale_checkpoint ? 0 : get_start_shields();
+    if (!s_finale_checkpoint && g_settings.difficulty == DIFF_CADET)
+        g_game.player.shield_charges++;
+    int restart_max_shields = get_max_shields();
+    if (g_game.player.shield_charges > restart_max_shields)
+        g_game.player.shield_charges = restart_max_shields;
     g_game.player.invulnerable_timer = 100;
     g_game.player.x = TO_FIXED(SCREEN_WIDTH / 2);
     g_game.player.y = TO_FIXED(SCREEN_HEIGHT - (s_finale_checkpoint ? 24 : 18));
@@ -4214,9 +4216,8 @@ void game_start(void) {
             s_finale_ground_act = 0;
             s_finale_saved_hp = 0;
             s_jack_aim_x = SCREEN_WIDTH / 2;
-            /* Level 80 does not consume the campaign life pool. */
-            g_game.player.lives = 1;
-            g_game.player.shield_charges = 0;
+            /* The orbital opening keeps the normal upgraded lives and shields.
+             * Planetfall replaces them with its authored three-life stock. */
         }
         story_begin_level();
         s_story_waiting_for_start = true;

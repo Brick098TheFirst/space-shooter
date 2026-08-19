@@ -213,8 +213,10 @@ before the rest of the game unlocks.
     telegraphed signature attack—Jack catches her over a planet. The orbital
     reprise retains the readable crown rule; death cuts to black with rotating
     Queen threats and rewinds to the latest completed **act**, not the start of
-    the whole fight. Breaking the royal craft triggers a ship-fall sequence,
-    then an entirely separate pseudo-3D planetside moveset: Horizon Cut safe
+    the whole fight. The orbital duel uses the player's normal upgraded lives
+    and shields; after the crash, planetfall begins with exactly **three lives**.
+    Breaking the royal craft triggers a ship-fall sequence, then an entirely
+    separate pseudo-3D moveset: Horizon Cut safe
     lanes, Throne Salvos and alternating Last Word cannons. Jack moves on foot
     while the **FIRE** button automatically targets the Queen—no precision-aim
     chord or tapping the ship required—and has a second crown-break rewind
