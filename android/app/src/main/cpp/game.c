@@ -126,6 +126,7 @@ static int s_finale_quote = 0;
  * Failure teaches the current act without erasing already-proven mastery. */
 static int s_finale_ship_act = 0;
 static int s_finale_ground_act = 0;
+static int s_finale_saved_hp = 0; /* damage survives a reality rewind */
 static int s_jack_aim_x = 120;
 /* The Queen encounters are authored as set pieces rather than ordinary HP
  * sponges.  This timer drives the phase-name card after every crown break;
@@ -762,6 +763,11 @@ static void damage_player(void) {
         g_game.player.dead = true;
         g_game.player.lives = 1;
         g_game.player.invulnerable_timer = 999;
+        /* Rewind the danger, not the player's earned damage. This guarantees
+         * every tap advances the final battle even on a difficult touchscreen
+         * attempt, while crown breaks remain the visible checkpoints. */
+        if (g_game.boss_active && g_game.boss.hp > 0)
+            s_finale_saved_hp = g_game.boss.hp;
         s_finale_state = 3;
         s_finale_timer = 170;
         s_finale_quote = (s_finale_quote + 1) % 3;
@@ -2681,6 +2687,8 @@ static void story_restart_finale_checkpoint(void) {
         g_game.boss.phase = SB_IDLE;
         g_game.boss.phase_timer = 70;
     }
+    if (s_finale_saved_hp > 0 && s_finale_saved_hp < g_game.boss.hp)
+        g_game.boss.hp = s_finale_saved_hp;
 }
 
 /* Aimed shot helper in story space. */
@@ -3227,6 +3235,7 @@ static void sb_reality_queen(Boss* b) {
         g_game.shake_timer = 30;
     } else if (b->stage == 1 && pct <= last_break) {
         b->stage = 2; b->phase = SB_STAGGER; b->phase_timer = 105;
+        if (story_is_finale() && s_finale_state == 0) s_finale_ship_act = 2;
         s_queen_phase_card = 105;
         clear_boss_projectiles();
         g_game.shake_timer = 42;
@@ -3863,6 +3872,7 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
                                   FROM_FIXED(g_game.player.y) + (rand() % 18) - 9);
             g_game.shake_timer = 80;
             s_finale_checkpoint = 1;
+            s_finale_saved_hp = 0;
             s_finale_state = 1;
             s_finale_timer = 260;
             g_game.player.invulnerable_timer = 999;
@@ -4202,6 +4212,7 @@ void game_start(void) {
             s_finale_quote = 0;
             s_finale_ship_act = 0;
             s_finale_ground_act = 0;
+            s_finale_saved_hp = 0;
             s_jack_aim_x = SCREEN_WIDTH / 2;
             /* Level 80 does not consume the campaign life pool. */
             g_game.player.lives = 1;
@@ -4598,22 +4609,16 @@ static void game_update_tick(void) {
         }
     }
 
-    /* On foot, hold the beam/shoulder button to plant Jack's feet and aim the
-     * reticle; release it to use the same D-pad for movement. */
-    bool jack_aiming = story_is_finale() && s_finale_state == 2 &&
-                       (key_is_down(KEY_B) || key_is_down(KEY_L) || key_is_down(KEY_R));
-    if (jack_aiming) {
-        s_jack_aim_x += mx * 3;
+    /* Planetfall is intentionally one-button combat on Android: FIRE always
+     * locks to the Queen's craft, while the stick remains free for movement.
+     * Requiring BEAM + stick + FIRE was precise on a controller but awkward
+     * on a touchscreen and made players feel they had to tap the ship itself. */
+    if (story_is_finale() && s_finale_state == 2 && g_game.boss_active) {
+        /* Lead the moving craft by roughly one bullet flight-time so a tap
+         * actually connects instead of chasing its previous screen position. */
+        s_jack_aim_x = FROM_FIXED(g_game.boss.x) + g_game.boss.sweep_dir * 22;
         if (s_jack_aim_x < 10) s_jack_aim_x = 10;
         if (s_jack_aim_x > SCREEN_WIDTH - 10) s_jack_aim_x = SCREEN_WIDTH - 10;
-        mx = my = 0;
-    } else if (story_is_finale() && s_finale_state == 2 && g_game.boss_active) {
-        /* Soft lock keeps run-and-gun viable on touch/gamepad; planting with B
-         * remains the faster precision option for leading the moving craft. */
-        int target = FROM_FIXED(g_game.boss.x);
-        if (s_jack_aim_x < target - 3) s_jack_aim_x += 3;
-        else if (s_jack_aim_x > target + 3) s_jack_aim_x -= 3;
-        else s_jack_aim_x = target;
     }
 
     // ── Engine speed with 2x cap logic ───────────────────────────────
@@ -4699,24 +4704,23 @@ static void game_update_tick(void) {
         g_game.primary_beam_ramp = 0;
         if (primary_held && g_game.player.fire_cooldown == 0) {
             if (jack_ground && g_game.boss_active) {
-                /* Jack aims the hand cannon at the Queen's craft from his
-                 * current position. Moving changes the firing angle, so the
-                 * same controls both line up shots and dodge her return fire. */
-                int px0 = FROM_FIXED(g_game.player.x);
-                int py0 = FROM_FIXED(g_game.player.y) - 7;
-                int dx0 = s_jack_aim_x - px0;
-                int dy0 = FROM_FIXED(g_game.boss.y) - py0;
-                double mag = hypot((double)dx0, (double)dy0);
-                if (mag < 1.0) mag = 1.0;
-                int speed = TO_FIXED(6);
+                /* One tap of FIRE sends the hand cannon directly at the
+                 * Queen. Movement and shooting never compete for a thumb. */
                 int damage = get_beam_damage() * 4;
                 if (damage < 20) damage = 20;
-                add_player_bullet(TO_FIXED(px0), TO_FIXED(py0),
-                                  (int)(dx0 / mag * speed),
-                                  (int)(dy0 / mag * speed), damage, true, 0);
-                g_game.player.fire_cooldown = 9;
+                /* Planetfall FIRE is a lock-on shot: tapping the on-screen
+                 * button guarantees a hit and immediately shows impact FX. */
+                g_game.boss.hp -= damage;
+                g_game.boss.flash_timer = 6;
                 story_on_shot_fired(1);
+                story_on_shot_hit();
+                spawn_particle(g_game.boss.x, g_game.boss.y,
+                               (rand() & 127) - 64, 90, PAL_TEXT_GOLD, 9);
+                g_game.player.fire_cooldown = 9;
                 audio_play_sfx(SFX_LASER);
+                if (g_game.boss.hp <= 0)
+                    defeat_boss(&g_game.boss, FROM_FIXED(g_game.boss.x),
+                                FROM_FIXED(g_game.boss.y));
             } else {
                 fire_player_weapon();
             }
@@ -6463,7 +6467,7 @@ void game_draw(void) {
                 if (story_is_finale() && s_finale_state == 2) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                         g_game.boss.stage ? "LAST ACT: NO MORE REWINDS"
-                                          : "PLANETFALL: HOLD B TO AIM - A FIRE",
+                                          : "PLANETFALL: TAP FIRE TO SHOOT",
                         g_game.boss.stage ? PAL_TEXT_RED : PAL_TEXT_GOLD);
                 } else if (story_is_finale()) {
                     const char* qline = g_game.boss.stage == 0 ? "REPRISE: BREAK THE CROWN" :
@@ -7306,10 +7310,6 @@ void game_coop_advance_render(void) {
 
 void game_coop_get_p2_pos(int* fx, int* fy) {
     *fx = g_game.player2.x;
-    *fy = g_game.player2.y;
-}
-#endif /* PLATFORM_HOST */
-= g_game.player2.x;
     *fy = g_game.player2.y;
 }
 #endif /* PLATFORM_HOST */

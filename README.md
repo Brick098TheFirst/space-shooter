@@ -215,9 +215,10 @@ before the rest of the game unlocks.
     Queen threats and rewinds to the latest completed **act**, not the start of
     the whole fight. Breaking the royal craft triggers a ship-fall sequence,
     then an entirely separate pseudo-3D planetside moveset: Horizon Cut safe
-    lanes, Throne Salvos and alternating Last Word cannons. Jack moves on foot,
-    gets gentle run-and-gun aim assistance, can plant his feet for precision
-    aim, and has a second crown-break rewind checkpoint before the final kill.
+    lanes, Throne Salvos and alternating Last Word cannons. Jack moves on foot
+    while the **FIRE** button automatically targets the Queen—no precision-aim
+    chord or tapping the ship required—and has a second crown-break rewind
+    checkpoint before the final kill.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated
