@@ -252,7 +252,8 @@ int main(int argc, char** argv) {
                          L->objective==OBJ_SURVIVE?"SURVIVE":
                          L->objective==OBJ_BIGGAME?"BIGGAME":
                          L->objective==OBJ_TIMED?"TIMED":
-                         L->objective==OBJ_PUZZLE?"PUZZLE":"CLEAR";
+                         L->objective==OBJ_PUZZLE?"PUZZLE":
+                         L->objective==OBJ_DRONES?"DRONES":"CLEAR";
         int max_ticks = 90 * 400;   /* 400 seconds of patience */
         int ticks = play_level(lv, max_ticks);
         if (ticks >= 0) {

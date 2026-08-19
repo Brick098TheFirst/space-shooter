@@ -100,7 +100,7 @@ Android also accepts a **Bluetooth / USB gamepad** (left stick or D-pad, A/RT fi
 
 ### 📖 Story Mode (Android)
 
-Play now opens **Story Mode** — a 70-level campaign that must be finished
+Play now opens **Story Mode** — an 80-level campaign that must be finished
 before the rest of the game unlocks.
 
 - **The story of Jack RK and the Chubbs.** Once upon a time in another
@@ -117,11 +117,16 @@ before the rest of the game unlocks.
   (`Assets/Audio/story_mode.mp3`), which keeps playing across the level map,
   Mr Chubbs' dock, and the result cards, so the campaign never sounds like the
   arcade front end.
-- **70 levels across 7 themed sectors** — The Chubb System, The Rust Yards,
-  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, and The Reality
-  kingdom. **35 of the 70 levels are puzzles**, with five puzzle nodes in
-  every sector, so the campaign changes rhythm constantly rather than saving
-  all its experiments for the finale.
+- **80 levels across 8 kingdoms** — The Chubb System, The Rust Yards,
+  The Ice Fields, The Scrapline, Ember Reach, The Cold Vault, The Reality
+  kingdom, and **The Drone Skies**. **35 of the first 70 levels are
+  puzzles**, with five puzzle nodes in every classic sector, so the campaign
+  changes rhythm constantly. The eighth kingdom is different on purpose: ten
+  straight **drone attack** levels — waves of ten hunter drones, a **big
+  drone boss** dropping in after the first waves, and the total climbing ten
+  drones per level until **one hundred** fill the last sky. There is no final
+  boss and no escape sequence: the Reality Queen falls in kingdom 7, and the
+  drone attack is how Jack flies home.
 - **Thirty-three puzzle rules, none of them used more than twice.** The puzzle
   half of the campaign is a variety pack of *goals*, not one shooting gallery
   wearing thirty-three names, and **fifteen of the rules never let you pull the
@@ -157,18 +162,22 @@ before the rest of the game unlocks.
   **clear it on the clock**, and **puzzle levels**. Eight arcade field
   modifiers still provide extra variety outside the puzzle nodes.
 
-  `tools/story_sim` flies all 70 levels headlessly with a scripted pilot that
+  `tools/story_sim` flies all 80 levels headlessly with a scripted pilot that
   plays each rule, proving every level terminates, and `save_tests` enforces
   the variety contract itself: 35 puzzles, at least 30 distinct rules, no rule
-  twice over, at most two scanner levels, and seven differently named bosses.
+  twice over, at most two scanner levels, seven differently named bosses, and
+  kingdom 8's ten drone attacks with quotas climbing 10 → 100.
 - **A different sky over every sector.** All seven sectors retain a distinct
   backdrop: the Chubb System's cold stars, the Rust Yards' iron haze, the Ice
   Fields' blue sleet, the Scrapline's industrial glare, Ember Reach's embers,
   the near-black Cold Vault, and The Reality kingdom's folded violet space.
-- **A boss every 10 levels, each a hand-pixelled ship in the fleet's own art
-  style** (authored nose-up with the same hull lighting ramp, canopy glass and
-  paint accents as the player ship templates, then flipped to fly nose-down),
-  and each built around a **key mechanic** no other boss uses:
+  The Drone Skies fly back over the warm gold **Chubb Belt** sky — the last
+  kingdom is the flight home.
+- **A boss every 10 levels through kingdom 7, each a hand-pixelled ship in
+  the fleet's own art style** (authored nose-up with the same hull lighting
+  ramp, canopy glass and paint accents as the player ship templates, then
+  flipped to fly nose-down), and each built around a **key mechanic** no
+  other boss uses:
   - **Alien** *(NO GIMMICK — the tutorial)* — level 10 is just an alien. It
     hovers, drifts, telegraphs every shot with a long wind-up and lobs slow
     bolts and a wide five-shot fan you can walk between. No plates, no
@@ -198,12 +207,19 @@ before the rest of the game unlocks.
     turret nodes that must be shot off first; its lockdown searchlight marches
     shots across the floor in a strict scan, and once breached it vents a
     two-armed spiral you walk between.
-  - **Reality Queen** *(THE FOLD)* — the finale, and the only boss that is
-    never where your shots are. Only her **glowing open face** takes real
-    damage; she turns it away on a clock, then starts **folding the arena**,
-    flipping your ship across the screen mid-dodge, until the last stage tears
-    the core open. Axis-aligned cube shot, not another ring barrage. Jack RK
-    gets his chance at revenge.
+  - **Reality Queen** *(THE FOLD)* — the last of the seven big bosses, downed
+    in **kingdom 7 (level 70)**, and the only boss that is never where your
+    shots are. Only her **glowing open face** takes real damage; she turns it
+    away on a clock, then starts **folding the arena**, flipping your ship
+    across the screen mid-dodge, until the last stage tears the core open.
+    Axis-aligned cube shot, not another ring barrage. Jack RK gets his chance
+    at revenge — and that is the end of her. There is no final boss after the
+    Queen and no escape sequence: kingdom 8 is the drone attack, then home.
+  - **Big Drone** *(kingdom 8)* — not a level-10 boss. An overgrown hunter
+    hull in Crimson Void paint that drops into **every** drone-attack level
+    once the first waves are down, fights like the swarm it leads, and scales
+    its HP with the level. Beat it and the drone waves carry on until the
+    level's quota is met.
 
   Every story boss opens with the same staging as the arcade ones: the music
   fades to a second of silence while the hull descends, then the dedicated
@@ -233,6 +249,12 @@ before the rest of the game unlocks.
   page, a second tap turns it (pages never auto-advance), **SKIP** drops
   straight into the level map, and `g_story.intro_seen` makes sure it only
   ever plays once.
+- **The outro.** Beating the final level (80) for the first time skips the
+  result card and plays an ending staged exactly like the intro: the same
+  `story_mode.mp3` keeps playing while the typewriter says **YOU DID IT,
+  JACK.** and then **WELCOME HOME.**, the screen **fades slowly to white**,
+  and the game returns to the main menu. It plays once; replaying level 80
+  just shows the ordinary clear card.
 - **Enemy variation stays intact.** Hunter ships spawn with random hull styles
   and random accent colors, keeping repeated fights visually varied.
 - **Lives, wrecks & the repair yard.** You get 3 story lives. Die and you retry
@@ -243,13 +265,14 @@ before the rest of the game unlocks.
   clock is wall-clock, so it keeps counting down with the game closed — the map
   shows the countdown in place of LAUNCH until the ship is handed back.
 - **Everything else stays locked** — Shop, Upgrades, Multiplayer, and the
-  Waves/Endless/Overdrive modes — until level 70 falls.
+  Waves/Endless/Overdrive modes — until level 80 falls.
 
-Story progress lives in the **V11 save block** (levels cleared, Chubbcoin,
-lives, unlock flags, which of Mr Chubbs' 14 docks are already spent, and the
-repair-yard deadline). Older saves — including V9/V10 campaign saves — upgrade
-automatically on load and keep all their progress. The campaign is verified by a headless playthrough
-harness that proves every level still terminates — see `tools/story_sim/`.
+Story progress lives in the **V12 save block** (80-level clear bitmask,
+Chubbcoin, lives, unlock flags, which of Mr Chubbs' 16 docks are already
+spent, and the repair-yard deadline). Older saves — including V9/V10/V11
+campaign saves — upgrade automatically on load and keep all their progress.
+The campaign is verified by a headless playthrough harness that proves every
+level still terminates — see `tools/story_sim/`.
 
 Story Mode's soundtrack is the only asset shipped as an MP3, so it has its own
 converter: `python3 tools/generate_story_audio.py` regenerates

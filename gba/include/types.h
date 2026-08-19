@@ -112,7 +112,9 @@ typedef enum {
     SCREEN_STORY_INTRO,   /* the opening speech, typed out page by page */
     SCREEN_STORY_MAP,     /* fly a mini ship between level nodes */
     SCREEN_STORY_SHOP,    /* Mr Chubbs' docked Trading Post */
-    SCREEN_STORY_RESULT   /* level cleared / failed card */
+    SCREEN_STORY_RESULT,  /* level cleared / failed card */
+    SCREEN_STORY_OUTRO    /* the ending speech after level 80, then a slow
+                           * fade to white and back to the main menu */
 } GameScreen;
 
 typedef enum {

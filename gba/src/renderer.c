@@ -335,6 +335,68 @@ IWRAM_CODE void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style) {
     }
 }
 
+/* The BIG DRONE of kingdom 8: one of the ordinary hunter hulls blown up and
+ * centred on (cx, cy), exactly like the boss ships.  Same flip as
+ * gfx_draw_enemy_ship (bosses fly nose-down), plus an optional white flash
+ * when the hull takes a hit. */
+IWRAM_CODE void gfx_draw_enemy_ship_scaled(int cx, int cy, int accent_idx,
+                                           int style, int scale, bool flash) {
+    if (accent_idx < 0 || accent_idx >= NUM_ACCENTS) accent_idx = 5;
+    if (style < 0 || style >= NUM_SHIP_STYLES) style = 0;
+    if (scale < 1) scale = 1;
+
+    const u8* src = (style == 0) ? spr_ship[accent_idx] : spr_ship_styles[style];
+    bool is_styled = (style > 0);
+    int w = 20 * scale, h = 16 * scale;
+    int x = cx - w / 2;
+    int y = cy - h / 2;
+
+    for (int sy = 0; sy < 16; sy++) {
+        for (int sx = 0; sx < 20; sx++) {
+            u8 pix = src[(15 - sy) * 20 + (19 - sx)];
+            if (pix == 0) continue;
+            u8 col;
+            if (flash) {
+                col = PAL_TEXT_WHITE;
+            } else if (is_styled && pix >= 241 && pix <= 243) {
+                col = (u8)(48 + accent_idx * 4 + (pix - 240));
+            } else {
+                col = pix;
+            }
+            for (int dy = 0; dy < scale; dy++) {
+                int py = y + sy * scale + dy;
+                if ((unsigned)py >= SCREEN_HEIGHT) continue;
+                for (int dx = 0; dx < scale; dx++) {
+                    int px = x + sx * scale + dx;
+                    if ((unsigned)px >= SCREEN_WIDTH) continue;
+                    s_rt[py * SCREEN_WIDTH + px] = col;
+                }
+            }
+        }
+    }
+
+}
+
+/* Ordered-dither white overlay: the Mode 4 framebuffer has no alpha, so the
+ * outro's slow fade to white walks a 4x4 Bayer matrix.  amount 0 draws
+ * nothing, 16 fills the screen solid white. */
+IWRAM_CODE void gfx_fade_white(int amount) {
+    if (amount <= 0) return;
+    if (amount > 16) amount = 16;
+    static const u8 bayer[4][4] = {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 }
+    };
+    for (int y = 0; y < SCREEN_HEIGHT; y++) {
+        for (int x = 0; x < SCREEN_WIDTH; x++) {
+            if (bayer[y & 3][x & 3] < (u8)amount)
+                s_rt[y * SCREEN_WIDTH + x] = PAL_TEXT_WHITE;
+        }
+    }
+}
+
 /* ── Boss hulls ──────────────────────────────────────────────────────────
  * Every boss is a real pixel-art ship from spr_boss (boss_gfx.c), authored
  * in the SAME template language as the player hulls: shared lighting ramp

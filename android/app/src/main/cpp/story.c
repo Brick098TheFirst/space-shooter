@@ -109,9 +109,16 @@ static int pct_of(int base, int pct) {
     return (base * pct) / 100;
 }
 
+/* Was the clear just banked a replay?  The outro uses this to play exactly
+ * once - the first time the final level falls, never again. */
+static bool s_last_clear_replay = false;
+
+bool story_last_clear_was_replay(void) { return s_last_clear_replay; }
+
 int story_complete_level(int level, const StoryPerf* perf) {
     if (level < 1 || level > STORY_LEVEL_COUNT) return 0;
     bool replay = story_is_cleared(level);
+    s_last_clear_replay = replay;
     int base = g_story_levels[level - 1].reward;
 
     s_pay_base = base;
@@ -566,7 +573,8 @@ static const char* const s_chubb_pep1[STORY_SECTOR_COUNT] = {
     "JUGGERNAUT IS HUGE. FIND A GAP.",
     "INFERNO BURNS HOT. STAY COOL.",
     "AEGIS NEVER BLINKS. BLIND IT.",
-    "THIS IS IT, JACK. THE REALITY QUEEN."
+    "THIS IS IT, JACK. THE REALITY QUEEN.",
+    "ONE HUNDRED DRONES, JACK. THE LAST SKY."
 };
 static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. NO CHARGE. GO.",
@@ -575,7 +583,8 @@ static const char* const s_chubb_pep2[STORY_SECTOR_COUNT] = {
     "TAKE A LIFE. DON'T GET CRUSHED.",
     "TAKE A LIFE. DON'T MELT, JACK.",
     "TAKE A LIFE. IT'S ON THE HOUSE.",
-    "TAKE A LIFE. FINISH YOUR REVENGE."
+    "TAKE A LIFE. FINISH YOUR REVENGE.",
+    "TAKE A LIFE. BRING IT HOME."
 };
 static const char* const s_chubb_idle[6] = {
     "STILL ALIVE, JACK? GOOD FOR TRADE.",

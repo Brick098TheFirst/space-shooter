@@ -38,6 +38,13 @@ void gfx_draw_ship(int x, int y, int accent_idx, int anim_frame);
  * animated rainbow - works on every hull. */
 void gfx_draw_ship_styled(int x, int y, int accent_idx, int anim_frame, int style);
 void gfx_draw_enemy_ship(int x, int y, int accent_idx, int style);
+/* Kingdom 8's BIG DRONE: the same hunter hull scaled up around a centre
+ * point, optionally flashed white when hit. */
+void gfx_draw_enemy_ship_scaled(int cx, int cy, int accent_idx, int style,
+                                int scale, bool flash);
+/* Dithered full-screen white overlay for the story outro's slow fade home.
+ * amount runs 0 (nothing) .. 16 (solid white). */
+void gfx_fade_white(int amount);
 /* Boss hull: a real pixel-art ship from spr_boss (boss_gfx.c), authored in
  * the same template language as the player hulls (shared lighting ramp +
  * accent mask), drawn nose-down at an integer scale.  sprite_id is a

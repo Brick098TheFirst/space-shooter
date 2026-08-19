@@ -558,7 +558,7 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             persistSave() // native already wrote SRAM; make sure it hits disk right away
             pulseHaptic(HapticFeedbackConstants.CONFIRM)
             val message = if (result == 2) {
-                "CHEAT ACTIVATED! All 70 levels and kingdoms are unlocked!"
+                "CHEAT ACTIVATED! All 80 levels and kingdoms are unlocked!"
             } else {
                 "CHEAT ACTIVATED! You now have \$999,000,000,000,000!"
             }

@@ -90,12 +90,18 @@ void game_set_mode(GameMode mode) {
 /* ── Story Mode runtime ───────────────────────────────────────────────────
  * The level being flown, its objective progress, and the outcome the menu
  * layer reads once the level ends. */
-static int  s_story_level = 1;          /* 1..70 */
-static int  s_story_kills = 0;          /* hunters downed (OBJ_HUNT) */
+static int  s_story_level = 1;          /* 1..80 */
+static int  s_story_kills = 0;          /* hunters downed (OBJ_HUNT / OBJ_DRONES) */
 static int  s_story_bigs  = 0;          /* large rocks cracked (OBJ_BIGGAME) */
 static int  s_story_timer = 0;          /* ticks left  (OBJ_SURVIVE) */
 static int  s_story_spawned = 0;        /* rocks released so far */
 static int  s_story_to_spawn = 0;       /* rocks still owed to the field */
+/* ── Kingdom 8 drone attack state (OBJ_DRONES) ──────────────────────────
+ * Pure hunter waves, ten at a time, with one BIG DRONE dropping in after
+ * the opening waves.  `quota` is the total drones to destroy; s_story_kills
+ * doubles as the drone kill counter. */
+static bool s_drone_boss_spawned = false;  /* the big drone has dropped in */
+static bool s_drone_boss_dead    = false;  /* the big drone is down */
 static int  s_story_outcome = 0;        /* 0 running, 1 cleared, 2 failed */
 static int  s_story_earned = 0;         /* chubbcoin banked this level */
 static int  s_story_end_delay = 0;      /* victory pause before the result */
@@ -1467,6 +1473,7 @@ static bool story_spawn_hunter(void) {
 }
 
 static void story_spawn_boss(int boss_id);
+static void story_spawn_drone_overlord(void);
 
 /* ── Puzzle board setup ──────────────────────────────────────────────────
  * One board recipe per rule.  A rule that wants nothing on screen gets an
@@ -1671,6 +1678,20 @@ static void story_begin_level(void) {
         return;
     }
 
+    if (L->objective == OBJ_DRONES) {
+        /* Kingdom 8: no rocks, no queue - only drones, ten at a time.  The
+         * opening wave fills the engine's live-drone budget immediately;
+         * story_update_objective() keeps topping the wave up as they fall. */
+        s_story_to_spawn = 0;
+        s_story_queue_len = s_story_queue_pos = 0;
+        s_story_pending_med = 0;
+        s_drone_boss_spawned = false;
+        s_drone_boss_dead = false;
+        for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
+        for (int i = 0; i < L->drones && i < MAX_DRONES; i++) story_spawn_hunter();
+        return;
+    }
+
     if (L->objective == OBJ_PUZZLE) {
         s_story_to_spawn = 0;
         s_story_queue_len = s_story_queue_pos = 0;
@@ -1742,6 +1763,7 @@ static int story_par_seconds(const StoryLevel* L) {
         case OBJ_BOSS:    return 100;
         case OBJ_HUNT:    return 25 + L->quota * 3;
         case OBJ_BIGGAME: return 25 + L->quota * 8;
+        case OBJ_DRONES:  return 15 + L->quota;   /* drones fall fast */
         case OBJ_PUZZLE:
             if (story_puzzle_dodge_mode(L->modifier) ||
                 story_puzzle_field_goal(L->modifier) ||
@@ -1758,6 +1780,7 @@ static int story_par_kills(const StoryLevel* L) {
         case OBJ_BOSS:    return 1;
         case OBJ_HUNT:    return L->quota + L->rocks;
         case OBJ_BIGGAME: return L->quota * 3;
+        case OBJ_DRONES:  return L->quota + 1;    /* the swarm plus the big drone */
         case OBJ_PUZZLE:
             if (story_puzzle_dodge_mode(L->modifier)) return 0;
             if (story_puzzle_field_goal(L->modifier)) return 0;
@@ -2467,6 +2490,41 @@ static void story_update_objective(void) {
             }
             break;
 
+        case OBJ_DRONES: {
+            /* Kingdom 8: destroy the whole drone quota to clear the sky.
+             * Every level runs the same shape - ten drones, then ten more,
+             * then the BIG DRONE drops in, then tens keep coming until the
+             * total (10 on level 71, climbing to 100 on level 80) is down. */
+            int total = L->quota;
+            /* The sky clears only when the quota is down AND the big drone
+             * has fallen - it is part of every kingdom 8 level, so the win
+             * check waits for it even when the quota is already met. */
+            if (s_story_kills >= total && s_drone_boss_dead) {
+                s_story_end_delay = 45;
+                story_finish(1);
+                break;
+            }
+            /* The big drone joins once the opening waves are down: after
+             * twenty kills on most levels, after all ten on the first. */
+            int boss_at = (total <= 10) ? total : 20;
+            if (!s_drone_boss_spawned && s_story_kills >= boss_at) {
+                s_drone_boss_spawned = true;
+                story_spawn_drone_overlord();
+                break;
+            }
+            /* The swarm stands off while their big drone fights. */
+            if (g_game.boss_active) break;
+            if (--g_game.spawn_timer <= 0) {
+                int remaining = total - s_story_kills;
+                int want = (remaining < 10) ? remaining : 10;
+                if (hunters < want) story_spawn_hunter();
+                int cd = 40 - (s_story_level - 70) * 2;
+                if (cd < 20) cd = 20;
+                g_game.spawn_timer = (cd * cd_pct) / 100;
+            }
+            break;
+        }
+
         case OBJ_SURVIVE:
             if (s_story_timer > 0) s_story_timer--;
             if (s_story_timer <= 0) {
@@ -2503,8 +2561,10 @@ static int story_boss_hp(int boss_id) {
          * not from repeating its hardest barrage against an HP sponge.
          * The Alien is deliberately the softest thing in the campaign - it
          * is a tutorial, and a tutorial that lasts ninety seconds is a wall.
-         * Wildfire carries more, because its vents hand out double damage. */
-        140, 650, 1800, 2500, 8200, 4600, 22000
+         * Wildfire carries more, because its vents hand out double damage.
+         * The last slot (the Drone Overlord) is only a fallback: its real
+         * HP is level-scaled, set by story_spawn_drone_overlord(). */
+        140, 650, 1800, 2500, 8200, 4600, 22000, 900
     };
     int id = (boss_id < 0 || boss_id >= STORY_SECTOR_COUNT) ? 0 : boss_id;
     int hp = base[id];
@@ -2553,6 +2613,30 @@ static void story_spawn_boss(int boss_id) {
     audio_begin_boss_music();
     for (int i = 0; i < MAX_DRONES; i++) g_game.drones[i].active = false;
     for (int i = 0; i < MAX_ASTEROIDS; i++) g_game.asteroids[i].active = false;
+}
+
+/* ── KINGDOM 8 - THE BIG DRONE ────────────────────────────────────────────
+ * Not a level-10 boss: an overgrown hunter hull that drops into every
+ * drone-attack level once the opening waves are down.  It fights like the
+ * swarm it leads - aimed bolts and wide fans - only bigger.  HP scales with
+ * the level so the same fight opens soft on level 71 and bites on 80. */
+static int story_drone_overlord_hp(void) {
+    int step = s_story_level - STORY_CLASSIC_LEVELS;   /* 1..10 in kingdom 8 */
+    if (step < 1) step = 1;
+    if (step > 10) step = 10;
+    int hp = 380 + step * 260;                         /* 640 .. 2980 */
+    if (g_settings.difficulty == DIFF_CADET) hp = (hp * 3) / 4;
+    else if (g_settings.difficulty == DIFF_ACE) hp = (hp * 13) / 10;
+    return hp;
+}
+
+static void story_spawn_drone_overlord(void) {
+    story_spawn_boss(SBOSS_DRONE_OVERLORD);
+    /* story_spawn_boss() sizes the hull from the generic table; the big
+     * drone is tuned per level instead. */
+    g_game.boss.hp_max = story_drone_overlord_hp();
+    g_game.boss.hp = g_game.boss.hp_max;
+    g_game.boss.hp_frac = 0;
 }
 
 /* Aimed shot helper in story space. */
@@ -3187,6 +3271,45 @@ static void sb_reality_queen(Boss* b) {
     }
 }
 
+/* ── THE BIG DRONE (kingdom 8, mid-level) ─────────────────────────────────
+ * Leads the swarm the same way the little drones fight - aimed bolts and
+ * wide fans - only bigger and tougher.  No plates, no gimmick: when it
+ * falls, the drone waves resume until the level's quota is down. */
+static void sb_drone_overlord(Boss* b) {
+    int cx = FROM_FIXED(b->x), cy = FROM_FIXED(b->y);
+    switch (b->phase) {
+        case SB_IDLE:
+            sb_hover(b, 30, TO_FIXED(1) + 60);
+            sb_drift(b, TO_FIXED(1) + 100);
+            if (--b->cooldown <= 0) {
+                add_boss_bullet(b->x, b->y, 0, TO_FIXED(3) + 60, true);
+                b->cooldown = 30;
+            }
+            if (b->phase_timer <= 0) {
+                b->phase = sb_next_attack(b, 2);
+                b->phase_timer = 140;
+            }
+            break;
+        case SB_ATTACK_A:
+            /* Aimed bursts, exactly like its little brothers. */
+            sb_hover(b, 28, TO_FIXED(1));
+            if ((b->phase_timer % 26) == 0)
+                sb_shoot_at_player(cx, cy + 12, TO_FIXED(4), 0);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; }
+            break;
+        case SB_ATTACK_B:
+            /* A wide fan you can walk between. */
+            sb_hover(b, 26, TO_FIXED(1));
+            if ((b->phase_timer % 40) == 0)
+                sb_fan(cx, cy + 10, 5, TO_FIXED(3), 8192);
+            if (b->phase_timer <= 0) { b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 26; }
+            break;
+        default:
+            b->phase = SB_IDLE; b->phase_timer = 70; b->cooldown = 28;
+            break;
+    }
+}
+
 /* Damage gating for the bosses that HAVE a gate.
  * Alien:    none - it is the tutorial, shoot it till it dies.
  * Sledge:   four armour plates soak everything until they are broken off.
@@ -3301,6 +3424,8 @@ static void story_boss_ai(Boss* b) {
         case SBOSS_SLEDGE:   sb_sledge(b); break;
         case SBOSS_WILDFIRE:    sb_wildfire(b); break;
         case SBOSS_BULWARK:  sb_bulwark(b); break;
+        case SBOSS_DRONE_OVERLORD: sb_drone_overlord(b); break;
+        case SBOSS_REALITY_QUEEN:
         default:                 sb_reality_queen(b); break;
     }
 }
@@ -3425,7 +3550,12 @@ static int arcade_boss_scale_damage(const Boss* b, int dmg) {
 }
 
 static int boss_hit_radius(const Boss* b) {
-    if (g_game.mode == GAME_MODE_STORY) return 20;
+    if (g_game.mode == GAME_MODE_STORY) {
+        /* The big drone is an overgrown hunter hull (3x), so it takes a
+         * wider hitbox than the normal story bosses. */
+        if (b->story_id == SBOSS_DRONE_OVERLORD) return 26;
+        return 20;
+    }
     return b->mini ? 11 : 20;
 }
 
@@ -3444,6 +3574,14 @@ static void defeat_boss(Boss* b, int boss_cx, int boss_cy) {
         award_score(2000 * (b->story_id + 1));
         story_on_kill_scored(1);
         platform_queue_haptic(HAPTIC_BEAM);
+        /* The BIG DRONE is a mid-level hurdle in kingdom 8, not the level's
+         * objective: when it falls the drone waves simply carry on until the
+         * quota is met.  Every other story boss ends its level. */
+        if (b->story_id == SBOSS_DRONE_OVERLORD) {
+            s_drone_boss_dead = true;
+            g_game.spawn_timer = 30;   /* the next wave rolls in promptly */
+            return;
+        }
         story_finish(1);
         return;
     }
@@ -5460,6 +5598,12 @@ void game_draw(void) {
             case OBJ_BOSS:
                 siprintf(obuf, "%s", story_boss_name(story_boss_for_level(s_story_level)));
                 break;
+            case OBJ_DRONES:
+                if (g_game.boss_active)
+                    siprintf(obuf, "BIG DRONE  %d/%d", s_story_kills, (int)L->quota);
+                else
+                    siprintf(obuf, "DRONES %d/%d", s_story_kills, (int)L->quota);
+                break;
             case OBJ_PUZZLE:
                 /* Every rule states its own scoreboard: the player should
                  * never have to guess what this level is counting. */
@@ -5634,6 +5778,7 @@ void game_draw(void) {
                     case OBJ_BIGGAME: objn = "CRACK THE BIG ONES"; break;
                     case OBJ_TIMED:   objn = "CLEAR IT BEFORE THE CLOCK"; break;
                     case OBJ_PUZZLE: objn = story_puzzle_rule_line(L->modifier); break;
+                    case OBJ_DRONES:  objn = "DRONE ATTACK - CLEAR THE SWARM"; break;
                     default:          objn = "CLEAR EVERYTHING"; break;
                 }
                 const char* modn = story_modifier_name(L->modifier);
@@ -5696,9 +5841,15 @@ void game_draw(void) {
         // Boss hull: a real pixel-art ship in the fleet's own art style.
         int flash = (g_game.boss.flash_timer > 0) ? 1 : 0;
         if (g_game.mode == GAME_MODE_STORY) {
-            int spr = BOSS_SPR_ALIEN + g_game.boss.story_id;
-            if (spr < BOSS_SPR_ALIEN || spr >= NUM_BOSS_SPRITES) spr = BOSS_SPR_ALIEN;
-            gfx_draw_boss_ship(bxi, byi, spr, 2, flash != 0, s_game_frame);
+            if (g_game.boss.story_id == SBOSS_DRONE_OVERLORD) {
+                /* The big drone wears an overgrown hunter hull in Crimson
+                 * Void paint, so it reads as the swarm's leader at a glance. */
+                gfx_draw_enemy_ship_scaled(bxi, byi, 5, 0, 3, flash != 0);
+            } else {
+                int spr = BOSS_SPR_ALIEN + g_game.boss.story_id;
+                if (spr < BOSS_SPR_ALIEN || spr >= NUM_BOSS_SPRITES) spr = BOSS_SPR_ALIEN;
+                gfx_draw_boss_ship(bxi, byi, spr, 2, flash != 0, s_game_frame);
+            }
         } else {
             gfx_draw_boss_ship(bxi, byi,
                                g_game.boss.mini ? BOSS_SPR_RAZORWING : BOSS_SPR_GOLIATH,
@@ -5839,6 +5990,11 @@ void game_draw(void) {
                     gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH,
                                            "CORE EXPOSED - FINISH HER", PAL_TEXT_RED);
                 }
+            } else if (sid == SBOSS_DRONE_OVERLORD) {
+                char nbuf[32];
+                siprintf(nbuf, "BIG DRONE - DRONES %d/%d", s_story_kills,
+                         (int)story_cur()->quota);
+                gfx_draw_text_centered(0, bar_y + 7, SCREEN_WIDTH, nbuf, PAL_TEXT_RED);
             }
         } else {
             gfx_draw_text_centered(0, bar_y - 8, SCREEN_WIDTH,

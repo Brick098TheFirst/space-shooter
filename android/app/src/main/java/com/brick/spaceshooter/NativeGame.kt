@@ -42,6 +42,7 @@ object NativeGame {
     const val SCREEN_STORY_MAP = 11
     const val SCREEN_STORY_SHOP = 12
     const val SCREEN_STORY_RESULT = 13
+    const val SCREEN_STORY_OUTRO = 14
 
     const val EOS_CONFIG_REQUIRED = 0
     const val EOS_INITIALIZING = 1

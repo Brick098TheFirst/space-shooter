@@ -2,7 +2,9 @@
 #define SPACE_UNLIMITED_STORY_H
 
 /* ── STORY MODE (Android only) ────────────────────────────────────────────
- * A 70-level campaign with 7 themed sectors, a unique boss every 10 levels,
+ * An 80-level campaign across EIGHT kingdoms: 7 themed sectors with a unique
+ * boss every 10 levels (the Reality Queen falls at level 70 and stays down),
+ * then the eighth kingdom - THE DRONE SKIES - ten pure drone-attack levels,
  * a fly-the-ship level map, and Mr Chubbs' shop docked before each boss.
  *
  * Thirty-five of the seventy levels are puzzles, and they run on THIRTY-THREE
@@ -20,16 +22,22 @@
  * it" family is capped at two levels out of seventy.
  *
  * The story owns its own currency (CHUBBCOIN) and its own life pool; the
- * arcade coin balance is untouched.  Everything persists in the V9 save.  */
+ * arcade coin balance is untouched.  Everything persists in the V12 save.  */
 
 #include "types.h"
 
-#define STORY_LEVEL_COUNT   70
+/* 80 levels: the original seven kingdoms (70 levels) plus the eighth
+ * kingdom - THE DRONE SKIES - ten pure drone-attack levels that replace the
+ * old finale sequence.  The Reality Queen falls at level 70, in kingdom 7. */
+#define STORY_LEVEL_COUNT   80
 #define STORY_PUZZLE_COUNT  35
-#define STORY_SECTOR_COUNT  7
+#define STORY_SECTOR_COUNT  8
 #define STORY_SECTOR_LEVELS 10
 #define STORY_START_LIVES   3
 #define STORY_MAX_LIVES     9
+/* Levels 1..70 are the seven original kingdoms; the puzzle-variety contract
+ * applies to them.  Levels 71..80 are kingdom 8's drone attack. */
+#define STORY_CLASSIC_LEVELS 70
 
 /* Objective kinds. Every level is beatable: clear/hunt objectives stop
  * spawning once the quota is met, and survive/timed levels end on a clock. */
@@ -48,7 +56,12 @@ typedef enum {
      * The puzzle variant lives in the level's `modifier` (MOD_PZ_*) and
      * `quota` carries that variant's number: ammo, targets, or seconds.
      * See story_update_objective() for the runtime rules. */
-    OBJ_PUZZLE  = 6
+    OBJ_PUZZLE  = 6,
+    /* Kingdom 8 drone attack: pure waves of hunter drones, ten at a time,
+     * with one BIG DRONE (an overgrown hunter hull) joining mid-level.
+     * `quota` is the TOTAL number of drones to destroy (10..100).  No rocks,
+     * no boss level - the campaign now ends on the hundredth drone. */
+    OBJ_DRONES  = 7
 } StoryObjective;
 
 /* ── Level modifiers ──────────────────────────────────────────────────────
@@ -151,7 +164,11 @@ typedef struct {
 
 /* ── The seven bosses ─────────────────────────────────────────────────────
  * Levels 10/20/30/40/50/60/70.  Each has its own attack script, movement
- * and a KEY MECHANIC no other boss uses — see story_boss_ai() in game.c. */
+ * and a KEY MECHANIC no other boss uses — see story_boss_ai() in game.c.
+ * The Reality Queen is the FINAL boss of the campaign: she falls in
+ * kingdom 7 and never comes back.  Kingdom 8 has no boss level — only the
+ * DRONE OVERLORD, a big hunter hull that drops into every drone-attack
+ * level halfway through the waves. */
 typedef enum {
     SBOSS_ALIEN = 0,     /* L10 - just an alien. No gimmick: shoot it till it
                           *       dies. Slow, telegraphed, easy to dodge - the
@@ -163,16 +180,24 @@ typedef enum {
     SBOSS_WILDFIRE,      /* L50 - OVERHEAT: armoured while it burns, wide open
                           *       for a few seconds every time it vents */
     SBOSS_BULWARK,       /* L60 - SEAL: sealed hull, shoot the turret nodes off */
-    SBOSS_REALITY_QUEEN  /* L70 - FOLD: teleports, mirrors your controls and
-                          *       only her open face takes real damage */
+    SBOSS_REALITY_QUEEN, /* L70 - FOLD: teleports, mirrors your controls and
+                          *       only her open face takes real damage.
+                          *       THE finale: beat her and kingdom 8 opens. */
+    SBOSS_DRONE_OVERLORD /* L71-80 - mid-level big drone of the drone attack.
+                          *       Not a level-10 boss: it joins every kingdom 8
+                          *       level after the first waves are cleared. */
 } StoryBossId;
+
+#define STORY_QUEEN_LEVEL 70   /* the Reality Queen falls here, in kingdom 7 */
 
 extern const StoryLevel g_story_levels[STORY_LEVEL_COUNT];
 
 const char* story_sector_name(int sector);
 const char* story_boss_name(int boss_id);
 const char* story_boss_taunt(int boss_id);
-int         story_boss_for_level(int level);   /* -1 when not a boss level */
+/* Boss id for a level, or -1 when the level is not an OBJ_BOSS level.
+ * Kingdom 8's drone levels (including level 80) never report a boss. */
+int         story_boss_for_level(int level);
 
 /* Sector a 1-based level belongs to (0..6). */
 static inline int story_sector_of(int level) {
@@ -227,13 +252,15 @@ static inline bool story_boss_dock(int next_level) {
 }
 
 /* ── Kingdom backdrops ────────────────────────────────────────────────────
- * Each of the seven sectors flies over its own sky (see gba/src/starfield.c).
- * Sector 0 -> SF_THEME_BELT, and so on in order, so adding a sector needs no
- * second table. */
+ * Each of the seven original sectors flies over its own sky (see
+ * gba/src/starfield.c).  Sector 0 -> SF_THEME_BELT, and so on in order.
+ * Kingdom 8 (the Drone Skies) deliberately flies back over the warm gold
+ * CHUBB BELT sky: the last run of the campaign is the flight home, and the
+ * outro says it out loud. */
 static inline int story_theme_for_sector(int sector) {
     if (sector < 0) sector = 0;
     if (sector >= STORY_SECTOR_COUNT) sector = STORY_SECTOR_COUNT - 1;
-    return 1 + sector;   /* SF_THEME_BELT .. SF_THEME_REALITY */
+    return 1 + (sector % 7);   /* SF_THEME_BELT .. SF_THEME_REALITY, wrap */
 }
 
 static inline int story_theme_for_level(int level) {
@@ -242,16 +269,16 @@ static inline int story_theme_for_level(int level) {
 
 
 /* ── Runtime state & progression ─────────────────────────────────────────
- * All of this is persisted in the V9 save block (see save.c). */
+ * All of this is persisted in the V12 save block (see save.c). */
 
 /* Campaign save block. Kept plain and byte-stable so save.c can copy it
- * straight into the V9 layout on every compiler. */
+ * straight into the V12 layout on every compiler. */
 typedef struct {
-    u8  level;          /* 1..70 - map cursor / level to fly next */
-    u8  unlocked;       /* 1..70 - furthest level reachable */
+    u8  level;          /* 1..80 - map cursor / level to fly next */
+    u8  unlocked;       /* 1..80 - furthest level reachable */
     u8  lives;          /* story life pool */
     u8  cleared_count;  /* how many distinct levels are beaten */
-    u8  cleared[9];     /* 70-level bitmask */
+    u8  cleared[10];    /* 80-level bitmask */
     u8  intro_seen;     /* the opening speech has played once */
     u8  freed;          /* "LET ME BE FREE" tapped 3x in settings */
     u8  boss_gifts;     /* bitmask: bosses whose free life has been handed out */
@@ -259,17 +286,17 @@ typedef struct {
     /* Wall-clock second (epoch) the repair yard hands the ship back.  0 when
      * the ship is spaceworthy.  See story_wreck_ship(). */
     u32 repair_until;
-    /* One bit per dock (level 5, 10, ... 70).  Set the moment the player
+    /* One bit per dock (level 4, 9, ... 79).  Set the moment the player
      * leaves that dock: he does not come back for it. */
     u16 docks_used;
     u16 pad;
 } StorySave;
 
-/* 70 levels / one dock every 5 = 14 docks, so the mask fits a u16. */
+/* 80 levels / one dock every 5 = 16 docks, so the mask exactly fills a u16. */
 #define STORY_DOCK_COUNT (STORY_LEVEL_COUNT / STORY_SHOP_INTERVAL)
 
 /* 0-based dock index for a dock level (-1 when that level has no dock).
- * Level 4 -> 0, level 9 -> 1, ... level 69 -> 13. */
+ * Level 4 -> 0, level 9 -> 1, ... level 79 -> 15. */
 static inline int story_dock_index(int level) {
     if (!story_shop_at(level)) return -1;
     return level / STORY_SHOP_INTERVAL;
@@ -280,7 +307,7 @@ extern StorySave g_story;
 void story_init(void);            /* clamp/repair loaded save fields */
 void story_reset_progress(void);  /* wipe the campaign back to level 1 */
 
-int  story_current_level(void);   /* 1..70 - the level the map cursor sits on */
+int  story_current_level(void);   /* 1..80 - the level the map cursor sits on */
 void story_set_current_level(int level);
 int  story_highest_unlocked(void);/* furthest level the player may fly */
 bool story_is_cleared(int level);
@@ -319,6 +346,11 @@ typedef struct {
  * case only the floor is paid. Returns the chubbcoin actually paid. */
 int  story_complete_level(int level, const StoryPerf* perf);
 
+/* True when the clear just banked by story_complete_level() was a REPLAY of
+ * an already-beaten level.  The outro cinematic keys off this: it plays the
+ * first time the final level falls, never on a replay. */
+bool story_last_clear_was_replay(void);
+
 /* Breakdown of the most recent payout, for the result card. */
 int  story_pay_base(void);
 int  story_pay_speed(void);
@@ -353,7 +385,7 @@ u32  story_chubbcoin(void);
 void story_award(int amount);
 bool story_spend(int amount);
 
-bool story_is_finished(void);     /* level 70 cleared */
+bool story_is_finished(void);     /* level 80 cleared */
 bool story_content_unlocked(void);/* finished OR "LET ME BE FREE" used */
 void story_free_everything(void); /* the settings escape hatch */
 bool story_intro_seen(void);
@@ -436,6 +468,16 @@ int  story_shop_take_gift(void);
  * marked-up and plain pages. */
 #define STORY_INTRO_PAGES 14
 extern const char* const g_story_intro[STORY_INTRO_PAGES][2];
+
+/* ── The outro ────────────────────────────────────────────────────────────
+ * Played once, the moment the final level (80) falls for the first time.
+ * It is staged exactly like the opening speech - same typewriter, same two
+ * line pages, same story_mode.mp3 underneath - and it ends with the screen
+ * fading slowly to white before the main menu returns.  The campaign has no
+ * boss after the Reality Queen and no escape sequence: the last kingdom is
+ * the drone attack, and this is the whole ending. */
+#define STORY_OUTRO_PAGES 2
+extern const char* const g_story_outro[STORY_OUTRO_PAGES][2];
 
 /* Per-character styles produced by story_intro_markup(). */
 #define STORY_MK_PLAIN 0
