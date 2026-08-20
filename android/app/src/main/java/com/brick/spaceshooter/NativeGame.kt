@@ -43,6 +43,7 @@ object NativeGame {
     const val SCREEN_STORY_SHOP = 12
     const val SCREEN_STORY_RESULT = 13
     const val SCREEN_STORY_OUTRO = 14
+    const val SCREEN_STORY_REBOOT = 15
 
     const val EOS_CONFIG_REQUIRED = 0
     const val EOS_INITIALIZING = 1
@@ -59,6 +60,8 @@ object NativeGame {
     external fun nativePresent(pixels: IntArray)
     external fun nativeMixAudio(out: ShortArray): Int
     external fun nativeGetScreen(): Int
+    /** 1 after a story cinematic has deliberately finished a reboot beat. */
+    external fun nativeTakeExitRequest(): Int
     /** True while a Story level is frozen on its tap-to-continue brief. */
     external fun nativeStoryWaitingForStart(): Int
     external fun nativeQueueTap(x: Int, y: Int)

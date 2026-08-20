@@ -252,9 +252,20 @@ before the rest of the game unlocks.
 - **The outro.** Beating the final level (80) for the first time skips the
   result card and plays an ending staged exactly like the intro: the same
   `story_mode.mp3` keeps playing while the typewriter says **YOU DID IT,
-  JACK.** and then **WELCOME HOME.**, the screen **fades slowly to white**,
-  and the game returns to the main menu. It plays once; replaying level 80
-  just shows the ordinary clear card.
+  JACK.** and then **WELCOME HOME.** The screen now **fades to white for six
+  seconds and stays solid white for four more seconds**, then the Android
+  activity closes cleanly after saving the ending hand-off. Reopening it plays
+  the boss cue under Chubbs' unsettling ten-line message: `Hello`, `Your
+  back`, `Back home`, `Are you ok jack`, `It's me, me chubbs...`, `It's over
+  now, ok, your safe.`, `What happened`, `What did you do`, a bold italic
+  faint **Did you bring revenge**, and an even fainter roughly four-percent
+  **Death ?**. That message closes the activity again; the next launch lands
+  on the main menu. It plays once; replaying level 80 just shows the ordinary
+  clear card.
+- **The last kingdom uses the regular hunters.** The Drone Skies' small drones
+  are constructed by the same normal hunter path as the other modes and use
+  the shared aimed movement, alternating-cannon burst attacks, speed, and HP
+  rolls. The Big Drone remains the only special mid-level hull in that kingdom.
 - **Enemy variation stays intact.** Hunter ships spawn with random hull styles
   and random accent colors, keeping repeated fights visually varied.
 - **Lives, wrecks & the repair yard.** You get 3 story lives. Die and you retry
@@ -269,8 +280,9 @@ before the rest of the game unlocks.
 
 Story progress lives in the **V12 save block** (80-level clear bitmask,
 Chubbcoin, lives, unlock flags, which of Mr Chubbs' 16 docks are already
-spent, and the repair-yard deadline). Older saves — including V9/V10/V11
-campaign saves — upgrade automatically on load and keep all their progress.
+spent, the repair-yard deadline, and the two-step ending hand-off). Older
+saves — including V9/V10/V11 campaign saves — upgrade automatically on load
+and keep all their progress.
 The campaign is verified by a headless playthrough harness that proves every
 level still terminates — see `tools/story_sim/`.
 

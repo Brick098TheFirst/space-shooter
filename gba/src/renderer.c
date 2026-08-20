@@ -525,6 +525,59 @@ IWRAM_CODE void gfx_draw_char(int x, int y, char c, u8 color) {
     }
 }
 
+IWRAM_CODE void gfx_draw_char_italic(int x, int y, char c, u8 color) {
+    if (c < 32 || c > 127) c = '?';
+    const u8* glyph = font_5x7[c - 32];
+    /* A tiny rightward shear is enough to read as italic at the GBA font's
+     * scale.  This slow path is only used by the story cards. */
+    for (int r = 0; r < 7; r++) {
+        int py = y + r;
+        if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        if (s_clip_on && (py < s_clip_y0 || py >= s_clip_y1)) continue;
+        int skew = (6 - r) / 3;
+        u8 row = glyph[r];
+        for (int col = 0; col < 5; col++) {
+            if (!(row & (1 << (4 - col)))) continue;
+            int px = x + col + skew;
+            if ((unsigned)px >= SCREEN_WIDTH) continue;
+            if (s_clip_on && (px < s_clip_x0 || px >= s_clip_x1)) continue;
+            s_rt[py * SCREEN_WIDTH + px] = color;
+        }
+    }
+}
+
+IWRAM_CODE void gfx_draw_char_ghost(int x, int y, char c, u8 color) {
+    if (c < 32 || c > 127) c = '?';
+    const u8* glyph = font_5x7[c - 32];
+    /* Mode 4 has no alpha. One lit pixel out of twenty-five is a close
+     * hardware-friendly approximation to four-percent white over black, and
+     * makes this word something the player has to look for. It is sheared too
+     * so the ghost still carries the italic treatment. */
+    static const u8 bayer[5][5] = {
+        { 0, 7, 14, 21, 3 },
+        { 10, 17, 24, 6, 13 },
+        { 20, 2, 9, 16, 23 },
+        { 5, 12, 19, 1, 8 },
+        { 15, 22, 4, 11, 18 }
+    };
+    for (int r = 0; r < 7; r++) {
+        int py = y + r;
+        if ((unsigned)py >= SCREEN_HEIGHT) continue;
+        if (s_clip_on && (py < s_clip_y0 || py >= s_clip_y1)) continue;
+        int skew = (6 - r) / 3;
+        u8 row = glyph[r];
+        for (int col = 0; col < 5; col++) {
+            if (!(row & (1 << (4 - col))) ||
+                bayer[py % 5][(x + col + skew) % 5] != 0)
+                continue;
+            int px = x + col + skew;
+            if ((unsigned)px >= SCREEN_WIDTH) continue;
+            if (s_clip_on && (px < s_clip_x0 || px >= s_clip_x1)) continue;
+            s_rt[py * SCREEN_WIDTH + px] = color;
+        }
+    }
+}
+
 IWRAM_CODE void gfx_draw_text(int x, int y, const char* str, u8 color) {
     if (!str) return;
     int cur_x = x;

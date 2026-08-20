@@ -18,6 +18,8 @@ void story_init(void) {
     if (g_story.cleared_count > STORY_LEVEL_COUNT) g_story.cleared_count = STORY_LEVEL_COUNT;
     /* Only the 14 real docks have bits; drop anything a corrupt save set. */
     g_story.docks_used &= (u16)((1u << STORY_DOCK_COUNT) - 1u);
+    if (g_story.ending_phase > STORY_ENDING_RETURN_MENU)
+        g_story.ending_phase = STORY_ENDING_NONE;
     /* A repair deadline further out than the repair itself means the device
      * clock moved; clamp it rather than grounding the player for ever. */
     if (g_story.repair_until != 0) {
@@ -326,6 +328,18 @@ bool story_content_unlocked(void) {
 void story_free_everything(void) {
     g_story.freed = 1;
     save_write();
+}
+
+StoryEndingPhase story_ending_phase(void) {
+    if (g_story.ending_phase > STORY_ENDING_RETURN_MENU)
+        return STORY_ENDING_NONE;
+    return (StoryEndingPhase)g_story.ending_phase;
+}
+
+void story_set_ending_phase(StoryEndingPhase phase) {
+    if (phase < STORY_ENDING_NONE || phase > STORY_ENDING_RETURN_MENU)
+        phase = STORY_ENDING_NONE;
+    g_story.ending_phase = (u8)phase;
 }
 
 bool story_intro_seen(void) { return g_story.intro_seen != 0; }

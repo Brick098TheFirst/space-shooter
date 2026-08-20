@@ -27,6 +27,10 @@ void  menu_scroll_to(float px);
 int menu_take_code_request(void);
 /* Settings -> ERASE DATA: drained by Kotlin to show a confirm dialog. */
 int menu_take_erase_request(void);
+/* Story endings request a controlled activity close after the save is durable.
+ * This is intentionally a clean close, not an unsafe native crash: the next
+ * launch can read the ending phase and continue the coda. */
+int menu_take_exit_request(void);
 #endif
 
 #endif

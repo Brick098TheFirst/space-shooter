@@ -518,9 +518,10 @@ const char* const g_story_intro[STORY_INTRO_PAGES][2] = {
  * Plays once, the moment level 80 falls for the first time.  Staged exactly
  * like the opening speech (same typewriter, same two-line pages, and
  * story_mode.mp3 keeps playing underneath), then the screen fades slowly to
- * white and the main menu comes back.  There is no final boss and no escape
- * sequence after the Reality Queen: the drone attack IS the last kingdom,
- * and these two pages are the whole ending. */
+ * white and the activity closes. The next boot plays the Chubbs message and
+ * the boot after that returns to the main menu. There is no final boss and no
+ * escape sequence after the Reality Queen: the drone attack IS the last
+ * kingdom, and these two pages are the whole ending. */
 const char* const g_story_outro[STORY_OUTRO_PAGES][2] = {
     { "YOU DID IT, JACK.",
       "YOU REALLY DID IT." },
@@ -528,11 +529,31 @@ const char* const g_story_outro[STORY_OUTRO_PAGES][2] = {
       "" }
 };
 
-/* Strip the *bold* / !faint! markers out of a story line.
+/* ── The reboot coda ─────────────────────────────────────────────────────
+ * These are deliberately not part of the ordinary outro.  The first whiteout
+ * stores STORY_ENDING_REBOOT_MESSAGE, so this page only exists after the app
+ * is opened again.  Boss music (boss.wav) is selected by menu.c while these
+ * lines play.  `~` is italic, `*` is bold, `!` is dim, and `^` is the almost
+ * invisible final ghost. */
+const char* const g_story_reboot[STORY_REBOOT_PAGES][2] = {
+    { "Hello",                          "" },
+    { "Your back",                      "" },
+    { "Back home",                      "" },
+    { "Are you ok jack",                 "" },
+    { "It's me, me chubbs...",           "" },
+    { "It's over now, ok, your safe.",   "" },
+    { "What happened",                   "" },
+    { "What did you do",                 "" },
+    { "*~!Did you bring revenge!~*",     "" },
+    { "^*~Death~*^ ?",                   "" }
+};
+
+/* Strip the *bold* / !faint! / ~italic~ / ^ghost^ markers out of a story line.
  *
- * Writes the plain text into dst and, when spans is non-NULL, one style byte
- * per emitted character: STORY_MK_PLAIN, STORY_MK_BOLD or STORY_MK_FAINT.
- * Returns the number of plain characters written (always <= cap-1).  Callers
+ * Writes the plain text into dst and, when spans is non-NULL, one bit-mask
+ * style byte per emitted character: STORY_MK_BOLD, STORY_MK_FAINT,
+ * STORY_MK_ITALIC and STORY_MK_GHOST can be combined. Returns the number of
+ * plain characters written (always <= cap-1). Callers
  * use this both to type the line out and to measure it, so the typewriter
  * never stalls on a marker the player cannot see. */
 int story_intro_markup(const char* src, char* dst, u8* spans, int cap) {
@@ -541,11 +562,19 @@ int story_intro_markup(const char* src, char* dst, u8* spans, int cap) {
     u8 style = STORY_MK_PLAIN;
     for (const char* p = src; p && *p && n < cap - 1; p++) {
         if (*p == '*') {
-            style = (style == STORY_MK_BOLD) ? STORY_MK_PLAIN : STORY_MK_BOLD;
+            style ^= STORY_MK_BOLD;
             continue;
         }
         if (*p == '!') {
-            style = (style == STORY_MK_FAINT) ? STORY_MK_PLAIN : STORY_MK_FAINT;
+            style ^= STORY_MK_FAINT;
+            continue;
+        }
+        if (*p == '~') {
+            style ^= STORY_MK_ITALIC;
+            continue;
+        }
+        if (*p == '^') {
+            style ^= STORY_MK_GHOST;
             continue;
         }
         dst[n] = *p;
@@ -560,6 +589,6 @@ int story_intro_markup(const char* src, char* dst, u8* spans, int cap) {
 int story_intro_len(const char* src) {
     int n = 0;
     for (const char* p = src; p && *p; p++)
-        if (*p != '*' && *p != '!') n++;
+        if (*p != '*' && *p != '!' && *p != '~' && *p != '^') n++;
     return n;
 }

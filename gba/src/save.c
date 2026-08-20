@@ -390,7 +390,7 @@ typedef struct {
     u8  story_boss_gifts;
     u32 story_chubbcoin;
     u16 story_docks_used;     /* 16 docks now fill the whole u16 */
-    u16 story_pad;
+    u16 story_pad;            /* low byte: persisted ending hand-off phase */
     u32 story_repair_until;   /* epoch second the ship comes back, 0 = ready */
     u32 checksum;
 } SaveDataV12;
@@ -613,6 +613,7 @@ void save_load(void) {
         g_story.chubbcoin = d12.story_chubbcoin;
         g_story.docks_used = d12.story_docks_used;
         g_story.repair_until = d12.story_repair_until;
+        g_story.ending_phase = (u8)(d12.story_pad & 0x00FFu);
         story_init();
 
         repair_ship_loadout();
@@ -668,6 +669,7 @@ void save_load(void) {
         g_story.chubbcoin = d11.story_chubbcoin;
         g_story.docks_used = d11.story_docks_used;
         g_story.repair_until = d11.story_repair_until;
+        g_story.ending_phase = STORY_ENDING_NONE;
         story_init();
 
         repair_ship_loadout();
@@ -1144,6 +1146,8 @@ void save_write(void) {
     data.story_chubbcoin = g_story.chubbcoin;
     data.story_docks_used = g_story.docks_used;
     data.story_repair_until = g_story.repair_until;
+    /* Reuse V12's existing padding word so no old campaign save is invalidated. */
+    data.story_pad = (u16)g_story.ending_phase;
 
     data.checksum = calc_checksum_v12(&data);
 

@@ -60,8 +60,9 @@ device.
 
 It also asserts behaviour while it renders, and exits non-zero on a failure:
 SKIP must reach the map and set `intro_seen`; a real clear of level 1 must pay
-*more* than that level's floor reward; and losing the last life must re-lock
-the previous two levels and ground the ship.
+*more* than that level's floor reward; losing the last life must re-lock
+the previous two levels and ground the ship; and the final whiteout must
+persist, show, and clear the two-step reboot coda.
 
 ```bash
 gcc -O1 -I android/app/src/main/cpp -I gba/include -DPLATFORM_HOST=1 -DEOS_ENABLED=1 \

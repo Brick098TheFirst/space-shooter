@@ -289,8 +289,20 @@ typedef struct {
     /* One bit per dock (level 4, 9, ... 79).  Set the moment the player
      * leaves that dock: he does not come back for it. */
     u16 docks_used;
-    u16 pad;
+    /* The ending is a deliberately persisted, two-reboot coda.  Keeping the
+     * phase in the old padding byte means V12 saves stay byte-compatible. */
+    u8  ending_phase;    /* StoryEndingPhase */
+    u8  pad;
 } StorySave;
+
+/* The final whiteout hands the next launch a signal instead of silently
+ * returning to the menu.  The second launch plays the message, then hands the
+ * third launch a clean menu. */
+typedef enum {
+    STORY_ENDING_NONE = 0,
+    STORY_ENDING_REBOOT_MESSAGE = 1,
+    STORY_ENDING_RETURN_MENU = 2
+} StoryEndingPhase;
 
 /* 80 levels / one dock every 5 = 16 docks, so the mask exactly fills a u16. */
 #define STORY_DOCK_COUNT (STORY_LEVEL_COUNT / STORY_SHOP_INTERVAL)
@@ -388,6 +400,10 @@ bool story_spend(int amount);
 bool story_is_finished(void);     /* level 80 cleared */
 bool story_content_unlocked(void);/* finished OR "LET ME BE FREE" used */
 void story_free_everything(void); /* the settings escape hatch */
+
+/* Persisted ending hand-off used by the Android boot cinematic. */
+StoryEndingPhase story_ending_phase(void);
+void story_set_ending_phase(StoryEndingPhase phase);
 bool story_intro_seen(void);
 void story_mark_intro_seen(void);
 
@@ -461,28 +477,41 @@ int  story_shop_take_gift(void);
  * Typed out one page at a time over the starfield, character by character.
  * Every page is exactly two lines: line 0 in white, line 1 in blue.
  *
- * Lines may carry two inline markers, stripped before they are drawn:
- *   *bold*   - heavier, shadowed text
- *   !faint!  - dim grey text
- * Markers never count as characters, so the typewriter paces identically on
- * marked-up and plain pages. */
+ * Lines may carry inline markers, stripped before they are drawn:
+ *   *bold*       - heavier, shadowed text
+ *   !faint!      - dim grey text
+ *   ~italic~     - a one-pixel slanted glyph
+ *   ^ghost^      - an almost invisible, roughly four-percent dither
+ * Markers may be nested, so *~!a line!~* is bold, italic and faint. Markers
+ * never count as characters, so the typewriter paces identically on marked-up
+ * and plain pages. */
 #define STORY_INTRO_PAGES 14
 extern const char* const g_story_intro[STORY_INTRO_PAGES][2];
 
 /* ── The outro ────────────────────────────────────────────────────────────
  * Played once, the moment the final level (80) falls for the first time.
  * It is staged exactly like the opening speech - same typewriter, same two
- * line pages, same story_mode.mp3 underneath - and it ends with the screen
- * fading slowly to white before the main menu returns.  The campaign has no
- * boss after the Reality Queen and no escape sequence: the last kingdom is
- * the drone attack, and this is the whole ending. */
+ * line pages, same story_mode.mp3 underneath - and it ends with a long
+ * whiteout before the activity closes. The next boot owns the Chubbs message
+ * and the boot after that returns to the main menu. The campaign has no boss
+ * after the Reality Queen and no escape sequence: the last kingdom is the
+ * drone attack, and this is the whole ending. */
 #define STORY_OUTRO_PAGES 2
 extern const char* const g_story_outro[STORY_OUTRO_PAGES][2];
 
-/* Per-character styles produced by story_intro_markup(). */
-#define STORY_MK_PLAIN 0
-#define STORY_MK_BOLD  1
-#define STORY_MK_FAINT 2
+/* The first boot after the whiteout is intentionally a little wrong: one
+ * short line per page, scored by boss.wav.  It is persisted across the next
+ * close so the following launch can return to the menu cleanly. */
+#define STORY_REBOOT_PAGES 10
+extern const char* const g_story_reboot[STORY_REBOOT_PAGES][2];
+
+/* Per-character styles produced by story_intro_markup().  The values are
+ * bit flags so a line can be bold, italic and faint at the same time. */
+#define STORY_MK_PLAIN  0
+#define STORY_MK_BOLD   1
+#define STORY_MK_FAINT  2
+#define STORY_MK_ITALIC 4
+#define STORY_MK_GHOST  8
 
 /* Longest plain story line + terminator; keeps every caller's buffer sane. */
 #define STORY_INTRO_LINE_MAX 64

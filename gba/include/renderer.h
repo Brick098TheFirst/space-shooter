@@ -56,6 +56,10 @@ void gfx_draw_sprite_rotated(int cx, int cy, int w, int h, const u8* data, int a
 void gfx_draw_sprite_clipped(int x, int y, int w, int h, const u8* data, int clip_x, int clip_y, int clip_w, int clip_h);
 
 void gfx_draw_char(int x, int y, char c, u8 color);
+/* Story speech helpers: a sheared glyph for italic text and a sparse white
+ * dither for the almost invisible final word of the reboot coda. */
+void gfx_draw_char_italic(int x, int y, char c, u8 color);
+void gfx_draw_char_ghost(int x, int y, char c, u8 color);
 void gfx_draw_text(int x, int y, const char* str, u8 color);
 void gfx_draw_text_shadow(int x, int y, const char* str, u8 color, u8 shadow_color);
 void gfx_draw_text_centered(int x, int y, int w, const char* str, u8 color);

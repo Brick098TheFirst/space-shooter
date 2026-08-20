@@ -344,6 +344,33 @@ int main(void){
         }
     }
 
+    /* The reboot coda keeps its deliberately nested styles and survives the
+     * same V12 padding word used by the real Android save. */
+    CHK(STORY_REBOOT_PAGES == 10, "the reboot coda has ten message pages");
+    {
+        char plain[STORY_INTRO_LINE_MAX]; u8 sp[STORY_INTRO_LINE_MAX];
+        story_intro_markup(g_story_reboot[8][0], plain, sp, sizeof plain);
+        CHK(!strcmp(plain, "Did you bring revenge"), "revenge markers vanish");
+        CHK(sp[0] == (STORY_MK_BOLD | STORY_MK_FAINT | STORY_MK_ITALIC),
+            "revenge is bold italic and faint");
+        story_intro_markup(g_story_reboot[9][0], plain, sp, sizeof plain);
+        CHK(!strcmp(plain, "Death ?"), "death ghost markers vanish");
+        CHK(sp[0] == (STORY_MK_BOLD | STORY_MK_ITALIC | STORY_MK_GHOST),
+            "death is the faintest italic ghost");
+    }
+    story_set_ending_phase(STORY_ENDING_REBOOT_MESSAGE);
+    save_write();
+    memset(&g_story,0,sizeof(g_story));
+    save_load();
+    CHK(story_ending_phase() == STORY_ENDING_REBOOT_MESSAGE,
+        "the first reboot phase persists");
+    story_set_ending_phase(STORY_ENDING_RETURN_MENU);
+    save_write();
+    memset(&g_story,0,sizeof(g_story));
+    save_load();
+    CHK(story_ending_phase() == STORY_ENDING_RETURN_MENU,
+        "the second reboot phase persists");
+
     /* It plays once and once only. */
     g_story.intro_seen = 0;
     CHK(!story_intro_seen(), "a fresh save has not seen the intro");

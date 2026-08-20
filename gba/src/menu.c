@@ -50,6 +50,7 @@ static bool s_tap_pending = false;
  * Android layer which opens the system text dialog. */
 static int s_code_request = 0;
 static int s_erase_request = 0;
+static int s_exit_request = 0;
 
 int menu_take_code_request(void) {
     int r = s_code_request;
@@ -62,6 +63,12 @@ int menu_take_erase_request(void) {
     s_erase_request = 0;
     return r;
 }
+
+int menu_take_exit_request(void) {
+    int r = s_exit_request;
+    s_exit_request = 0;
+    return r;
+}
 #endif
 
 static void menu_static_invalidate(void);
@@ -71,6 +78,7 @@ static void menu_static_invalidate(void);
  * update/draw dispatchers need them early. */
 static void intro_reset(void);
 static void outro_reset(void);
+static void reboot_reset(void);
 static void map_focus_current(void);
 static void story_shop_reset_ui(void);
 static void update_story_intro(void);
@@ -78,12 +86,15 @@ static void update_story_map(void);
 static void update_story_shop(void);
 static void update_story_result(void);
 static void update_story_outro(void);
+static void update_story_reboot(void);
 static void render_story_intro(void);
 static void render_story_map(void);
 static void render_story_shop(void);
 static void render_story_result(void);
 static void render_story_outro(void);
+static void render_story_reboot(void);
 static void story_enter_result(void);
+static void request_story_exit(void);
 #endif
 static void draw_preview_engine_trail(int ship_x, int ship_y, int trail_idx);
 
@@ -170,7 +181,23 @@ void menu_init(void) {
     s_menu_selected = 0;
     s_anim_frame = 0;
     s_shop_msg_timer = 0;
+#ifdef PLATFORM_HOST
+    /* A fresh Android process starts with no stale Java hand-off request. */
+    s_exit_request = 0;
+#endif
     audio_play_bgm(BGM_MENU);
+#ifdef PLATFORM_HOST
+    /* A completed ending survives the close that follows the whiteout.  The
+     * next process boot owns the strange message; the boot after that is just
+     * a normal menu, so a half-finished cinematic can never trap the player. */
+    if (story_ending_phase() == STORY_ENDING_REBOOT_MESSAGE) {
+        menu_open(SCREEN_STORY_REBOOT);
+    } else if (story_ending_phase() == STORY_ENDING_RETURN_MENU) {
+        story_set_ending_phase(STORY_ENDING_NONE);
+        save_write();
+        menu_open(SCREEN_MAIN_MENU);
+    }
+#endif
 }
 
 void menu_open(GameScreen screen) {
@@ -190,9 +217,13 @@ void menu_open(GameScreen screen) {
      * starts under the opening speech and keeps playing across the map, the
      * dock and the result cards, so Story Mode never sounds like the arcade
      * front end. */
-    if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_MAP ||
-        screen == SCREEN_STORY_SHOP  || screen == SCREEN_STORY_RESULT ||
-        screen == SCREEN_STORY_OUTRO) {
+    if (screen == SCREEN_STORY_REBOOT) {
+        /* The recovery message is meant to feel like a boss encounter, not
+         * like another page of the campaign radio. */
+        audio_play_bgm(BGM_BOSS);
+    } else if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_MAP ||
+               screen == SCREEN_STORY_SHOP  || screen == SCREEN_STORY_RESULT ||
+               screen == SCREEN_STORY_OUTRO) {
         audio_play_bgm(BGM_STORY);
     } else
 #endif
@@ -202,14 +233,16 @@ void menu_open(GameScreen screen) {
         audio_play_bgm(BGM_MENU);
     }
 #ifdef PLATFORM_HOST
-    if (screen == SCREEN_STORY_INTRO) intro_reset();
-    if (screen == SCREEN_STORY_OUTRO) outro_reset();
-    if (screen == SCREEN_STORY_MAP)   map_focus_current();
+    if (screen == SCREEN_STORY_INTRO)  intro_reset();
+    if (screen == SCREEN_STORY_OUTRO)  outro_reset();
+    if (screen == SCREEN_STORY_REBOOT) reboot_reset();
+    if (screen == SCREEN_STORY_MAP)    map_focus_current();
     if (screen == SCREEN_STORY_SHOP)  story_shop_reset_ui();
     /* Each kingdom flies over its own sky; the campaign menus preview the
      * sector the cursor is parked in.  The outro flies the same arcade sky
      * as the intro - the story that opened over it closes over it. */
-    if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_OUTRO) {
+    if (screen == SCREEN_STORY_INTRO || screen == SCREEN_STORY_OUTRO ||
+        screen == SCREEN_STORY_REBOOT) {
         starfield_set_theme(SF_THEME_ARCADE);
     } else if (screen == SCREEN_STORY_MAP || screen == SCREEN_STORY_SHOP ||
                screen == SCREEN_STORY_RESULT) {
@@ -951,14 +984,31 @@ static void intro_draw_line(int y, const char* src, int shown, u8 color) {
     if (x < 2) x = 2;
 
     for (int i = 0; i < n; i++) {
-        if (style[i] == STORY_MK_BOLD) {
-            /* Bold: the glyph plus a one-pixel offset copy. */
-            gfx_draw_char(x + 1, y, text[i], color);
-            gfx_draw_char(x, y, text[i], PAL_TEXT_WHITE);
-        } else if (style[i] == STORY_MK_FAINT) {
-            gfx_draw_char(x, y, text[i], 18);   /* dim grey */
+        u8 st = style[i];
+        bool ghost = (st & STORY_MK_GHOST) != 0;
+        bool italic = (st & STORY_MK_ITALIC) != 0;
+        bool bold = (st & STORY_MK_BOLD) != 0;
+        u8 draw_color = (st & STORY_MK_FAINT) ? 18 : color;
+
+        if (ghost) {
+            /* Ghost takes precedence over bold/faint: the last word is meant
+             * to be found, not announced. */
+            gfx_draw_char_ghost(x, y, text[i], PAL_TEXT_WHITE);
+        } else if (bold) {
+            /* Bold: the glyph plus a one-pixel offset copy.  Preserve the
+             * faint colour when the two requested treatments are combined. */
+            u8 bold_main = (st & STORY_MK_FAINT) ? 18 : PAL_TEXT_WHITE;
+            if (italic) {
+                gfx_draw_char_italic(x + 1, y, text[i], draw_color);
+                gfx_draw_char_italic(x, y, text[i], bold_main);
+            } else {
+                gfx_draw_char(x + 1, y, text[i], draw_color);
+                gfx_draw_char(x, y, text[i], bold_main);
+            }
+        } else if (italic) {
+            gfx_draw_char_italic(x, y, text[i], draw_color);
         } else {
-            gfx_draw_char(x, y, text[i], color);
+            gfx_draw_char(x, y, text[i], draw_color);
         }
         x += 6;
     }
@@ -998,19 +1048,22 @@ static void render_story_intro(void) {
  * result card.  Same staging as the opening speech: story_mode.mp3 keeps
  * playing underneath and the same typewriter types two short pages over the
  * starfield: "YOU DID IT, JACK." and then "WELCOME HOME."  After the last
- * word lands, the screen fades slowly to white and the main menu returns.
+ * word lands, the screen fades slowly to white, holds there for a few seconds,
+ * and closes the activity.  The next boot plays the separate Chubbs message.
  * There is no final boss and no escape sequence after the Reality Queen -
  * the drone attack is the last kingdom and this is the whole ending. */
 
 #define OUTRO_TYPE_FRAMES 2
 #define OUTRO_HOLD_FRAMES 120   /* beat after the last line finishes typing */
-#define OUTRO_FADE_FRAMES 270   /* ~3 s of slow white fade at 90 Hz */
+#define OUTRO_FADE_FRAMES 540   /* six seconds: make the whiteout unmissable */
+#define OUTRO_WHITE_HOLD_FRAMES 360 /* four seconds at full white before close */
 
 static int s_outro_page = 0;
 static int s_outro_chars = 0;   /* plain characters revealed on this page */
 static int s_outro_tick = 0;    /* frame counter driving the typewriter */
 static int s_outro_hold = 0;    /* frames held once the last page is typed */
 static int s_outro_fade = 0;    /* >0 while the screen fades to white */
+static int s_outro_white_hold = 0; /* frames held at solid white */
 
 static int outro_page_len(int page) {
     if (page < 0 || page >= STORY_OUTRO_PAGES) return 0;
@@ -1024,10 +1077,23 @@ static void outro_reset(void) {
     s_outro_tick = 0;
     s_outro_hold = 0;
     s_outro_fade = 0;
+    s_outro_white_hold = 0;
+}
+
+/* Android closes the activity at this point.  The save is written first and
+ * the phase makes the next boot deterministic.  In the headless UI harness
+ * there is no Java activity to close, so falling back to the menu keeps the
+ * test process alive while still exercising the persisted hand-off. */
+static void request_story_exit(void) {
+#ifdef PLATFORM_HOST
+    s_exit_request = 1;
+#endif
 }
 
 static void outro_finish(void) {
+    story_set_ending_phase(STORY_ENDING_REBOOT_MESSAGE);
     save_write();
+    request_story_exit();
     menu_open(SCREEN_MAIN_MENU);
 }
 
@@ -1048,10 +1114,15 @@ static void outro_advance(void) {
 
 static void update_story_outro(void) {
     if (s_outro_fade > 0) {
-        if (++s_outro_fade > OUTRO_FADE_FRAMES) { outro_finish(); return; }
-        int tx, ty;
-        if (consume_tap(&tx, &ty)) { outro_finish(); return; }
-        if (key_hit(KEY_A) || key_hit(KEY_START)) { outro_finish(); return; }
+        if (s_outro_fade <= OUTRO_FADE_FRAMES) {
+            s_outro_fade++;
+            return;
+        }
+        /* Hold solid white for several seconds.  Do not let a stray touch or
+         * controller repeat skip the requested crash/reboot beat. */
+        if (++s_outro_white_hold > OUTRO_WHITE_HOLD_FRAMES) {
+            outro_finish();
+        }
         return;
     }
 
@@ -1093,8 +1164,99 @@ static void render_story_outro(void) {
 
     if (s_outro_fade > 0) {
         int amount = (s_outro_fade * 16) / OUTRO_FADE_FRAMES;
+        if (amount > 16) amount = 16;
         gfx_fade_white(amount);
     }
+}
+
+/* ── Post-crash message ───────────────────────────────────────────────────
+ * The first launch after the whiteout is intentionally not the menu.  The
+ * message advances by itself so it cannot be missed, while taps/controllers
+ * can still fill a line or move to the next one.  The final line is a sparse
+ * four-percent ghost; see story_intro_markup() and gfx_draw_char_ghost(). */
+#define REBOOT_TYPE_FRAMES 3
+#define REBOOT_PAGE_HOLD_FRAMES 60
+#define REBOOT_FINAL_HOLD_FRAMES 240
+
+static int s_reboot_page = 0;
+static int s_reboot_chars = 0;
+static int s_reboot_tick = 0;
+static int s_reboot_hold = 0;
+
+static int reboot_page_len(int page) {
+    if (page < 0 || page >= STORY_REBOOT_PAGES) return 0;
+    return story_intro_len(g_story_reboot[page][0]) +
+           story_intro_len(g_story_reboot[page][1]);
+}
+
+static void reboot_reset(void) {
+    s_reboot_page = 0;
+    s_reboot_chars = 0;
+    s_reboot_tick = 0;
+    s_reboot_hold = 0;
+}
+
+static void reboot_finish(void) {
+    story_set_ending_phase(STORY_ENDING_RETURN_MENU);
+    save_write();
+    request_story_exit();
+    /* Headless callers remain alive; Android consumes the exit request and
+     * closes the activity so the next real boot can clear the phase. */
+    menu_open(SCREEN_MAIN_MENU);
+}
+
+static void reboot_advance(void) {
+    int len = reboot_page_len(s_reboot_page);
+    if (s_reboot_chars < len) {
+        s_reboot_chars = len;
+        return;
+    }
+    if (s_reboot_page >= STORY_REBOOT_PAGES - 1) {
+        reboot_finish();
+        return;
+    }
+    s_reboot_page++;
+    s_reboot_chars = 0;
+    s_reboot_tick = 0;
+    s_reboot_hold = 0;
+}
+
+static void update_story_reboot(void) {
+    int len = reboot_page_len(s_reboot_page);
+    if (s_reboot_chars < len) {
+        if (++s_reboot_tick >= REBOOT_TYPE_FRAMES) {
+            s_reboot_tick = 0;
+            s_reboot_chars++;
+        }
+    } else {
+        s_reboot_hold++;
+        int hold = (s_reboot_page >= STORY_REBOOT_PAGES - 1)
+                 ? REBOOT_FINAL_HOLD_FRAMES : REBOOT_PAGE_HOLD_FRAMES;
+        if (s_reboot_hold >= hold) {
+            if (s_reboot_page >= STORY_REBOOT_PAGES - 1) reboot_finish();
+            else reboot_advance();
+            return;
+        }
+    }
+
+    int tx, ty;
+    if (consume_tap(&tx, &ty)) { reboot_advance(); return; }
+    if (key_hit(KEY_A) || key_hit(KEY_START)) { reboot_advance(); return; }
+    /* B is deliberately not a skip: this is the message that explains the
+     * two reboots, so leaving it half-read would make the next boot feel
+     * broken rather than haunted. */
+}
+
+static void render_story_reboot(void) {
+    starfield_draw_base(0, 0);
+    starfield_draw_stars(0, 0);
+
+    const char* a = g_story_reboot[s_reboot_page][0];
+    const char* b = g_story_reboot[s_reboot_page][1];
+    int alen = story_intro_len(a);
+    int shown = s_reboot_chars;
+    intro_draw_line(58, a, shown, PAL_TEXT_WHITE);
+    intro_draw_line(72, b, shown - alen, PAL_TEXT_CYAN);
 }
 
 /* ── Level map ────────────────────────────────────────────────────────────
@@ -2718,6 +2880,7 @@ void menu_update(void) {
         case SCREEN_STORY_SHOP:   starfield_update(); update_story_shop(); break;
         case SCREEN_STORY_RESULT: starfield_update(); update_story_result(); break;
         case SCREEN_STORY_OUTRO:  starfield_update(); update_story_outro(); break;
+        case SCREEN_STORY_REBOOT: starfield_update(); update_story_reboot(); break;
 #endif
         case SCREEN_PLAYING:
 #ifdef PLATFORM_HOST
@@ -3428,6 +3591,7 @@ void menu_draw(void) {
         case SCREEN_STORY_SHOP:   render_story_shop(); break;
         case SCREEN_STORY_RESULT: render_story_result(); break;
         case SCREEN_STORY_OUTRO:  render_story_outro(); break;
+        case SCREEN_STORY_REBOOT: render_story_reboot(); break;
 #endif
         case SCREEN_PLAYING: game_draw(); break;
         case SCREEN_PAUSED: render_paused(); break;
