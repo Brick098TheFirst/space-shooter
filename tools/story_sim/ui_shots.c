@@ -337,7 +337,9 @@ int main(int argc, char** argv) {
     }
 
     /* The outro itself: first page typed, then WELCOME HOME, then the slow
-     * fade to white, and finally the main menu. */
+     * six-second fade, a four-second solid-white hold, and a controlled app
+     * close.  In this headless harness the close request leaves the screen on
+     * the menu so we can inspect the persisted hand-off. */
     pump(120);
     dump(dir, "17_outro_you_did_it");
     menu_queue_tap(4, 4); pump(2);
@@ -346,9 +348,35 @@ int main(int argc, char** argv) {
     dump(dir, "18_outro_welcome_home");
     pump(120);
     dump(dir, "19_outro_fading_white");
-    pump(220);
-    if (menu_current_screen() != SCREEN_MAIN_MENU) {
-        fprintf(stderr, "the outro did not fade back to the main menu\n");
+    pump(980);
+    if (menu_current_screen() != SCREEN_MAIN_MENU ||
+        story_ending_phase() != STORY_ENDING_REBOOT_MESSAGE) {
+        fprintf(stderr, "the outro did not hand off after the whiteout\n");
+        return 1;
+    }
+
+    /* A real Android process is now closed and reopened.  Reinitializing the
+     * menu here models that boot and proves the boss-music message is the
+     * first screen after the whiteout. */
+    menu_init();
+    if (menu_current_screen() != SCREEN_STORY_REBOOT) {
+        fprintf(stderr, "the first reboot did not open the Chubbs message\n");
+        return 1;
+    }
+    pump(20);
+    dump(dir, "20_reboot_message");
+    pump(1350);
+    if (menu_current_screen() != SCREEN_MAIN_MENU ||
+        story_ending_phase() != STORY_ENDING_RETURN_MENU) {
+        fprintf(stderr, "the reboot message did not hand off to the menu\n");
+        return 1;
+    }
+
+    /* The second close/reopen clears the hand-off and lands on a normal menu. */
+    menu_init();
+    if (menu_current_screen() != SCREEN_MAIN_MENU ||
+        story_ending_phase() != STORY_ENDING_NONE) {
+        fprintf(stderr, "the second reboot did not return to the menu\n");
         return 1;
     }
 
@@ -376,7 +404,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    dump(dir, "20_replay_result_card");
+    dump(dir, "21_replay_result_card");
 
     printf("done\n");
     return 0;

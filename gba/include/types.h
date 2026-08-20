@@ -114,7 +114,8 @@ typedef enum {
     SCREEN_STORY_SHOP,    /* Mr Chubbs' docked Trading Post */
     SCREEN_STORY_RESULT,  /* level cleared / failed card */
     SCREEN_STORY_OUTRO    /* the ending speech after level 80, then a slow
-                           * fade to white and back to the main menu */
+                           * fade to white and back to the main menu */,
+    SCREEN_STORY_REBOOT   /* the unsettling message shown on the next boot */
 } GameScreen;
 
 typedef enum {

@@ -318,6 +318,18 @@ class GameView(context: Context) : View(context), Choreographer.FrameCallback {
             }
         }
 
+        /* The story ending asks for a controlled close only after it has
+         * written its hand-off phase.  This gives the requested crash/reopen
+         * feeling without killing the native process mid-write (which could
+         * corrupt the save on a real phone). */
+        if (NativeGame.nativeTakeExitRequest() != 0) {
+            persistSave()
+            running = false
+            choreographer.removeFrameCallback(this)
+            (context as? android.app.Activity)?.finishAndRemoveTask()
+            return
+        }
+
         val nextScreen = NativeGame.nativeGetScreen()
         if (nextScreen != uiScreen) {
             if (nextScreen != NativeGame.SCREEN_PLAYING) resetStickToHome()

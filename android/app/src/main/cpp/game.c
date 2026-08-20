@@ -1444,6 +1444,14 @@ static void story_force_spawn_large(void) {
 }
 
 static bool story_spawn_hunter(void) {
+    /* Kingdom 8 is a straight flight home, not another bespoke enemy script.
+     * Reuse the exact arcade hunter constructor so its drones get the same
+     * entry speed, burst timer, HP roll, and attack cadence as drones in the
+     * other modes.  The shared update_drones() loop below then supplies the
+     * normal aimed bursts and alternating-cannon fire. */
+    if (story_cur()->objective == OBJ_DRONES)
+        return spawn_random_drone();
+
     int mult = (get_diff_speed_mult() * story_speed_scale()) / 100;
     for (int i = 0; i < MAX_DRONES; i++) {
         if (g_game.drones[i].active) continue;

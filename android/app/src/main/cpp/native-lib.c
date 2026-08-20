@@ -120,6 +120,12 @@ Java_com_brick_spaceshooter_NativeGame_nativeGetScreen(JNIEnv* env, jclass clazz
 }
 
 JNIEXPORT jint JNICALL
+Java_com_brick_spaceshooter_NativeGame_nativeTakeExitRequest(JNIEnv* env, jclass clazz) {
+    (void)env; (void)clazz;
+    return (jint)menu_take_exit_request();
+}
+
+JNIEXPORT jint JNICALL
 Java_com_brick_spaceshooter_NativeGame_nativeStoryWaitingForStart(JNIEnv* env, jclass clazz) {
     (void)env; (void)clazz;
     return (jint)game_story_waiting_for_start();
